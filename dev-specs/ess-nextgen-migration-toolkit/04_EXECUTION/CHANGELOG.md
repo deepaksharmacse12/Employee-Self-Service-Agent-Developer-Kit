@@ -12,6 +12,25 @@ task (`TASK-XXX`) where applicable, per `IMPLEMENTATION_GUIDE.md`.
 
 ## [Unreleased]
 
+- **Preferred-solution scoping for ALM customers (`RetrieveCustomizationsStep`).**
+  When the customer declares a preferred solution (`context.preferred_solution` —
+  an unmanaged solution they imported and marked preferred), discovery is now
+  narrowed to the components that *belong to that solution*, so transformations and
+  writeback touch only that solution's customizations (topics layered on the managed
+  ESS base). Membership is read from the solution's **`solutioncomponents`**
+  (`_solutionid_value eq <solutionid>` → `objectid`), **not** the component layers —
+  every unmanaged solution shares the single `Active` layer, so `msdyn_solutionname`
+  can't distinguish them. With no preferred solution (non-ALM path), every discovered
+  customization is kept and no `solutioncomponents` query is issued. An ALM customer
+  who owns several preferred-solution setups runs the tool **once per preferred
+  solution** (no array/loop that waits on the maker to re-mark each). Added
+  `_narrow_to_preferred_solution` / `_fetch_preferred_solution_component_ids` /
+  `_norm_guid`; `context.customized_dependencies` is derived after the narrowing so
+  it stays consistent. **Query shape confirmed live** — a topic is a
+  `solutioncomponents` row with `objectid` = `botcomponentid`, `componenttype` 10213
+  (`botcomponent`). Documented in `CUSTOMIZATION_DISCOVERY.md` §4.4 + §7. Gates
+  green (116 tests, +3).
+
 - **RULE-006 / RULE-007 + per-topic migration report (TASK-018/019/020).** Handled
   the rest of the CA→DA *unsupported* constructs from the component-support analysis
   with a uniform disable-but-preserve mitigation, and gave the report a per-topic view.

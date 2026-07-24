@@ -165,6 +165,39 @@ Transformation/Output modules consume the fields directly without re-parsing
 - `context.customized_dependencies` — the `raw_dependencies` infos whose
   `dependentcomponentobjectid` is a kept component.
 
+### 4.4 Preferred-solution scoping (ALM path)
+
+When the customer declares a **preferred solution**
+(`context.preferred_solution`, an unmanaged solution they imported and marked
+preferred — its topics are customizations layered on the managed ESS base),
+discovery is narrowed to the components that *belong to that solution*, so
+transformations and writeback touch only that solution's customizations.
+
+Crucially, this membership is **not** read off the component layers: every
+unmanaged solution shares the single `Active` layer, so `msdyn_solutionname` reads
+`Active` regardless of which unmanaged solution a change was authored in. Instead
+`RetrieveCustomizationsStep` resolves the preferred solution's `solutionid` (from
+its unique name) and reads its **`solutioncomponents`** (one row per contained
+component, filtered `_solutionid_value eq <solutionid>`), collecting each
+`objectid`. `context.customizations` is then filtered to components whose id is a
+member (ids normalized case/brace-insensitively).
+
+> **Confirmed live** (2026-07, org `orgfe6eb58f`): a topic (Copilot component) is
+> listed in `solutioncomponents` as its own row with **`objectid` = the topic's
+> `botcomponentid`** and `componenttype` **10213** (the solution-component code for
+> `botcomponent`). So matching the discovered topic ids against the solution's
+> `objectid`s is valid — topics are not merely implicit subcomponents. Sample:
+> `GET /solutioncomponents?$filter=objectid eq <botcomponentid> and _solutionid_value eq <solutionid>`
+> → one row (`objectid`, `_solutionid_value`, `componenttype: 10213`).
+
+- With **no** preferred solution (non-ALM path), every discovered customization is
+  kept — no `solutioncomponents` query is issued.
+- The scoping runs **once per preferred solution**: an ALM customer who owns
+  several preferred-solution setups runs the tool once per solution rather than the
+  tool consuming an array and waiting on the maker to re-mark each as preferred.
+- `context.customized_dependencies` is derived after the narrowing, so it stays
+  consistent with the scoped `customizations`.
+
 ---
 
 ## 5. Agent configuration retrieval (`RetrieveAgentConfigurationStep`)
@@ -219,7 +252,9 @@ and no-op-guarded by the `WritebackPlan`, so each entry maps to a single
 `client.update(entity_set, record_id, changes)`. When
 `context.preferred_solution` is set (ALM customers), the writes target that
 solution — verified live in `GatherALMCustomerInputStep` via `GetPreferredSolution`
-so a typo cannot silently redirect writeback. In READONLY mode the pending writes
+so a typo cannot silently redirect writeback — and discovery has already been
+**scoped to that solution's members** (§4.4), so writeback only ever touches the
+preferred solution's own customizations. In READONLY mode the pending writes
 are reported but not applied.
 
 > **Future — overlay removal.** The guard suppresses writes equal to the current
