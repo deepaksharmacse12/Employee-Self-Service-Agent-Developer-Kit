@@ -4,12 +4,12 @@ This skill guides the user through creating a new Copilot Studio topic.
 
 ## Rules
 
-- Do NOT run terminal commands or scripts. Use built-in file reading and writing tools only.
+- Author the topic YAML with the built-in file reading and writing tools — do NOT shell out to scripts to generate or edit topic content. The delivery step (Step 6) is the deliberate exception: it runs the ESS ADK scripts (`checkpoint.py`, `push.py`, `publish.py`, `validate.py`) exactly as written there.
 - ALWAYS read existing topic files in the user's agent folder (`{agent.folder}/topics/`) as schema examples before generating any YAML.
 - ALWAYS read `.local/config.json` to get the agent folder name and schema name.
 - Write the new topic file to `{agent.folder}/topics/{TopicName}.mcs.yml`.
 - After writing the file, check for errors using the diagnostics tool on the new file.
-- **PRESERVE THE AUTHORING INVARIANTS**: follow [`authoring-invariants.md`](src/reference/ess-docs/customization/authoring-invariants.md) — the generated topic MUST delegate the backend call to the shared system topic, render backend data with the standard parse → iterate → table pattern, and let failures flow through the shared error path.
+- **PRESERVE THE AUTHORING INVARIANTS**: follow `src/reference/ess-docs/customization/authoring-invariants.md` — the generated topic MUST delegate the backend call to the shared system topic, render backend data with the standard parse → iterate → table pattern, and let failures flow through the shared error path.
 - **TEMPLATE CONFIG IS THE DEFAULT**: For any scenario that calls an ESS-orchestrated backend (ServiceNow, Workday, or SAP SuccessFactors), use the **Template Config + Shared Flow** pattern. This is the official ESS extensibility pattern. The topic calls the existing shared system topic (e.g., `ServiceNowHRSDSystemGetCommonExecution`), which invokes the shared orchestrator flow. Do NOT create standalone cloud flows for these connectors.
   - ALWAYS read `src/reference/ess-docs/customization/customize.md` when the scenario involves ServiceNow, Workday, or SAP SuccessFactors.
   - Use an existing topic in the agent folder that calls a shared system topic as the starting pattern.
@@ -114,11 +114,11 @@ For any scenario that involves data collection + external system calls, think th
 
 ## Step 4: Check for Existing Patterns
 
-Read the agent snapshot at `workspace/agents/{agent.slug}/topics.md` to see if similar topics already exist. If a similar pattern exists:
+Read the agent snapshot at `workspace/agents/{agent.slug}/snapshot.md` — specifically its `## Topics` section — to see if similar topics already exist. If a similar pattern exists:
 - Tell the user: "I found a similar topic ({name}) that does {X}. I'll use its pattern as a reference."
 - Read the existing topic file to understand the action chain.
 
-If the topic calls a workflow, check `workspace/agents/{agent.slug}/workflows.md` to see if a suitable workflow already exists. If not, tell the user they'll also need a workflow and offer to create one after the topic.
+If the topic calls a workflow, check the same snapshot's `## Workflows` section to see if a suitable workflow already exists. If not, tell the user they'll also need a workflow and offer to create one after the topic.
 
 ## Step 5: Generate the Topic YAML
 
@@ -303,8 +303,12 @@ local baseline and component map.
 - Show the error output to the user.
 - Offer two options:
   - **Retry** — run push again
-  - **Revert** — `python scripts/checkpoint.py --revert` to restore the
-    backup from step 6.1
+  - **Revert** — `python scripts/checkpoint.py --revert` to restore the local
+    agent files from the step 6.1 backup. **Note:** revert only restores local
+    files. If a template config record was created in Dataverse in step 6.2, it
+    is **not** rolled back — that record persists in the environment. On the next
+    push it is reused if the scenario name is unchanged; if you are abandoning the
+    topic, delete the record manually in the Power Platform Maker portal.
 
 ### 6.8 — Verify and link
 

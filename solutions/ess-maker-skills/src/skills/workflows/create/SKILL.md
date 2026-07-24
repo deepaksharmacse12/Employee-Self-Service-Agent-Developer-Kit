@@ -24,7 +24,7 @@ Then read `src/skills/topics/create/SKILL.md` and follow the template config pat
 
 ## Rules
 
-- Do NOT run terminal commands or scripts. Use built-in file reading and writing tools only.
+- Author the workflow files (`metadata.yml`, `workflow.json`) with the built-in file reading and writing tools — do NOT shell out to scripts to generate or edit workflow content. The one exception is the best-effort telemetry line in Step 4 (`python scripts/emit_capability.py workflow_create`), run exactly as written there.
 - ALWAYS read existing workflow files in the user's agent folder (`{agent.folder}/workflows/`) as schema examples before generating any workflow JSON.
 - ALWAYS read the agent's `connectionreferences.mcs.yml` to understand connector wiring.
 - ALWAYS read `.local/config.json` to get the agent folder name.
@@ -45,10 +45,10 @@ From their response, determine:
 
 ## Step 2: Check Existing Workflows
 
-Read `workspace/agents/{agent.slug}/workflows.md` to see if a suitable workflow already exists. If the agent already has a workflow that does something similar, tell the user:
+Read the agent snapshot at `workspace/agents/{agent.slug}/snapshot.md` — specifically its `## Workflows` section — to see if a suitable workflow already exists. If the agent already has a workflow that does something similar, tell the user:
 - "Your agent already has a workflow called '{name}' that {does X}. Would you like to use that one, or create a new one?"
 
-Also check `workspace/agents/{agent.slug}/connections.md` to see which connectors are already configured. If the needed connector isn't available, tell the user they'll need to add it through the Copilot Studio portal first.
+Also check the `connections` object in `.local/config.json` to see which connectors are already configured (each entry is keyed by connector name, e.g. `ServiceNow`). If the needed connector isn't there, tell the user they'll need to add it through the Copilot Studio portal first.
 
 ## Step 3: Generate the Workflow
 
@@ -76,7 +76,7 @@ isTransacted: true
 
 ### workflow.json
 Customize the template by:
-1. Setting the correct `connectionReferences` — match the `connectionReferenceLogicalName` to a value from `workspace/agents/{agent.slug}/connections.md`
+1. Setting the correct `connectionReferences` — match the `connectionReferenceLogicalName` to a value from the agent's `connectionreferences.mcs.yml` (the connector-wiring file the Rules require you to read). `push.py` mirrors that design connection reference into the flow-scoped one at push time, so an absent or mistyped logical name means the flow won't be agent-invocable.
 2. Defining trigger inputs — what the topic will pass to the workflow
 3. Adding the correct connector action — use the right `operationId` for the task
 4. Defining the response outputs — what data goes back to the topic
