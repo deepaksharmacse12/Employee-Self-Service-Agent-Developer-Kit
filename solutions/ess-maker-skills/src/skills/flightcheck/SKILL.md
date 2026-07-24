@@ -58,6 +58,60 @@ Map the selection to a scope flag:
 ---
 
 ## Step 2: Run the check
+## Step 2: Consent gate for the connectivity probe (MANDATORY — ask before running)
+
+FlightCheck's connectivity check (INFRA-003) confirms the agent's external system
+endpoints (Workday, ServiceNow, SAP SuccessFactors, custom HTTP) are reachable
+**from the Power Platform environment's own egress** — the path the agent runtime
+actually uses. The only way to prove that is the **live egress probe**
+(`--runtime-reachability`): it briefly creates a transient Power Platform flow,
+sends one outbound request, reads the result, then deletes the flow. This is the
+**only** FlightCheck path that writes to the tenant.
+
+Because it mutates the environment, you **MUST** ask for consent **before** you run
+the check. Do not run first and ask later. The terminal CLI cannot prompt you in
+chat (it is a non-interactive subprocess), so **you own the consent question**.
+
+**This gate applies only when the scope is `full`** — that is the only scope that
+runs INFRA-003. For Workday-only, ServiceNow-only, Local-files-only, or
+Prerequisites-only scopes, skip this gate and go straight to Step 2b.
+
+Ask using this exact wording, swapping `<SYSTEM>` for the system being checked
+(Workday / ServiceNow / SAP SuccessFactors / custom HTTP — use the connected
+system(s) from `.local/config.json`; if more than one, name **all** of them,
+since the probe tests every configured endpoint):
+
+> To check that your connection to `<SYSTEM(S)>` is whitelisted, I'll create a temporary
+> flow in your environment that sends a test network request, then delete it right
+> after. It won't touch any of your data. Okay to proceed?
+
+The reassurance points (no data touched, auto-deleted) are what earn user trust.
+Keep them in whatever phrasing you use.
+
+- **If the user says YES** → run the check **with** `--runtime-reachability` (Step 2b).
+- **If the user says NO** → run the check **without** the flag (Step 2b), then in the
+  summary note that the connectivity probe was skipped by choice, and offer the
+  manual verification path:
+
+> Prefer to verify manually? You can confirm the connection is whitelisted:
+>
+> 1. In the Power Platform admin center, note your environment's region.
+> 2. From Microsoft's [Managed connectors outbound IP addresses](https://learn.microsoft.com/en-us/connectors/common/outbound-ip-addresses)
+>    list, get the ranges for that region. For a custom HTTP endpoint, use the
+>    Power Automate service tags instead (the machine-readable ranges are in the
+>    [Azure IP Ranges and Service Tags JSON](https://www.microsoft.com/en-us/download/details.aspx?id=56519)).
+> 3. Work with your InfoSec / network team to confirm those ranges are allowlisted
+>    in your `<SYSTEM>` firewall / WAF.
+
+> **Note:** without `--runtime-reachability`, INFRA-003 returns **Manual** guidance —
+> it does not fall back to a local probe (a probe from the maker's machine runs on a
+> different network than Power Platform's egress, so it cannot prove the runtime
+> path). The flag creates one transient probe flow per run, always deletes it (even
+> on failure), and sweeps any orphan left by a crashed prior run.
+
+---
+
+## Step 2b: Run the check
 
 **Message:**
 
@@ -65,10 +119,17 @@ Running readiness checks — this takes 1–3 minutes depending on scope...
 
 **End message.**
 
-Run in the terminal:
+Run in the terminal. Append `--runtime-reachability` **only** if the user said YES
+at the Step 2 consent gate:
 
 ```
 python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk
+```
+
+On YES:
+
+```
+python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk --runtime-reachability
 ```
 
 Wait for the script to finish.
