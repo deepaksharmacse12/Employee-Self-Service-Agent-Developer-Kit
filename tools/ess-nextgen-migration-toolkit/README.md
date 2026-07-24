@@ -29,7 +29,7 @@ src/
         postprocessing/  Output pipeline steps
     service/         Orchestration (mtk_orchestrator.py, constants.py)
 output/              Generated, gitignored output
-    session-<timestamp>/   migration_report.md, session.log
+    session-<timestamp>/   migration_report.md, session.log, customizations.json
 tests/
     unit/            Mirror src/
     integration/     Dataverse interactions

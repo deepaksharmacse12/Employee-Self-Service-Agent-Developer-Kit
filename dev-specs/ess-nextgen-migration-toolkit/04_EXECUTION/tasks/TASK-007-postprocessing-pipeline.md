@@ -46,7 +46,8 @@ correct is owned by TASK-009 (E2E, `--dev` WRITEBACK).
   `supported_modes=("READONLY", "WRITEBACK")`.
 - Report rendering calls `Reporter(logger.session_manager).render(ctx)` — the
   step does not write files directly (DIAG-005).
-- Output lands in `output/session-<timestamp>/` (two-file bundle).
+- Output lands in `output/session-<timestamp>/` — `migration_report.md` +
+  `session.log`, plus the discovery stage's `customizations.json` snapshot.
 - No migration transformation logic in this stage.
 
 ## Acceptance Criteria
@@ -59,7 +60,8 @@ correct is owned by TASK-009 (E2E, `--dev` WRITEBACK).
 - [x] `Writeback` is auto-skipped in READONLY mode (mode-gating via
   `MigrationPipelineStep.can_execute`).
 - [x] `GenerateMigrationReport` renders `migration_report.md` via Reporter.
-- [x] Output bundle contains exactly `migration_report.md` + `session.log`.
+- [x] Output bundle contains `migration_report.md` + `session.log` (the Output
+  stage's two files); the discovery stage additionally writes `customizations.json`.
 - [x] All steps are `MigrationPipelineStep` subclasses with `supported_modes`.
 - [x] No transformation logic in this stage.
 - [x] Quality gates pass.

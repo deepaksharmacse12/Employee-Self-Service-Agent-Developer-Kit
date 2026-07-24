@@ -57,10 +57,12 @@ diagnostics, and writeback — is sound end-to-end.
   `solutioncomponents` query shape is **confirmed live** — a topic is its own row
   with `objectid` = `botcomponentid` and `componenttype` 10213 (`botcomponent`) —
   so this item is just the full end-to-end run against a real preferred solution.
-- [ ] Session bundle produced: `output/session-<timestamp>/` with exactly two
-  files.
+- [ ] Session bundle produced: `output/session-<timestamp>/` with
+  `migration_report.md`, `session.log`, and `customizations.json`.
 - [ ] `migration_report.md` contains Summary, Changes, Warnings, Errors sections.
 - [ ] `session.log` contains the full CLI transcript.
+- [ ] `customizations.json` captures each in-scope topic's original `data` YAML
+  (pre-writeback snapshot).
 - [ ] Execution is deterministic across identical inputs.
 - [ ] Quality gates pass.
 

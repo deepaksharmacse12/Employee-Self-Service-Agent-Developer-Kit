@@ -45,8 +45,6 @@ customizations. With no preferred solution, every discovered customization is ke
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -94,10 +92,10 @@ _NAME_KEY = "name"
 _DATA_KEY = "data"
 _STATECODE_KEY = "statecode"
 _STATUSCODE_KEY = "statuscode"
-# TEMP debug aid (remove later): dump the filtered customizations to .local so the
-# maker can navigate them. .local is gitignored; skipped under pytest.
-_TOOLKIT_ROOT = Path(__file__).resolve().parents[4]
-_CUSTOMIZATIONS_DUMP_PATH = _TOOLKIT_ROOT / ".local" / "customizations.json"
+# Pre-writeback snapshot of the in-scope customizations, written into the session
+# bundle so the original topic definitions (``data`` YAML) are captured before any
+# transformation/writeback — an internal recovery aid for worst-case incidents.
+_CUSTOMIZATIONS_FILENAME = "customizations.json"
 
 
 class RetrieveCustomizationsStep(MigrationPipelineStep):
@@ -155,7 +153,7 @@ class RetrieveCustomizationsStep(MigrationPipelineStep):
         customizations = self._narrow_to_preferred_solution(context, customizations)
         context.customizations = customizations
         context.customized_dependencies = _customized_dependencies(response, customizations)
-        self._dump_customizations(customizations)
+        self._write_customizations_snapshot(customizations)
 
         total_layers = sum(len(layers) for layers in layers_by_component.values())
         self._logger.LogInfo(
@@ -248,30 +246,68 @@ class RetrieveCustomizationsStep(MigrationPipelineStep):
             and object_id
         }
 
-    def _dump_customizations(self, customizations: dict[str, CustomizationComponent]) -> None:
-        # TEMP (remove later): write the filtered customizations to .local for the
-        # maker to navigate. Best-effort — never fail the run on a dump error; and
-        # skip under pytest so unit runs don't litter the working tree.
-        if "PYTEST_CURRENT_TEST" in os.environ:
+    def _write_customizations_snapshot(
+        self, customizations: dict[str, CustomizationComponent]
+    ) -> None:
+        """Write a pre-writeback snapshot of the in-scope customizations to the bundle.
+
+        Captures each in-scope topic's **original** definition (its ``data`` YAML plus
+        identity/state) into ``customizations.json`` in the session folder, *before* any
+        transformation or writeback runs. This is an internal engineering/recovery aid:
+        if a run needs to be reverted manually (e.g. a customer incident), the original
+        topic YAML can be read back from here. It is written early (input stage) so it
+        survives even a later partial failure. Best-effort — never fails the run.
+        """
+        session_dir = self._session_dir()
+        if session_dir is None:
             return
         try:
-            serializable = {cid: asdict(component) for cid, component in customizations.items()}
-            _CUSTOMIZATIONS_DUMP_PATH.parent.mkdir(parents=True, exist_ok=True)
-            _CUSTOMIZATIONS_DUMP_PATH.write_text(
-                json.dumps(serializable, indent=2), encoding="utf-8"
+            path = session_dir / _CUSTOMIZATIONS_FILENAME
+            path.write_text(
+                json.dumps(_customizations_snapshot(customizations), indent=2),
+                encoding="utf-8",
             )
             self._logger.LogInfo(
-                f"[temp] Wrote {len(customizations)} customization(s) to "
-                f"{_CUSTOMIZATIONS_DUMP_PATH}.",
+                f"Captured {len(customizations)} customization(s) to {path.name}.",
                 pipeline_stage="Input",
                 pipeline_step=self.name(),
             )
         except OSError as exc:
             self._logger.LogWarning(
-                f"[temp] Could not write customizations dump: {exc}",
+                f"Could not write {_CUSTOMIZATIONS_FILENAME}: {exc}",
                 pipeline_stage="Input",
                 pipeline_step=self.name(),
             )
+
+    def _session_dir(self) -> Path | None:
+        """The active session bundle directory, or None when unavailable (e.g. tests)."""
+        manager = getattr(self._logger, "session_manager", None)
+        paths = getattr(manager, "paths", None)
+        session_dir = getattr(paths, "session_dir", None)
+        return session_dir if isinstance(session_dir, Path) else None
+
+
+def _customizations_snapshot(
+    customizations: dict[str, CustomizationComponent],
+) -> dict[str, dict[str, Any]]:
+    """Focused, pre-writeback view of each in-scope customization (original data).
+
+    Excludes the raw ``layers`` (verbose Dataverse records) — the recoverable content
+    is the original ``data`` (topic YAML) plus identity/state fields.
+    """
+    return {
+        component_id: {
+            "component_id": component.component_id,
+            "schemaname": component.schemaname,
+            "name": component.name,
+            "component_type": component.component_type,
+            "component_type_label": component.component_type_label,
+            "statecode": component.statecode,
+            "statuscode": component.statuscode,
+            "data": component.data,
+        }
+        for component_id, component in customizations.items()
+    }
 
 
 def _norm_guid(value: str) -> str:

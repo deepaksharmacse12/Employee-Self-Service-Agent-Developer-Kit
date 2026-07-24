@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 import re
+from datetime import datetime
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -493,6 +495,52 @@ def test_preferred_solution_with_no_members_keeps_nothing() -> None:
     result = step.execute(context)
 
     assert result.customizations == {}
+
+
+def test_customizations_snapshot_written_to_session_bundle(tmp_path: Path) -> None:
+    context = MigrationContext(selected_agent_schemaname="msdyn_copilotforemployeeselfserviceit")
+    logger = Logger.start_session(
+        tmp_path,
+        context,
+        report_filename="migration_report.md",
+        clock=lambda: datetime(2026, 7, 24, 12, 0, 0),
+    )
+    fake_client = FakeDataverseClient([])
+    fake_client.function_response = {
+        "DependencyMetadataCollection": {
+            "DependencyMetadataInfoCollection": [
+                {
+                    "dependentcomponentobjectid": "topic-1",
+                    "dependentcomponententitylogicalname": "botcomponent",
+                },
+            ]
+        }
+    }
+    fake_client.layers_by_id = {
+        "topic-1": [
+            {
+                "msdyn_solutionname": "Active",
+                "msdyn_componentjson": _component_json(
+                    9, name="Leave Balance", data="kind: AdaptiveDialog\n"
+                ),
+            }
+        ],
+    }
+    context.dataverse_client = fake_client
+    try:
+        RetrieveCustomizationsStep(logger, ("READONLY", "WRITEBACK")).execute(context)
+    finally:
+        logger.close()
+
+    # The pre-writeback snapshot lands in the session bundle with the ORIGINAL topic
+    # YAML, and omits the verbose raw layers.
+    snapshot_path = logger.session_manager.paths.session_dir / "customizations.json"
+    assert snapshot_path.exists()
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert set(payload) == {"topic-1"}
+    assert payload["topic-1"]["name"] == "Leave Balance"
+    assert payload["topic-1"]["data"] == "kind: AdaptiveDialog\n"
+    assert "layers" not in payload["topic-1"]
 
 
 def test_select_customizations_uses_oob_solution_membership() -> None:
