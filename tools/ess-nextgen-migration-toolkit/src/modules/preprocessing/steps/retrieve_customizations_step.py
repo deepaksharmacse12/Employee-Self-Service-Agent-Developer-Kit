@@ -28,6 +28,18 @@ Discovery slice:
 
 Only the filtered customization layers propagate to the migration/output
 modules via the ``MigrationContext``.
+
+ALM preferred-solution scoping
+------------------------------
+When the customer declares a **preferred solution** (``context.preferred_solution``,
+an unmanaged solution they imported and marked preferred, whose topics are
+customizations on top of the managed ESS base), discovery is narrowed to the
+components that *belong to that solution*. Unmanaged solutions all share the single
+``Active`` layer, so membership can't be read off the component layers (which show
+``Active``); it comes from the solution's ``solutioncomponents`` (one row per
+contained component, by ``objectid``). This lets an ALM customer run the tool once
+per preferred solution and have writeback/transformations touch only that solution's
+customizations. With no preferred solution, every discovered customization is kept.
 """
 
 from __future__ import annotations
@@ -51,6 +63,13 @@ from service.utils import resolve_ess_solution
 
 _DEPENDENCIES_FUNCTION = "RetrieveDependenciesForUninstallWithMetadata"
 _SOLUTIONS_ENTITY = "solutions"
+# The customer's preferred solution's membership — one solutioncomponent row per
+# component the solution contains, joined to the component by ``objectid``. Used to
+# scope discovery to the preferred solution (ALM path); the guid filter on the
+# ``solutionid`` lookup uses the unquoted ``_solutionid_value`` form.
+_SOLUTION_COMPONENTS_ENTITY = "solutioncomponents"
+_SOLUTIONCOMPONENT_OBJECT_ID = "objectid"
+_SOLUTION_ID_VALUE_FIELD = "_solutionid_value"
 _COMPONENT_LAYERS_ENTITY = "msdyn_componentlayers"
 # The msdyn_componentlayer virtual table needs the component's source-table name
 # (msdyn_solutioncomponentname) to resolve a component; without it the query
@@ -133,6 +152,7 @@ class RetrieveCustomizationsStep(MigrationPipelineStep):
         context.component_layers = layers_by_component
 
         customizations = _select_customizations(layers_by_component)
+        customizations = self._narrow_to_preferred_solution(context, customizations)
         context.customizations = customizations
         context.customized_dependencies = _customized_dependencies(response, customizations)
         self._dump_customizations(customizations)
@@ -164,6 +184,70 @@ class RetrieveCustomizationsStep(MigrationPipelineStep):
             )
         return layers_by_component
 
+    def _narrow_to_preferred_solution(
+        self,
+        context: MigrationContext,
+        customizations: dict[str, CustomizationComponent],
+    ) -> dict[str, CustomizationComponent]:
+        """Scope customizations to the customer's preferred solution (ALM path).
+
+        When the customer declares a preferred solution, migrate ONLY the components
+        that belong to it — the topics they imported into that unmanaged, preferred
+        solution as customizations on top of the managed ESS base. Membership comes
+        from the solution's ``solutioncomponents`` (unmanaged solutions share the
+        single ``Active`` layer, so it can't be read off the component layers). An
+        ALM customer runs the tool once per preferred solution.
+
+        With no preferred solution (non-ALM path), every discovered customization is
+        kept unchanged.
+        """
+        preferred = context.preferred_solution
+        if not preferred:
+            return customizations
+
+        member_ids = self._fetch_preferred_solution_component_ids(
+            context.dataverse_client, preferred
+        )
+        kept = {
+            component_id: component
+            for component_id, component in customizations.items()
+            if _norm_guid(component_id) in member_ids
+        }
+        self._logger.LogInfo(
+            f"Preferred solution '{preferred}' scoping: kept {len(kept)} of "
+            f"{len(customizations)} discovered customization(s) that belong to it "
+            f"(dropped {len(customizations) - len(kept)} outside it).",
+            pipeline_stage="Input",
+            pipeline_step=self.name(),
+        )
+        return kept
+
+    def _fetch_preferred_solution_component_ids(self, client: Any, unique_name: str) -> set[str]:
+        """Return the normalized object-ids of components in the preferred solution.
+
+        Resolves the preferred solution's ``solutionid`` from its unique name, then
+        reads its ``solutioncomponents`` — one row per contained component —
+        collecting each ``objectid`` (the component's id), normalized for matching
+        against the discovered customization ids.
+
+        Confirmed live: a Copilot topic is its own ``solutioncomponents`` row with
+        ``objectid`` == its ``botcomponentid`` and ``componenttype`` 10213
+        (``botcomponent``), so matching customization ids against ``objectid`` holds.
+        """
+        solution_id = _resolve_solution_id(client, unique_name)
+        rows = client.query_all(
+            _SOLUTION_COMPONENTS_ENTITY,
+            select=_SOLUTIONCOMPONENT_OBJECT_ID,
+            filter=f"{_SOLUTION_ID_VALUE_FIELD} eq {solution_id}",
+        )
+        return {
+            _norm_guid(object_id)
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance((object_id := row.get(_SOLUTIONCOMPONENT_OBJECT_ID)), str)
+            and object_id
+        }
+
     def _dump_customizations(self, customizations: dict[str, CustomizationComponent]) -> None:
         # TEMP (remove later): write the filtered customizations to .local for the
         # maker to navigate. Best-effort — never fail the run on a dump error; and
@@ -188,6 +272,11 @@ class RetrieveCustomizationsStep(MigrationPipelineStep):
                 pipeline_stage="Input",
                 pipeline_step=self.name(),
             )
+
+
+def _norm_guid(value: str) -> str:
+    """Normalize a Dataverse guid string for id matching (case/brace-insensitive)."""
+    return value.strip().strip("{}").lower()
 
 
 def _resolve_solution_id(client: Any, unique_name: str) -> str:

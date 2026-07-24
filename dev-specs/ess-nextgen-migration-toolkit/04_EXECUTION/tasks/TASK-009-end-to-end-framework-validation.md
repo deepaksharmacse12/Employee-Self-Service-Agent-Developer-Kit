@@ -52,6 +52,11 @@ diagnostics, and writeback — is sound end-to-end.
   (`statecode`/`statuscode`) with content columns (`name`/`data`)** — if Dataverse
   rejects the combination, the Writeback step must emit the state fields as a
   separate PATCH.
+- [ ] Preferred-solution scoping end-to-end: with a declared `preferred_solution`,
+  `context.customizations` contains only that solution's members. The
+  `solutioncomponents` query shape is **confirmed live** — a topic is its own row
+  with `objectid` = `botcomponentid` and `componenttype` 10213 (`botcomponent`) —
+  so this item is just the full end-to-end run against a real preferred solution.
 - [ ] Session bundle produced: `output/session-<timestamp>/` with exactly two
   files.
 - [ ] `migration_report.md` contains Summary, Changes, Warnings, Errors sections.

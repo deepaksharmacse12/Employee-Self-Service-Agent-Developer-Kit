@@ -82,6 +82,9 @@ class FakeDataverseClient:
         self.solutions_response: list[dict[str, Any]] = [
             {"solutionid": "11111111-1111-1111-1111-111111111111"}
         ]
+        # solutioncomponents rows for the preferred-solution scoping query (each
+        # row an ``objectid`` of a component the preferred solution contains).
+        self.solutioncomponents_response: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
         self.get_response: dict[str, Any] = {}
 
@@ -99,6 +102,8 @@ class FakeDataverseClient:
             return list(self.botcomponents_response)
         if entity_set == "solutions":
             return list(self.solutions_response)
+        if entity_set == "solutioncomponents":
+            return list(self.solutioncomponents_response)
         return list(self._agents)
 
     def get(self, path: str, *, params: dict[str, str] | None = None) -> dict[str, Any]:
@@ -397,6 +402,97 @@ def test_retrieve_customizations_step_classifies_customized_and_net_new_layers()
             "dependentcomponententitylogicalname": "botcomponent",
         },
     ]
+
+
+def _preferred_scoping_client() -> FakeDataverseClient:
+    """A client with two net-new topic customizations (``id-in`` and ``id-out``)."""
+    fake_client = FakeDataverseClient([])
+    fake_client.function_response = {
+        "DependencyMetadataCollection": {
+            "DependencyMetadataInfoCollection": [
+                {
+                    "dependentcomponentobjectid": "id-in",
+                    "dependentcomponententitylogicalname": "botcomponent",
+                },
+                {
+                    "dependentcomponentobjectid": "id-out",
+                    "dependentcomponententitylogicalname": "botcomponent",
+                },
+            ]
+        }
+    }
+    fake_client.layers_by_id = {
+        "id-in": [{"msdyn_solutionname": "Active", "msdyn_componentjson": _component_json(9)}],
+        "id-out": [{"msdyn_solutionname": "Active", "msdyn_componentjson": _component_json(9)}],
+    }
+    return fake_client
+
+
+def test_retrieve_customizations_scoped_to_preferred_solution() -> None:
+    logger = cast(Logger, FakeLogger())
+    step = RetrieveCustomizationsStep(logger, ("READONLY", "WRITEBACK"))
+    fake_client = _preferred_scoping_client()
+    # Only id-in belongs to the preferred solution (guid mismatch in case + braces
+    # exercises normalization); id-out is a customization outside it. Row shape
+    # mirrors the confirmed live response (objectid = botcomponentid, componenttype
+    # 10213 = botcomponent).
+    fake_client.solutioncomponents_response = [{"objectid": "{ID-IN}", "componenttype": 10213}]
+    context = MigrationContext(
+        dataverse_client=fake_client,
+        selected_agent_schemaname="msdyn_copilotforemployeeselfserviceit",
+        preferred_solution="acme_CustomSolution",
+    )
+
+    result = step.execute(context)
+
+    # Both classify as customizations, but only the preferred solution's member is kept.
+    assert set(result.customizations) == {"id-in"}
+    # customized_dependencies is narrowed consistently.
+    assert [d["dependentcomponentobjectid"] for d in result.customized_dependencies] == ["id-in"]
+    # The scoping resolved the preferred solution's id then read its solutioncomponents.
+    assert (
+        "solutions",
+        "solutionid",
+        "uniquename eq 'acme_CustomSolution'",
+    ) in fake_client.calls
+    assert (
+        "solutioncomponents",
+        "objectid",
+        "_solutionid_value eq 11111111-1111-1111-1111-111111111111",
+    ) in fake_client.calls
+
+
+def test_no_preferred_solution_keeps_all_customizations() -> None:
+    logger = cast(Logger, FakeLogger())
+    step = RetrieveCustomizationsStep(logger, ("READONLY", "WRITEBACK"))
+    fake_client = _preferred_scoping_client()
+    context = MigrationContext(
+        dataverse_client=fake_client,
+        selected_agent_schemaname="msdyn_copilotforemployeeselfserviceit",
+        preferred_solution=None,
+    )
+
+    result = step.execute(context)
+
+    # Non-ALM path: every discovered customization is kept; no solutioncomponents query.
+    assert set(result.customizations) == {"id-in", "id-out"}
+    assert not any(call[0] == "solutioncomponents" for call in fake_client.calls)
+
+
+def test_preferred_solution_with_no_members_keeps_nothing() -> None:
+    logger = cast(Logger, FakeLogger())
+    step = RetrieveCustomizationsStep(logger, ("READONLY", "WRITEBACK"))
+    fake_client = _preferred_scoping_client()
+    fake_client.solutioncomponents_response = []  # preferred solution contains nothing
+    context = MigrationContext(
+        dataverse_client=fake_client,
+        selected_agent_schemaname="msdyn_copilotforemployeeselfserviceit",
+        preferred_solution="acme_EmptySolution",
+    )
+
+    result = step.execute(context)
+
+    assert result.customizations == {}
 
 
 def test_select_customizations_uses_oob_solution_membership() -> None:
