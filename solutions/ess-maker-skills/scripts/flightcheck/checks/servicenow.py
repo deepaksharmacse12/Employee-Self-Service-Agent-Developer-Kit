@@ -261,12 +261,12 @@ def _validate_expected_configs(
 PORTAL_BASE_URI_ENV_VARS = {
     "hrsd": {
         "id": "SN-URL-001",
-        "schema": "msdyn_ServiceNowHRSDPortalBaseURI",
+        "schema": "ServiceNowHRSDPortalBaseURI",
         "label": "ServiceNow HRSD portal base URL",
     },
     "itsm": {
         "id": "SN-URL-002",
-        "schema": "msdyn_ServiceNowITSMPortalBaseURI",
+        "schema": "ServiceNowITSMPortalBaseURI",
         "label": "ServiceNow ITSM portal base URL",
     },
 }
@@ -345,7 +345,7 @@ def _check_base_url(runner) -> list[CheckResult]:
     """Validate the ServiceNow portal base URL env vars are set and well-formed.
 
     Each extension pack (HRSD, ITSM) carries its own update-safe Dataverse
-    environment variable (msdyn_ServiceNow{HRSD,ITSM}PortalBaseURI) whose value
+    environment variable (ServiceNow{HRSD,ITSM}PortalBaseURI) whose value
     the orchestrator stamps onto every case/ticket record so the agent can return
     a clickable portal hyperlink. An empty value is the root cause of
     ICM 820635151 (hyperlinks only returned when explicitly requested).
@@ -392,7 +392,7 @@ def _check_base_url(runner) -> list[CheckResult]:
         def_schemas = [d.get("schemaname", "") for d in defs]
 
         for cfg in PORTAL_BASE_URI_ENV_VARS.values():
-            # Match on the publisher-agnostic core (drop the msdyn_ prefix).
+            # Match on the publisher-agnostic core (tolerate an optional publisher prefix).
             core = cfg["schema"].split("_", 1)[-1].lower()
             def_present = any(core in s.lower() for s in def_schemas)
             value = None

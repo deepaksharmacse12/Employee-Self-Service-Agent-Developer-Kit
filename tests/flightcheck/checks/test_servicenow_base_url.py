@@ -12,7 +12,7 @@ against the mocked state.
 
 Background: each ServiceNow extension pack (HRSD, ITSM) carries its own
 update-safe Dataverse environment variable
-(msdyn_ServiceNow{HRSD,ITSM}PortalBaseURI) that supersedes the
+(ServiceNow{HRSD,ITSM}PortalBaseURI) that supersedes the
 template-config base URI (which ships empty and is reset on every package
 update — root cause of ICM 820635151). The check asserts each value is
 present and a well-formed absolute URL.
@@ -55,8 +55,8 @@ def runner(fake_dataverse_url: str, fake_token: str) -> _MinimalRunner:
 _DEF_HRSD = "00000000-0000-0000-0000-0000000060a1"
 _DEF_ITSM = "00000000-0000-0000-0000-0000000060a2"
 
-_SCHEMA_HRSD = "msdyn_ServiceNowHRSDPortalBaseURI"
-_SCHEMA_ITSM = "msdyn_ServiceNowITSMPortalBaseURI"
+_SCHEMA_HRSD = "ServiceNowHRSDPortalBaseURI"
+_SCHEMA_ITSM = "ServiceNowITSMPortalBaseURI"
 
 _BOTH_DEFINITIONS = [
     dv.env_var_def(
