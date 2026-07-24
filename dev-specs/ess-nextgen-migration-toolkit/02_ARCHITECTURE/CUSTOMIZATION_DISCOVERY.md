@@ -198,6 +198,24 @@ member (ids normalized case/brace-insensitively).
 - `context.customized_dependencies` is derived after the narrowing, so it stays
   consistent with the scoped `customizations`.
 
+### 4.5 Pre-writeback snapshot (`customizations.json`)
+
+Right after the scoped `context.customizations` is finalized, the discovery step
+writes a **pre-writeback snapshot** to the session bundle
+(`output/session-<timestamp>/customizations.json`): a focused, per-topic view of the
+**original** definition — `component_id`, `schemaname`, `name`, `component_type`(+label),
+`statecode`/`statuscode`, and `data` (the original topic YAML) — excluding the verbose
+raw `layers`. Because `CustomizationComponent` is frozen and the transformation stage
+stages edits on the `WritebackPlan` (never mutating the component), this captures the
+true pre-migration state.
+
+It is written **early** (Input stage, before any transformation/writeback) so it
+survives a later partial failure, and it is an internal engineering/recovery aid — if
+a run must be reverted manually (e.g. a customer incident), the original topic YAML can
+be read back from here. It is **not** a customer-facing "undo" feature; the write is
+best-effort and no-ops when no session bundle is available (unit tests). See
+`00_META/INVARIANTS.md` DIAG-004.
+
 ---
 
 ## 5. Agent configuration retrieval (`RetrieveAgentConfigurationStep`)

@@ -12,6 +12,20 @@ task (`TASK-XXX`) where applicable, per `IMPLEMENTATION_GUIDE.md`.
 
 ## [Unreleased]
 
+- **Session-bundle customizations snapshot (`customizations.json`).** The discovery
+  step now writes a **pre-writeback snapshot** of the in-scope customizations into the
+  session bundle (`output/session-<timestamp>/customizations.json`) — each in-scope
+  topic's original `data` (topic YAML) plus identity/state, minus the verbose raw
+  layers. Previously this dump went to a gitignored `.local/` path as a temp debug
+  aid; it is now a first-class bundle artifact, written **early** (Input stage, before
+  any transformation/writeback) so it survives a later partial failure. It is an
+  internal engineering/recovery aid — if a run must be reverted manually (e.g. a
+  customer incident/ICM), the original topic YAML can be read back from here — and is
+  **not** surfaced as a customer-facing "undo" feature (the tool is still positioned as
+  making irreversible, idempotent changes). The write is best-effort (never fails the
+  run) and degrades to a no-op when no session bundle is available (unit tests).
+  `DIAG-004` updated accordingly (bundle is now report + log + the discovery snapshot).
+
 - **Preferred-solution scoping for ALM customers (`RetrieveCustomizationsStep`).**
   When the customer declares a preferred solution (`context.preferred_solution` —
   an unmanaged solution they imported and marked preferred), discovery is now
