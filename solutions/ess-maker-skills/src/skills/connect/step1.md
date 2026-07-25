@@ -61,10 +61,10 @@ Check if `.local/connect/servicenow/tasks.md` exists.
 
 Read `.local/connect/servicenow/config.json` to get the current `authType`.
 Map it to a display name:
-- `entra` → "Entra ID (interactive sign-in)"
-- `certificate` → "Certificate (service-to-service)"
-- `oauth2` → "OAuth2 (ServiceNow credentials)"
-- `basic` → "Basic auth"
+- `entra_user` → "Entra ID (interactive sign-in)"
+- `entra_certificate` → "Certificate (service-to-service)"
+- `oauth2` → "OAuth2 (ServiceNow credentials)" _(legacy)_
+- `basic` → "Basic auth" _(legacy)_
 
 **Message:**
 
@@ -130,11 +130,11 @@ Switching to **{new auth display name}**. Picking up from step 2.
 Read `.local/connect/servicenow/config.json` to restore INSTANCE_NAME and
 other values. Then route by the new SNOW_AUTH:
 
-- If `entra` → read `src/skills/connect/servicenow/step2-entra.md`
-- If `certificate` → read `src/skills/connect/servicenow/step2-certificate.md`
-- If `oauth2` → read `src/skills/connect/servicenow/step2-oauth2.md`
-- If `federated` → read `src/skills/connect/servicenow/step2-graph.md`
-- If `basic` → mark step 2 complete, read `src/skills/connect/servicenow/step3-basic.md`
+- If `entra_user` → read `src/skills/connect/servicenow/step2-entra.md`
+- If `entra_certificate` → read `src/skills/connect/servicenow/step2-certificate.md`
+- If `oauth2` → read `src/skills/connect/servicenow/step2-oauth2.md` _(legacy)_
+- If `federated` → read `src/skills/connect/servicenow/step2-graph.md` _(legacy)_
+- If `basic` → mark step 2 complete, read `src/skills/connect/servicenow/step3-basic.md` _(legacy)_
 
 **If the user chose 3 (reconnect from scratch):**
 
@@ -158,7 +158,9 @@ Starting fresh. Let's reconnect ServiceNow to your agent.
 
 **End message.**
 
-Now read `src/skills/connect/servicenow/step1.md` and follow it.
+Now read `src/skills/connect/servicenow/step0-prerequisites.md` and follow it
+(the prerequisites gate runs before instance setup; it hands off to step1 once
+the environment is verified).
 
 **If it exists and some items are unchecked:**
 
@@ -166,22 +168,23 @@ Show the checklist from `.local/connect/servicenow/tasks.md` (✅ for checked,
 ⬜ for unchecked) followed by "Picking up where we left off."
 
 Read `.local/connect/servicenow/config.json` to restore saved values
-(INSTANCE_NAME, SNOW_USAGE, SNOW_AUTH, etc.). Then find the first unchecked
-step and route as follows:
+(INSTANCE_NAME, SNOW_USAGE, SNOW_AUTH, etc.). Re-run the read-only prerequisite
+gate (`step0-prerequisites.md` §0.2) on every resume (spec §1.5), then find the
+first unchecked step and route as follows:
 
 - **Step 1 unchecked** → read `src/skills/connect/servicenow/step1.md`
 - **Step 2 unchecked** → check `authType` in config.json:
-  - If `entra` → read `src/skills/connect/servicenow/step2-entra.md`
-  - If `certificate` → read `src/skills/connect/servicenow/step2-certificate.md`
-  - If `oauth2` → read `src/skills/connect/servicenow/step2-oauth2.md`
-  - If `federated` → read `src/skills/connect/servicenow/step2-graph.md`
-  - If `basic` → mark step 2 complete, then route to step 3
+  - If `entra_user` → read `src/skills/connect/servicenow/step2-entra.md`
+  - If `entra_certificate` → read `src/skills/connect/servicenow/step2-certificate.md`
+  - If `oauth2` → read `src/skills/connect/servicenow/step2-oauth2.md` _(legacy)_
+  - If `federated` → read `src/skills/connect/servicenow/step2-graph.md` _(legacy)_
+  - If `basic` → mark step 2 complete, then route to step 3 _(legacy)_
 - **Step 3 unchecked** → check `authType` in config.json:
-  - If `entra` → read `src/skills/connect/servicenow/step3-entra.md`
-  - If `certificate` → read `src/skills/connect/servicenow/step3-certificate.md`
-  - If `oauth2` → read `src/skills/connect/servicenow/step3-oauth2.md`
-  - If `federated` → read `src/skills/connect/servicenow/step3-graph.md`
-  - If `basic` → read `src/skills/connect/servicenow/step3-basic.md`
+  - If `entra_user` → read `src/skills/connect/servicenow/step3-entra.md`
+  - If `entra_certificate` → read `src/skills/connect/servicenow/step3-certificate.md`
+  - If `oauth2` → read `src/skills/connect/servicenow/step3-oauth2.md` _(legacy)_
+  - If `federated` → read `src/skills/connect/servicenow/step3-graph.md` _(legacy)_
+  - If `basic` → read `src/skills/connect/servicenow/step3-basic.md` _(legacy)_
 - **Step 4 unchecked** → read `src/skills/connect/servicenow/step4.md`
 
 **If it does not exist:**
@@ -202,7 +205,8 @@ Let's connect ServiceNow to your agent.
 
 **End message.**
 
-Now read `src/skills/connect/servicenow/step1.md` and follow it.
+Now read `src/skills/connect/servicenow/step0-prerequisites.md` and follow it
+(the prerequisites gate runs first, then hands off to step1).
 
 ### If the user chose Workday (2 or "workday")
 

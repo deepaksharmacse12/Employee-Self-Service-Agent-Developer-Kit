@@ -193,6 +193,56 @@ Then mirror scope into `packs`:
 
 ---
 
+## 1.3b — Detect permissions (spec §1.2, Step 2)
+
+Permissions drive the "automate vs. emit manual instructions" branch for every
+later step. Detect and persist them now.
+
+**Entra Admin** — probe automatically. Attempt a read-only Entra directory-role
+check for the signed-in user (e.g. via Azure CLI
+`az rest --method get --url "https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole?$select=roleTemplateId"`
+or the equivalent Graph call). The maker counts as an Entra admin if they hold a
+role that can create app registrations and grant admin consent (Global
+Administrator, Application Administrator, or Cloud Application Administrator —
+`roleTemplateId` `62e90394-...`, `9b895d92-...`, `158c047a-...`). Record the boolean
+result in `makerPermissions.entraAdmin`. If the probe cannot run (not logged in),
+run `src/skills/connect/azure/login.md` first, then retry; if still indeterminate,
+set `entraAdmin` to `false` (the flow will emit manual instructions rather than
+assume rights).
+
+**ServiceNow Admin** — cannot be probed (spec §1.2). Ask the maker with
+`vscode_askQuestions`:
+
+```json
+[
+  {
+    "header": "ServiceNow access",
+    "question": "In ServiceNow, are you an admin who can register an OIDC provider and elevate to security_admin?",
+    "options": [
+      { "label": "Yes — I'm a ServiceNow admin with security_admin" },
+      { "label": "No — someone else administers ServiceNow" },
+      { "label": "Not sure" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+Map: "Yes" → `serviceNowAdmin: true`; "No"/"Not sure" → `serviceNowAdmin: false`
+(when unsure, treat as non-admin so the flow produces exact manual instructions for
+a ServiceNow admin to perform).
+
+Persist both into `.local/connect/servicenow/config.json`:
+
+```json
+"makerPermissions": { "entraAdmin": true, "serviceNowAdmin": false }
+```
+
+Do **not** show the raw boolean values or role IDs to the user. Re-run this probe
+on every resume (spec §1.5) — it is a read-only gate.
+
+---
+
 ## 1.4 — Set up the ServiceNow MCP server
 
 Install the MCP server dependencies:

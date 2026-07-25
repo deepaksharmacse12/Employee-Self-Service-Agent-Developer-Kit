@@ -33,15 +33,20 @@ Workday delegates to the setup orchestrator:
   - Tasks template: `src/skills/connect/servicenow/tasks.md`
   - State file: `.local/connect/servicenow/tasks.md`
   - Config file: `.local/connect/servicenow/config.json`
-  - Step 1: `step1.md` — instance info, MCP setup, connectivity check
+  - Step 0 (Prerequisites): `step0-prerequisites.md` — **gate**: ENV-001/002,
+    ENV-CAPACITY-001, ESS-SOLN-001 must pass; hands off to `/setup` on failure
+  - Step 1: `step1.md` — instance info, scope/auth capture, permission probe, MCP setup, connectivity check
   - Step 2 (Entra): `step2-entra.md` — create Entra app registration for user login
   - Step 2 (Certificate): `step2-certificate.md` — create two Entra apps + OIDC + system user
-  - Step 2 (OAuth2): `step2-oauth2.md` — create OAuth app via MCP
+  - Step 2 (OAuth2): `step2-oauth2.md` — create OAuth app via MCP _(legacy)_
   - Step 3 (Entra): `step3-entra.md` — install extension pack (Entra fields)
   - Step 3 (Certificate): `step3-certificate.md` — install extension pack (Certificate fields)
-  - Step 3 (OAuth2): `step3-oauth2.md` — install extension pack (OAuth2 fields)
-  - Step 3 (Basic): `step3-basic.md` — install extension pack (Basic fields)
+  - Step 3 (OAuth2): `step3-oauth2.md` — install extension pack (OAuth2 fields) _(legacy)_
+  - Step 3 (Basic): `step3-basic.md` — install extension pack (Basic fields) _(legacy)_
   - Step 4: `step4.md` — verify connection
+  - Auth scope (spec §0): only `entra_user` + `entra_certificate` are in-scope for
+    V2; `oauth2`/`basic`/`federated` (Graph) are retained as **legacy**, gated behind
+    `SNOW_ALLOW_LEGACY` (see `servicenow/step1.md` §1.0)
 
 - **Workday**: handled by the **setup orchestrator**
   (`src/skills/setup/SKILL.md`), not a `connect/workday/` step sequence.
