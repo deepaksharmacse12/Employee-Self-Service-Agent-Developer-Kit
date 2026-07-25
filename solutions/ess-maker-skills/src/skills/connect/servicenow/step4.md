@@ -80,17 +80,13 @@ Count the new ServiceNow-related topics from the script output.
 
 {paste the script's summary output here}
 
-Your agent now has ServiceNow capabilities. Here's what you can do next:
-
-| Command | What it does |
-|---------|-------------|
-| `/create` | Create a new topic that uses ServiceNow |
-| `/scan` | Check your agent for any errors |
-| `/menu` | See all available commands |
-
 **End message.**
 
-Stop here.
+Before we call it done, there are two spec-required finishing steps the packs
+don't do automatically: setting the **ServiceNow Portal Base URL** (so returned
+links actually open) and a **live end-to-end test**. Continue to step 5.
+
+Read `src/skills/connect/servicenow/step5-portal-and-validate.md` and follow it.
 
 ### If template configs = 0 OR no new topics
 

@@ -44,6 +44,8 @@ Workday delegates to the setup orchestrator:
   - Step 3 (OAuth2): `step3-oauth2.md` — install extension pack (OAuth2 fields) _(legacy)_
   - Step 3 (Basic): `step3-basic.md` — install extension pack (Basic fields) _(legacy)_
   - Step 4: `step4.md` — verify connection
+  - Step 5: `step5-portal-and-validate.md` — portal Base URL (5c), OBO connection
+    sharing (5b), live end-to-end validation (5e), topic-creation handoff (Step 6)
   - Auth scope (spec §0): only `entra_user` + `entra_certificate` are in-scope for
     V2; `oauth2`/`basic`/`federated` (Graph) are retained as **legacy**, gated behind
     `SNOW_ALLOW_LEGACY` (see `servicenow/step1.md` §1.0)
