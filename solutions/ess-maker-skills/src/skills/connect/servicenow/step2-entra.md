@@ -38,6 +38,36 @@ APP_DISPLAY_NAME and TENANT_ID, plus:
 When it completes, you will have APP_CLIENT_ID, APP_OBJECT_ID, and
 SCOPE_GUID.
 
+> **Checkpoint (spec 3a/3b):** the OIDC app must carry the optional access-token
+> claims `aud`, `email`, `upn`, and the Power Platform ServiceNow connector
+> (`c26b24aa-7874-4e06-ad55-7d06b1f79b63`) must be pre-authorized in the app's scope
+> so user tokens contain the ServiceNow resource scope. Verify with
+> `python scripts/flightcheck/cli.py --checkpoint SN-ENTRA-SCOPE-001`; if coverage is
+> partial/absent, have the maker attest the claims + connector scope are present.
+> Never mark this done without a PASS or an explicit attestation.
+
+---
+
+## 2.2b — Grant admin consent (spec 3d)
+
+Tenant admin consent is a discrete, required step — not just help text.
+
+Grant (or verify) admin consent for the OIDC app registration. If the maker is an
+Entra admin (`makerPermissions.entraAdmin` true), grant it programmatically (e.g.
+`az ad app permission admin-consent --id {APP_CLIENT_ID}`) or direct them to the
+app's **API permissions** → **Grant admin consent** button. Then verify:
+
+```
+python scripts/flightcheck/cli.py --checkpoint SN-ENTRA-CONSENT-001
+```
+
+- **`PASSED`** → record `stepStatus.consent = { "state": "done", "verifiedBy": "programmatic" }`. Continue.
+- **`FAILED` / not consented** → the app is not usable until consent is granted.
+  **Escalation (spec 3d failure case):** if the maker lacks a consent-capable role
+  (Global Administrator, Application Administrator, Cloud Application Administrator),
+  emit exact instructions and ask them to have a consent-capable admin grant consent,
+  then re-run the checkpoint. Do not proceed until it passes.
+
 ---
 
 ## 2.3 — Verify ServiceNow user matching
@@ -128,6 +158,30 @@ admin.
 **If the create_record call fails**: show the error and suggest the user
 create the user manually in ServiceNow (navigate to User Administration →
 Users → New).
+
+---
+
+## 2.3b — ServiceNow elevation reminder (spec §1.7)
+
+**Message:**
+
+Heads up: the next part configures OIDC trust **inside ServiceNow**, which is a
+security operation. In ServiceNow you'll need to **elevate your role** first: click
+your profile menu → **Elevate role** → select **security_admin**. If you don't see a
+**New** button on the OAuth/Application Registry screens, your role isn't elevated.
+
+**End message.**
+
+> **Spec Step 4 — ownership (ADR 0001):** ServiceNow OIDC Provider Registration is
+> owned by a ServiceNow admin with `security_admin` + elevation, and the spec states
+> the **agent never automates it** — success is **attestation only**
+> (`SN-CONN-OIDC-001`, coverage = none). The V2 target model is **guided-manual +
+> attestation by default**; the MCP-driven automation in 2.4–2.6 below is retained
+> only as an **opt-in accelerator gated on `makerPermissions.serviceNowAdmin`**.
+> When `serviceNowAdmin` is false (the default), **skip the MCP calls** and emit the
+> manual instructions (the fallback Message blocks already in each sub-step), then
+> collect the maker's `SN-CONN-OIDC-001` attestation. Full manual/attest rework is
+> tracked in ADR 0001 / gap G5.
 
 ---
 

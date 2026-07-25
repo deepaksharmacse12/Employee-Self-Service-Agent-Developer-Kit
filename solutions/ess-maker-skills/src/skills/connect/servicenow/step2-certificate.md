@@ -395,6 +395,40 @@ Wait for the user, then re-verify.
 
 ---
 
+## 2.5b — Add SNI `trustedCertificateSubjects` to App B manifest (spec 3c)
+
+Certificate SNI (Subject Name/Issuer) authentication requires App B's application
+manifest to declare the certificate's subject under `trustedCertificateSubjects`.
+The `.cer` upload alone is not sufficient for SNI.
+
+Compute the certificate subject and (SHA-256) authority hash from the `.cer`, then
+patch the App B manifest. Run in the terminal:
+
+```powershell
+$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("{CERT_CER_PATH}")
+$subject = $cert.Subject
+$authorityId = [System.Guid]::Empty.ToString()   # single-cert case; use the issuer authorityId when chaining
+$body = @{ trustedCertificateSubjects = @(@{ authorityId = $authorityId; subjectName = $subject; revokedCertificateIdentifiers = @() }) } | ConvertTo-Json -Depth 6
+$body | Out-File "$env:TEMP\ess-sni-manifest.json" -Encoding utf8
+az rest --method PATCH --url "https://graph.microsoft.com/v1.0/applications/{APP_B_OBJECT_ID}" --headers "Content-Type=application/json" --body "@$env:TEMP\ess-sni-manifest.json"
+```
+
+**Verify:**
+
+```
+az rest --method GET --url "https://graph.microsoft.com/v1.0/applications/{APP_B_OBJECT_ID}?$select=trustedCertificateSubjects" -o json
+```
+
+Expected: a non-empty `trustedCertificateSubjects` array whose `subjectName` matches
+the certificate subject.
+
+**If it fails / can't be automated**, direct the maker to edit App B's **Manifest**
+in the Entra portal and add a `trustedCertificateSubjects` entry with the
+certificate's `subjectName`, then re-verify. Confirm via
+`SN-ENTRA-CERT-001` (or maker attestation if coverage is partial) before proceeding.
+
+---
+
 ## 2.6 — Create service principal for App B
 
 The service principal's **object ID** is used as the ServiceNow system
@@ -435,6 +469,24 @@ For any other error, retry once, then show the error and stop.
 ---
 
 ## 2.7 — Register OIDC provider entity in ServiceNow
+
+**Message:**
+
+Heads up: this configures OIDC trust **inside ServiceNow**, a security operation.
+In ServiceNow, **elevate your role** first: profile menu → **Elevate role** →
+**security_admin**. If the OAuth/Application Registry screens don't show a **New**
+button, your role isn't elevated (spec §1.7).
+
+**End message.**
+
+> **Spec Step 4 — ownership (ADR 0001):** ServiceNow OIDC Provider Registration is
+> owned by a ServiceNow admin with `security_admin` + elevation, and the spec states
+> the **agent never automates it** — success is **attestation only**
+> (`SN-CONN-OIDC-001`). The V2 target model is **guided-manual + attestation by
+> default**; the MCP automation in 2.7–2.9 is retained only as an **opt-in
+> accelerator gated on `makerPermissions.serviceNowAdmin`**. When `serviceNowAdmin`
+> is false (default), **skip the MCP calls**, emit the manual instructions already in
+> each sub-step, and collect the `SN-CONN-OIDC-001` attestation. Full rework: gap G5.
 
 **Message:**
 
@@ -714,6 +766,14 @@ Type **done** when you've created the user.
 **End message.**
 
 Wait for the user. Then proceed to 2.11.
+
+> **Checkpoint (spec Step 4, cert path):** the ServiceNow system user has
+> **User ID = App B service-principal object ID** and **Web service access only =
+> checked**. Coverage is attestation-only — record
+> `SN-SYSUSER-001` as `verifiedBy: "attested"` on the maker's confirmation; never
+> auto-complete it from a flightcheck pass. Also ensure the OIDC provider's
+> certificate user-mapping is **User Claim `oid` → User Field `User ID`** (spec §
+> Certificate Authentication User Mapping).
 
 ---
 
