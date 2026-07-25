@@ -71,6 +71,7 @@ from flightcheck.checks.publishing import run_publishing_checks
 from flightcheck.checks.licensing import run_licensing_checks
 from flightcheck.checks.cloud_policy import run_cloud_policy_checks
 from flightcheck.checks.infrastructure import run_infrastructure_checks
+from flightcheck import consent
 
 
 SCOPE_MAP = {
@@ -125,6 +126,109 @@ FULL_SCOPE = [
     ("Publishing", run_publishing_checks),
     ("Cloud Policies", run_cloud_policy_checks),
 ]
+
+
+def _endpoint_systems_for_offer(runner) -> list[str]:
+    """External-system names that have a discoverable endpoint, for the consent
+    offer. Read-only; never raises (a discovery failure just means no offer)."""
+    try:
+        from flightcheck.checks.infrastructure import _discover_external_endpoints
+
+        return [ep.system for ep in _discover_external_endpoints(runner)]
+    except Exception:  # noqa: BLE001 - discovery is best-effort for the offer
+        return []
+
+
+def _apply_runtime_reachability_consent(args, runner, checks) -> None:
+    """Resolve consent for the mutating runtime-reachability probe and record the
+    decision on the runner. Consent is ALWAYS surfaced when the egress probe is
+    in scope: we prompt on an interactive terminal, announce the mutation when
+    the flag forces it on, and explain the skip (plus how to opt in) when we
+    cannot ask.
+
+    Sets ``runner.runtime_reachability`` (bool: may the probe create its flow?)
+    and ``runner.runtime_reachability_declined`` (bool: surface the skip +
+    manual-verification guidance in the report). The probe only ever runs after
+    an explicit YES (interactive answer) or an explicit ``--runtime-reachability``
+    flag, so a run we could not get consent for stays read-only.
+    """
+    runner.runtime_reachability = False
+    runner.runtime_reachability_declined = False
+
+    # Tri-state flag: True (forced on), False (forced off), None (must offer).
+    # getattr keeps this robust for callers that build args without the flag.
+    flag = getattr(args, "runtime_reachability", None)
+
+    # The egress probe only lives inside the Infrastructure category (INFRA-003).
+    infra_in_scope = any(fn is run_infrastructure_checks for _, fn in checks)
+    if not infra_in_scope:
+        runner.runtime_reachability = flag is True
+        return
+
+    systems = _endpoint_systems_for_offer(runner)
+    # Name EVERY discovered system, not just the first: the probe tests all of
+    # them, so consent must cover all of them (PR #197 review).
+    label = consent.systems_label(systems)
+
+    # --- Explicit flag wins; the flag is the consent, but never silent. -------
+    if flag is True:
+        # Passing the flag IS consent — do not re-prompt — but announce exactly
+        # what will happen so the tenant mutation is never a surprise.
+        runner.runtime_reachability = True
+        print(consent.build_forced_on_notice(label))
+        return
+    if flag is False:
+        # Explicit opt-out: surface the skip + manual-verification guidance.
+        runner.runtime_reachability_declined = True
+        print(consent.build_skip_message(label))
+        print(consent.build_manual_fallback(label))
+        return
+
+    # --- No flag: consent must be surfaced (flag is None). --------------------
+    # ADK/chat path: the skill asks the user conversationally BEFORE the run and
+    # passes --runtime-reachability on YES, so reaching here with no flag means
+    # the skill did not get a YES. Stay read-only and let the skill own the chat
+    # messaging (prompting the non-tty subprocess again would be wrong).
+    if getattr(args, "invocation_source", "cli") == "adk":
+        return
+
+    # Infrastructure-only scope intentionally skips Dataverse / Power Platform
+    # auth unless --runtime-reachability is explicitly passed (see the cli auth
+    # block). Without the flag there are no probe tokens, so we cannot run the
+    # probe even with a YES. Tell the operator how to opt in rather than
+    # prompting for something we cannot honor.
+    if getattr(args, "scope", None) == "infrastructure":
+        print(consent.build_cannot_prompt_message(label))
+        print(consent.build_manual_fallback(label))
+        return
+
+    interactive = (
+        sys.stdin is not None
+        and sys.stdin.isatty()
+        and sys.stdout is not None
+        and sys.stdout.isatty()
+    )
+
+    if not interactive:
+        # No TTY (CI / piped): we cannot ask a human. Stay read-only, but explain
+        # what did not run and how to opt in (the flag doubles as consent).
+        print(consent.build_cannot_prompt_message(label))
+        print(consent.build_manual_fallback(label))
+        return
+
+    # Interactive terminal: ALWAYS ask before touching the tenant.
+    decision = consent.resolve_consent(
+        flag,
+        endpoints_present=bool(systems),
+        interactive=True,
+        prompt_fn=lambda: consent.ask_yes_no(label),
+    )
+    runner.runtime_reachability = decision.enabled
+    runner.runtime_reachability_declined = decision.declined
+
+    if decision.declined:
+        print(consent.build_skip_message(label))
+        print(consent.build_manual_fallback(label))
 
 
 def open_report_in_browser(output_dir):
@@ -658,6 +762,13 @@ def _run_single_checkpoint(args):
     runner.powerplatform = powerplatform
     runner.azure_arm = None
 
+    # No runtime-reachability consent here: INFRA-003 is not individually
+    # targetable in single-checkpoint mode (there is no INFRA CheckpointSpec in
+    # registry.py, and plan.ordered_fns holds only leaf check fns, never
+    # run_infrastructure_checks), so the egress probe never runs on this path.
+    # Consent is resolved on the --scope path only. If an INFRA checkpoint is
+    # ever registered, wire _apply_runtime_reachability_consent here then.
+
     for label, fn in plan.ordered_fns:
         runner.register(label, fn)
 
@@ -803,6 +914,21 @@ def main():
         help="Don't emit anonymous FlightCheck outcome telemetry",
     )
     parser.add_argument(
+        "--runtime-reachability",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Runtime-reachability egress probe for INFRA-003. Stands up a "
+            "transient test flow, triggers it once to probe each external "
+            "endpoint from the Power Platform environment's OWN egress, then "
+            "deletes it — the only FlightCheck path that mutates the tenant. "
+            "--runtime-reachability forces it on (consent given); "
+            "--no-runtime-reachability forces it off. Omit both to be asked "
+            "interactively during a normal run; non-interactive runs stay "
+            "read-only and report INFRA-003 as MANUAL guidance."
+        ),
+    )
+    parser.add_argument(
         "--invocation-source", default=None,
         choices=["adk", "installer", "cli", "connect"],
         help="How FlightCheck was invoked (adk=slash-command, installer=standalone "
@@ -909,12 +1035,39 @@ def main():
     print()
 
     if infra_only_scope:
-        print("Skipping Dataverse/Graph/Power Platform auth for infrastructure scope.")
-        dv_token = None
-        tenant_id = None
+        # Infrastructure scope skips auth to stay fast and read-only. The one
+        # exception is the INFRA-003 egress probe: when explicitly opted in with
+        # --runtime-reachability it needs Dataverse + Power Platform tokens to
+        # stand up its transient flow, so acquire just those (no Graph / PVA).
         graph = None
+        tenant_id = None
+        dv_token = None
         pp_admin = None
         env_id = args.environment_id or None
+        if getattr(args, "runtime_reachability", None) is True and env_url:
+            from auth import authenticate, discover_tenant
+
+            print("Authenticating to Dataverse (runtime-reachability probe)...")
+            dv_token = authenticate(env_url)
+            tenant_id = discover_tenant(env_url)
+
+            print("Authenticating to Power Platform Admin API...")
+            pp_admin = PPAdminClient(tenant_id)
+            try:
+                pp_admin.authenticate()
+                print("  Power Platform: OK")
+            except Exception as e:
+                print(f"  Power Platform: WARNING — {e}")
+                print("  (Runtime-reachability probe can't run without Power "
+                      "Platform auth — INFRA-003 will report MANUAL guidance)")
+                pp_admin = None
+
+            if not args.environment_id:
+                env_id = derive_environment_id(env_url, dv_token, pp_admin=pp_admin)
+        else:
+            print(
+                "Skipping Dataverse/Graph/Power Platform auth for infrastructure scope."
+            )
     else:
         # --- Authenticate ---
         from auth import authenticate, discover_tenant
@@ -1081,6 +1234,11 @@ def main():
         checks = FULL_SCOPE
     else:
         checks = SCOPE_MAP.get(args.scope, FULL_SCOPE)
+
+    # Resolve consent for the mutating runtime-reachability probe (INFRA-003)
+    # before any check runs. This is the only FlightCheck path that writes to
+    # the tenant, so it never proceeds without an explicit YES.
+    _apply_runtime_reachability_consent(args, runner, checks)
 
     for category, fn in checks:
         runner.register(category, fn)
