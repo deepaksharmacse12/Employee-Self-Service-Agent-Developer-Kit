@@ -142,6 +142,13 @@ Persist `certificate.appBSpObjectId` with the returned service-principal object
 ID. This ID is later shown to the ServiceNow admin as the User ID for the system
 user.
 
+Also persist App B's application identifiers from the rehydrate query above so a
+re-run resolves the same app without recreating it:
+
+- `certificate.appBObjectId` — App B's application object ID (the `id` field).
+- `certificate.appBClientId` — App B's application (client) ID (the `appId`
+  field).
+
 ---
 
 ## P5.1 — Create the certificate sign-in apps
@@ -211,6 +218,16 @@ connector.
 az ad app create --display-name "ESS Copilot - ServiceNow Service Account ({INSTANCE_NAME})" --sign-in-audience AzureADMyOrg --query "{appId:appId,id:id}" -o json
 ```
 
+Persist App B's identifiers so later checks and steps can resolve it:
+
+- `certificate.appBObjectId` — App B's **application object ID** (the `id`
+  field). `SN-ENTRA-CERT-001` reads this to fetch App B's `keyCredentials` and
+  verify the certificate is uploaded.
+- `certificate.appBClientId` — App B's **application (client) ID** (the `appId`
+  field), used as a fallback resolver and for the connector binding.
+
+Do not confuse these with `certificate.appBSpObjectId` (the service-principal
+object ID persisted in P5.0b) — that is a different identifier.
 
 ### P5.1c — Verify and record S5.1
 

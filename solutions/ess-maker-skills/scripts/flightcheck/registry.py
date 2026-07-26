@@ -44,6 +44,7 @@ from typing import Callable, Optional
 
 from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
+from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
 from flightcheck.checks.environment import run_environment_checks
 from flightcheck.checks.external_systems import run_external_systems_checks
 from flightcheck.checks.solution import run_solution_checks
@@ -89,6 +90,7 @@ CATEGORY_ORDER = [
     "Workday Topics",
     "Graph Connector KB",
     "ServiceNow",
+    "ServiceNow Entra App",
     "Local Files",
     "Licensing",
     "Publishing",
@@ -360,6 +362,40 @@ _SPECS: list[CheckpointSpec] = [
         priority=Priority.CRITICAL.value,
         roles=(Role.ENTRA_ADMIN.value,),
     ),
+    # ServiceNow Entra-app checkpoints (setup skills 4/5). Graph-only, no
+    # Dataverse and no live ServiceNow tenant — emitted by
+    # checks/servicenow_entra.run_servicenow_entra_checks. "SN-ENTRA" is in
+    # OWNED_PREFIXES, so the drift test forces these entries to exist.
+    CheckpointSpec(
+        key="SN-ENTRA-SCOPE-001",
+        category_fn=run_servicenow_entra_checks,
+        category_label="ServiceNow Entra App",
+        clients=frozenset({GRAPH}),
+        requires_config=True,
+        requires_dataverse_endpoint=False,
+        priority=Priority.CRITICAL.value,
+        roles=(Role.ENTRA_ADMIN.value,),
+    ),
+    CheckpointSpec(
+        key="SN-ENTRA-CONSENT-001",
+        category_fn=run_servicenow_entra_checks,
+        category_label="ServiceNow Entra App",
+        clients=frozenset({GRAPH}),
+        requires_config=True,
+        requires_dataverse_endpoint=False,
+        priority=Priority.CRITICAL.value,
+        roles=(Role.ENTRA_ADMIN.value,),
+    ),
+    CheckpointSpec(
+        key="SN-ENTRA-CERT-001",
+        category_fn=run_servicenow_entra_checks,
+        category_label="ServiceNow Entra App",
+        clients=frozenset({GRAPH}),
+        requires_config=True,
+        requires_dataverse_endpoint=False,
+        priority=Priority.CRITICAL.value,
+        roles=(Role.ENTRA_ADMIN.value,),
+    ),
     CheckpointSpec(
         key="WD-ENTRA-NAMEID-001",
         category_fn=run_entra_app_checks,
@@ -554,6 +590,7 @@ OWNED_PREFIXES: tuple = (
     "WD-ENV",
     "WD-ENTRA",
     "WD-ASSIGN",
+    "SN-ENTRA",
     "WD-TENANT",
     "WD-API-CLIENT",
     "WD-REST",

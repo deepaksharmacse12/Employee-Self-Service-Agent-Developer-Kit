@@ -23,6 +23,7 @@ Scopes:
     external        — Integration discovery (flows)
     workday         — Workday deep validation
     servicenow      — ServiceNow deep validation
+    servicenowentra — ServiceNow Entra app: scope, admin consent, certificate (SN-ENTRA-*)
     local           — Local agent file validation
     publishing      — Publishing/QA checklist
     cloudpolicy     — Cloud Policy feedback checks (POL-FB-*)
@@ -66,6 +67,7 @@ from flightcheck.checks.workday_tenant import run_workday_tenant_checks
 from flightcheck.checks.workday_extension import run_workday_extension_checks
 from flightcheck.checks.topics import run_topic_checks
 from flightcheck.checks.servicenow import run_servicenow_checks
+from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
 from flightcheck.checks.local_files import run_local_file_checks
 from flightcheck.checks.publishing import run_publishing_checks
 from flightcheck.checks.licensing import run_licensing_checks
@@ -99,6 +101,10 @@ SCOPE_MAP = {
     "servicenow": [
         ("External Systems", run_external_systems_checks),
         ("ServiceNow", run_servicenow_checks),
+        ("ServiceNow Entra App", run_servicenow_entra_checks),
+    ],
+    "servicenowentra": [
+        ("ServiceNow Entra App", run_servicenow_entra_checks),
     ],
     "local": [("Local Files", run_local_file_checks)],
     "publishing": [("Publishing", run_publishing_checks)],
@@ -120,6 +126,7 @@ FULL_SCOPE = [
     ("Workday Topics", run_topic_checks),
     ("Graph Connector KB", run_graph_connector_kb_checks),
     ("ServiceNow", run_servicenow_checks),
+    ("ServiceNow Entra App", run_servicenow_entra_checks),
     ("Local Files", run_local_file_checks),
     ("Licensing", run_licensing_checks),
     ("Publishing", run_publishing_checks),
