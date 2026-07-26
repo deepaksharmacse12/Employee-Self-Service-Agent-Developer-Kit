@@ -1,0 +1,429 @@
+<!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
+# Skill 6 — Install the ServiceNow Extension Pack
+Role: **Environment Maker**. This skill installs the ServiceNow extension pack(s),
+binds ServiceNow and Dataverse connections, sets the portal URL used by returned
+links, verifies the ServiceNow cloud flows, and records rows **S6.1 through S6.4**.
+Depends on skills 1–5 as applicable: the environment, Dataverse, ESS base agent,
+ServiceNow connection basics, and the selected ServiceNow sign-in path must already
+exist. Read the selected path from `.local/connect/servicenow/config.json` as
+`authType`.
+Every **Message** block is the exact text to show the user. Copy it verbatim. Do
+not rephrase, add commentary, or tell the user what tools you are calling or what
+files you are reading.
+**Do not show internal variable names, Step IDs, checkpoint IDs, hidden checklist
+comments, or config file paths to the user.** User-facing text is limited to Message
+blocks, checkpoint-result tables rendered by the shared checklist updater, manual
+verification details, and question prompts.
+**Secrets:** never ask for ServiceNow passwords, client secrets, certificate private
+keys, certificate passwords, PFX bytes, or any other secret through chat. For the
+certificate path, use only the saved certificate file path and tell the maker to use
+the password they received when the certificate was generated. Do not write that
+password to any config file.
+**Files this skill owns or updates:**
+- Config: `.local/connect/servicenow/config.json`
+- Working checklist: `.local/setup/servicenow/tasks.md`
+- Checklist template: `src/skills/setup/servicenow/tasks.md`
+**Files this skill may read, but not own:**
+- `.local/config.json` — read-only source for `dataverseEndpoint` and agent details;
+  write only the legacy `connections.ServiceNow` summary described in P6.3c.
+**Checkpoints this skill drives (run each in isolation):**
+| Step | Checkpoint | Gate |
+|------|------------|------|
+| S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | manual |
+| S6.2 | `SN-CONN-001` — ServiceNow connection reference active | prog; auth type may require attestation |
+| S6.2 | `DV-CONN-001` *(reuse)* — Dataverse connection reference active | prog |
+| S6.3 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
+| S6.4 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
+Run any one checkpoint by itself:
+```
+python scripts/flightcheck/cli.py --checkpoint <ID>
+```
+**After every checkpoint run, show its result in chat first.** As soon as a
+`--checkpoint` run returns, render the result to the user per
+[`../shared/checklist-updater.md`](../shared/checklist-updater.md) §U.0–U.0a — the
+compact result table and, for any `MANUAL` / `Warning` / `NotConfigured` row, its
+full verification steps — before you show any later Message block or ask any
+attestation question. Single-checkpoint runs never open the HTML report, so this
+in-chat render is the only place the user sees manual steps; never ask a user to
+attest to steps they have not been shown.
+`SN-FLOW-*` is a data-driven family. Expand S6.4 into one checkbox per emitted flow
+result, using the checkpoint description as the visible flow label, and update each
+generated row immediately. Do not batch the flow updates.
+**Build order and resume.** Always run P6.0 first, then run P6.2's pack lookup
+before the first incomplete row. Both are idempotent and rehydrate state used by the
+connection, portal URL, and flow checks. After that, skip any row whose
+`setupStatus` state is already `done`.
+---
+## P6.0 — Role gate (Environment Maker)
+Apply the shared [`permission-gate.md`](../shared/permission-gate.md) before any
+extension-pack or connection work, with:
+- `REQUIRED_ROLE` = `"Environment Maker"`
+- `GATE_MODE` = `"programmatic"`
+- `STEP_ID` = `"S6.1"`
+- `ROLE_QUERY` = a Dataverse security-role membership check for the signed-in user.
+  Read `dataverseEndpoint` from `.local/config.json`; call it `{ENV_URL}`.
+Resolve the caller and roles:
+```
+az rest --method GET --resource "{ENV_URL}" --url "{ENV_URL}/api/data/v9.2/WhoAmI" --query "UserId" -o tsv
+```
+```
+az rest --method GET --resource "{ENV_URL}" --url "{ENV_URL}/api/data/v9.2/systemusers%28{USER_ID}%29/systemuserroles_association?%24select=name" --query "value[].name" -o json
+```
+The role is held if the returned names include **Environment Maker**, **System
+Customizer**, or **System Administrator**. Treat insufficient privilege, forbidden,
+or authorization-denied responses as "role not held". If the query errors for an
+unrelated reason, follow the shared gate's retry-then-attest fallback — never assume
+pass. If `GATE_RESULT` is `"stop"`, halt. Otherwise carry `GATE_EVIDENCE` forward
+and record it when rows are updated.
+---
+## P6.1 — Restore setup state and derive product/auth values
+Read `.local/connect/servicenow/config.json`. If it is missing, stop and route back
+to the ServiceNow connection basics skill; this skill cannot infer the instance,
+product scope, or sign-in method.
+Restore:
+- `instanceName` and `instanceUrl`; derive one from the other if needed.
+- `usage` and `scope`. `itsm` means ITSM only, `hrsd` means HRSD only, and `both`
+  means ITSM then HRSD. Prefer explicit `scope` when present.
+- `authType`, which must be `entra_user` or `entra_certificate`.
+- `entra.appClientId` for `entra_user`.
+- `certificate.tenantId`, `certificate.appAClientId`, `certificate.appBClientId`,
+  and `certificate.certPfxPath` for `entra_certificate`.
+- Existing `packs`, `connections`, `portalBaseUrl`, and `setupStatus`.
+If `authType` is missing or not supported, stop and route back to the selected
+sign-in setup skill. Do not offer legacy auth in this playbook.
+Build the in-scope pack list in this order: ITSM when `scope.itsm` is true, then
+HRSD when `scope.hrsd` is true. Use **ServiceNow IT** and **ServiceNow HR** as the
+user-facing names. Ensure each in-scope `packs.<product>` exists with at least
+`"pending"`, unless it already records a more advanced state. Merge only; never drop
+fields written by earlier setup skills.
+Read `.local/config.json` read-only for `dataverseEndpoint` and `agent` details. Do
+not write ServiceNow setup fields into that file except for the legacy connection
+summary in P6.3c.
+---
+## P6.2 — Install the extension pack and verify it landed (SN-PKG-001) *(completes S6.1)*
+First check whether the ServiceNow pack content is already installed, so resume does
+not ask the maker to reinstall.
+**Message:**
+
+First, let me check whether the ServiceNow extension pack is already installed in
+your agent.
+
+**End message.**
+```
+python scripts/flightcheck/cli.py --checkpoint SN-PKG-001
+```
+Render the checkpoint result before continuing.
+- `PASSED` → the expected pack content is present; go to **Record S6.1**.
+- `FAILED`, `NotConfigured`, or a manual install finding → guide the maker through
+  installation for each in-scope pack, then re-run the checkpoint.
+### P6.2a — User sign-in install values
+Use only when `authType == "entra_user"`. Require `entra.appClientId`; if missing,
+route back to the user sign-in playbook.
+For each in-scope pack, show this message with `{PACK_NAME}` set to **ServiceNow
+IT** or **ServiceNow HR**.
+**Message:**
+
+Time to install the ServiceNow integration in Copilot Studio.
+
+1. Open [Copilot Studio](https://copilotstudio.microsoft.com/).
+2. Open your Employee Self-Service agent.
+3. Go to **Settings** → **Customize**.
+4. Find **{PACK_NAME}** and select **Install**.
+5. When it asks for connection details, enter:
+
+   | Field | Value |
+   |-------|-------|
+   | **Authentication Type** | Microsoft Entra ID User Login |
+   | **Resource URI** | `{APP_CLIENT_ID}` |
+   | **Instance Name** | `{INSTANCE_NAME}` |
+
+6. Sign in with your Microsoft work account when prompted.
+7. If it asks for a **Microsoft Dataverse** connection, sign in with the same maker
+   account you use for this environment.
+
+If the sign-in button hangs after authenticating, open
+[Power Automate](https://make.powerautomate.com) → **Connections** and check whether
+ServiceNow shows as connected. If it does, return to Copilot Studio, close the
+install dialog, refresh the page, and select **Install** again so it can pick up the
+existing connection.
+
+Tell me when the install finishes, or say **help** if something went wrong.
+
+**End message.**
+### P6.2b — Certificate install values
+Use only when `authType == "entra_certificate"`. Require `certificate.tenantId`,
+`certificate.appAClientId`, `certificate.appBClientId`, and
+`certificate.certPfxPath`; if any are missing, route back to the certificate
+playbook. Confirm the PFX file exists. If it does not, route back to regenerate it.
+Before showing the install message, open File Explorer with the certificate selected:
+```powershell
+explorer.exe /select,"{CERT_PFX_PATH}"
+```
+For HRSD, show:
+**Message:**
+
+Time to install the ServiceNow HR integration in Copilot Studio.
+
+1. Open [Copilot Studio](https://copilotstudio.microsoft.com/).
+2. Open your Employee Self-Service agent.
+3. Go to **Settings** → **Customize**.
+4. Find **ServiceNow HR** and select **Install**.
+5. When it asks for connection details, enter:
+
+   | Field | Value |
+   |-------|-------|
+   | **Authentication Type** | Microsoft Entra ID OAuth using Certificate |
+   | **Instance Name** | `{INSTANCE_NAME}` |
+   | **Tenant ID** | `{TENANT_ID}` |
+   | **Client ID** | `{APP_B_CLIENT_ID}` |
+   | **Resource URI** | `{APP_A_CLIENT_ID}` |
+   | **Client Secret** | Upload the `.pfx` certificate file I opened for you |
+   | **Certificate password** | Use the password shown when the certificate was generated |
+
+6. If it asks for a **Microsoft Dataverse** connection, sign in with the same maker
+   account you use for this environment.
+
+Tell me when the install finishes, or say **help** if something went wrong.
+
+**End message.**
+For ITSM, show:
+**Message:**
+
+Time to install the ServiceNow IT integration in Copilot Studio.
+
+1. Open [Copilot Studio](https://copilotstudio.microsoft.com/).
+2. Open your Employee Self-Service agent.
+3. Go to **Settings** → **Customize**.
+4. Find **ServiceNow IT** and select **Install**.
+5. When it asks for connection details, enter:
+
+   | Field | Value |
+   |-------|-------|
+   | **Authentication Type** | Use Oauth2 |
+   | **Instance Name** | `{INSTANCE_NAME}` |
+   | **Tenant Type** | `{TENANT_ID}` |
+   | **Client Id** | `{APP_B_CLIENT_ID}` |
+   | **Resource URI** | `{APP_A_CLIENT_ID}` |
+   | **Client certificate secret** | Upload the `.pfx` certificate file I opened for you |
+   | **Certificate password** | Use the password shown when the certificate was generated |
+
+6. If it asks for a **Microsoft Dataverse** connection, sign in with the same maker
+   account you use for this environment.
+
+Tell me when the install finishes, or say **help** if something went wrong.
+
+**End message.**
+If the maker asks for help, mention these checks: confirm they are in the right
+agent and **Settings → Customize**; check Power Automate **Connections** if sign-in
+hangs; verify Resource URI / Client ID values; use the generated certificate
+password or rerun certificate setup if it was lost; grant Entra admin consent if a
+consent error appears. Then retry the current pack.
+After each product install confirmation, continue to the next product. When all
+in-scope products have been attempted, re-run:
+```
+python scripts/flightcheck/cli.py --checkpoint SN-PKG-001
+```
+Render the result and loop until it passes. Keep S6.1 `in-progress` while the maker
+is still installing or retrying.
+### Record S6.1
+When the pack checkpoint passes, merge `.local/connect/servicenow/config.json`:
+- Set each in-scope `packs.<product>` to `"installed"`.
+- Preserve out-of-scope packs and unknown fields.
+Then show:
+**Message:**
+
+The ServiceNow extension pack content is installed for the products in scope.
+
+**End message.**
+S6.1 is a manual gate. Even with a passing checkpoint, ask for the explicit
+acknowledgement required by [`../shared/checklist-updater.md`](../shared/checklist-updater.md).
+Update S6.1 with `GATE="manual"`, the pack checkpoint result, and `ACK=true` only
+when the maker confirms. Persist immediately before continuing.
+---
+## P6.3 — Bind the ServiceNow and Dataverse connections (SN-CONN-001, DV-CONN-001) *(completes S6.2)*
+Verify the ServiceNow reference first.
+**Message:**
+
+Now I'll check that the ServiceNow connection is bound and active.
+
+**End message.**
+```
+python scripts/flightcheck/cli.py --checkpoint SN-CONN-001
+```
+Render the result. On `FAILED` / `NotConfigured`, show:
+**Message:**
+
+The ServiceNow connection isn't fully bound yet. In Copilot Studio, open your
+agent's **Connections**, find the ServiceNow connection, and create, bind, or
+re-authenticate it using the sign-in method we selected for this setup. Then tell
+me and I'll re-check.
+
+**End message.**
+Wait, re-run, and loop until the ServiceNow checkpoint passes.
+### P6.3a — Auth-type evidence
+`SN-CONN-001` proves the reference is active. If its result also proves the selected
+auth type, treat that part as programmatic evidence. If the Power Platform APIs do
+not expose a kit-verifiable auth-type fingerprint, ask the maker to attest after the
+checkpoint result has been rendered.
+For `authType == "entra_user"`, show:
+**Message:**
+
+Please confirm the ServiceNow connection uses **Microsoft Entra ID User Login**.
+Open the ServiceNow connection in Copilot Studio or Power Automate and check the
+authentication type. Is it set that way?
+
+**End message.**
+Use the question tool with options **Yes** and **No / not sure**.
+For `authType == "entra_certificate"`, show:
+**Message:**
+
+Please confirm the ServiceNow connection uses the Microsoft Entra certificate
+sign-in method from this setup. Open the ServiceNow connection in Copilot Studio or
+Power Automate and check the authentication type. Is it set that way?
+
+**End message.**
+Use the question tool with options **Yes** and **No / not sure**. If the maker
+chooses **No / not sure**, leave S6.2 `in-progress`; have them re-create or re-bind
+the ServiceNow connection with the selected auth type, then re-run this section.
+### P6.3b — Verify Dataverse
+**Message:**
+
+Now I'll check that the Dataverse connection is bound to an active connection.
+
+**End message.**
+```
+python scripts/flightcheck/cli.py --checkpoint DV-CONN-001
+```
+Render the result. On `FAILED` / `NotConfigured`, show:
+**Message:**
+
+The Dataverse connection for the ServiceNow pack isn't bound to an active
+connection yet. In Copilot Studio, open your agent's **Connections**, find the
+Microsoft Dataverse connection, and bind or re-authenticate it with your maker
+account. Then tell me and I'll re-check.
+
+**End message.**
+Re-run until it passes. If the result is `Skipped` because a Dataverse token is
+unavailable, re-authenticate and re-run; do not complete the row on a skip.
+### P6.3c — Write connection state
+When both connection checkpoints pass and any auth-type attestation is satisfied,
+merge `.local/connect/servicenow/config.json`:
+```json
+{
+  "connections": {
+    "servicenow": { "state": "active", "authType": "{authType}", "verifiedBy": "programmatic-or-attested" },
+    "dataverse": { "state": "active", "verifiedBy": "programmatic" }
+  },
+  "status": "connected"
+}
+```
+Also merge the legacy summary into `.local/config.json` so older scan/report flows
+can discover the ServiceNow connection. Preserve every existing key:
+```json
+{
+  "connections": {
+    "ServiceNow": {
+      "instanceName": "{INSTANCE_NAME}",
+      "instanceUrl": "https://{INSTANCE_NAME}.service-now.com",
+      "usage": "{usage}",
+      "authType": "{authType}",
+      "connectedAt": "{current ISO date}"
+    }
+  }
+}
+```
+Update S6.2 only after both checkpoints pass and auth-type evidence is present. Use
+`GATE="prog"` when fully programmatic; if auth type required maker confirmation,
+record the auth evidence as attested in the row mirror while keeping the row's
+checkpoint evidence from the two passing checks. Persist immediately.
+---
+## P6.4 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.3)*
+Derive `{PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
+`https://contoso.service-now.com/sp`. Merge it into
+`.local/connect/servicenow/config.json` as `portalBaseUrl` before verification.
+**Message:**
+
+One important setting the packs don't fill in for you: the **ServiceNow Portal
+Base URL**. It's what turns case and ticket references into working links for your
+employees.
+
+For each ServiceNow pack you installed, do this in Copilot Studio:
+
+1. Go to **...** → **Solutions** → **Managed**.
+2. Open the managed solution for the pack:
+   - For HR: **ServiceNow HR Solution** → **Objects** → `msdyn_ServiceNowHRSD`
+   - For IT: **ServiceNow IT Solution** → **Objects** → `msdyn_ServiceNowITSM`
+3. Set this value:
+
+   ```json
+   { "ServiceNowPortalBaseURI": "{PORTAL_BASE_URL}" }
+   ```
+
+Use the same URL for every ServiceNow pack you installed. Tell me when you've set
+it for each pack in scope.
+
+**End message.**
+Only mention the HR object when HRSD is in scope and only mention the IT object when
+ITSM is in scope. After confirmation, run:
+```
+python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001
+```
+Render the result. `PASSED` updates S6.3 with `GATE="prog"`. `FAILED`,
+`NotConfigured`, or partial coverage requires attestation after the rendered result:
+**Message:**
+
+I can only partially verify that portal setting from the kit. Please confirm you
+set the ServiceNow Portal Base URL shown above for every ServiceNow pack you
+installed.
+
+**End message.**
+Use the question tool with options **Yes, it's set** and **Not yet**. On **Yes**,
+update S6.3 with attested evidence and `ACK=true`. On **Not yet**, leave S6.3
+`in-progress`, return to the portal setting instructions, and re-check or re-attest
+after they finish.
+Always include this note after S6.3 is recorded:
+**Message:**
+
+Remember: the ServiceNow Portal Base URL can reset after an extension-pack update.
+If you update either ServiceNow pack later, set this value again so links keep
+opening in the portal.
+
+**End message.**
+---
+## P6.5 — Turn on the ServiceNow flows (SN-FLOW-*) *(completes S6.4)*
+Verify every ServiceNow cloud flow emitted by the installed packs.
+**Message:**
+
+Now I'll confirm the ServiceNow cloud flows are turned on.
+
+**End message.**
+```
+python scripts/flightcheck/cli.py --checkpoint SN-FLOW-*
+```
+Render the result. If every emitted flow row passes, expand/update S6.4 as one
+checkbox per flow result with `GATE="prog"`, persisting each generated row
+immediately. If any flow row fails, show:
+**Message:**
+
+One or more ServiceNow cloud flows are turned off. In Power Platform, open the
+managed ServiceNow solution, go to **Cloud flows**, and turn on any flow that is
+off. Then tell me and I'll re-check.
+
+**End message.**
+Re-run the family checkpoint after the maker confirms. Leave each failing generated
+row `in-progress` or `blocked` according to the checkpoint result; do not complete
+the family until every emitted flow row passes. Do not invent flow names — use the
+checkpoint descriptions.
+---
+## Done
+When S6.1, S6.2, S6.3, and every generated S6.4 flow row are `done`, return control
+to the setup router (`SKILL.md`) to resume at validation and handoff. Do not run the
+end-to-end ServiceNow prompt test here; that belongs to the separate
+`validate-and-handoff.md` playbook.
+**Message:**
+
+Your ServiceNow extension pack is installed and wired — the ServiceNow and
+Dataverse connections are bound, the portal link setting is recorded, and the
+ServiceNow cloud flows are on. Next up is validating the setup end to end.
+
+**End message.**

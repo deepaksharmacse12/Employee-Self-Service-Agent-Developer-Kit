@@ -19,36 +19,30 @@ pass it to step1 as PRE_SELECTED_INTEGRATION. Step1 will skip the
 Read `src/skills/connect/step1.md` and follow it.
 
 (Step 1 asks which integration, detects existing state, and dispatches —
-ServiceNow to its own step files, Workday to the setup orchestrator
-`src/skills/setup/SKILL.md`.)
+each integration delegates to its setup orchestrator
+`src/skills/setup/<product>/SKILL.md`.)
 
 ---
 
 ## Routing
 
-Each integration routes differently — ServiceNow has its own step files;
-Workday delegates to the setup orchestrator:
+Each integration delegates to its setup orchestrator, which sequences the setup
+skills using a master checklist as a resume-aware spine:
 
-- **ServiceNow**: `src/skills/connect/servicenow/`
-  - Tasks template: `src/skills/connect/servicenow/tasks.md`
-  - State file: `.local/connect/servicenow/tasks.md`
-  - Config file: `.local/connect/servicenow/config.json`
-  - Step 0 (Prerequisites): `step0-prerequisites.md` — **gate**: ENV-001/002,
-    ENV-CAPACITY-001, ESS-SOLN-001 must pass; hands off to `/setup` on failure
-  - Step 1: `step1.md` — instance info, scope/auth capture, permission probe, MCP setup, connectivity check
-  - Step 2 (Entra): `step2-entra.md` — create Entra app registration for user login
-  - Step 2 (Certificate): `step2-certificate.md` — create two Entra apps + OIDC + system user
-  - Step 2 (OAuth2): `step2-oauth2.md` — create OAuth app via MCP _(legacy)_
-  - Step 3 (Entra): `step3-entra.md` — install extension pack (Entra fields)
-  - Step 3 (Certificate): `step3-certificate.md` — install extension pack (Certificate fields)
-  - Step 3 (OAuth2): `step3-oauth2.md` — install extension pack (OAuth2 fields) _(legacy)_
-  - Step 3 (Basic): `step3-basic.md` — install extension pack (Basic fields) _(legacy)_
-  - Step 4: `step4.md` — verify connection
-  - Step 5: `step5-portal-and-validate.md` — portal Base URL (5c), OBO connection
-    sharing (5b), live end-to-end validation (5e), topic-creation handoff (Step 6)
+- **ServiceNow**: handled by the **ServiceNow setup orchestrator**
+  (`src/skills/setup/servicenow/SKILL.md`), not a `connect/servicenow/` step
+  sequence. `src/skills/connect/step1.md` routes the ServiceNow branch straight
+  there. The orchestrator sequences the ServiceNow setup skills (environment, ESS
+  install, connection basics, Entra sign-in app — user or certificate path,
+  extension pack + connection, portal URL + flows, validation) using the master
+  checklist as a resume-aware spine, and persists state under
+  `.local/setup/servicenow/tasks.md` + `setupStatus` in
+  `.local/connect/servicenow/config.json`.
   - Auth scope (spec §0): only `entra_user` + `entra_certificate` are in-scope for
     V2; `oauth2`/`basic`/`federated` (Graph) are retained as **legacy**, gated behind
-    `SNOW_ALLOW_LEGACY` (see `servicenow/step1.md` §1.0)
+    `.local/connect/servicenow/ALLOW_LEGACY` (see
+    `setup/servicenow/capture-servicenow-config.md`, S3.1). The superseded
+    `connect/servicenow/step*.md` files remain only to service those legacy paths.
 
 - **Workday**: handled by the **setup orchestrator**
   (`src/skills/setup/SKILL.md`), not a `connect/workday/` step sequence.
