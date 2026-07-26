@@ -247,6 +247,27 @@ Verify the ServiceNow reference first.
 Now I'll check that the ServiceNow connection is bound and active.
 
 **End message.**
+
+First, attempt to bind the ServiceNow reference automatically. If the maker
+already created the ServiceNow connection during installation, this wires it to
+the extension pack's connection reference for them (a single Dataverse write —
+no re-authentication). The action is ServiceNow-only and self-reports which
+connection it chose.
+```
+python scripts/bind_connections.py --connector servicenow
+```
+Interpret the exit code and render the printed summary:
+- **Exit 0** — the reference is now bound (or was already bound). If more than
+  one active ServiceNow connection existed, the action bound the most recently
+  created one and named it (with its owner) in the summary; relay that to the
+  maker so they can veto. Continue to the checkpoint below.
+- **Exit 4** — no active ServiceNow connection exists to bind. Show the manual
+  message below so the maker creates one, then re-run this section.
+- **Exit 3** — the extension pack reference is missing; return to S6.1.
+- **Exit 1** — the action errored; surface the message and fall back to the
+  manual bind message below.
+
+Then verify the ServiceNow reference.
 ```
 python scripts/flightcheck/cli.py --checkpoint SN-CONN-001
 ```
