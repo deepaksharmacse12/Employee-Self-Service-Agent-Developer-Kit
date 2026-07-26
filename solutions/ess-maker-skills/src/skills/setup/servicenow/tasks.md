@@ -54,8 +54,8 @@ the `entra_certificate` path — they are **mutually exclusive**. The orchestrat
 reads `authType` from `.local/connect/servicenow/config.json` (captured in **S3.1**)
 and renders **only** the matching group; the other group is omitted from the working
 checklist entirely (like a `*` family that expands to zero rows). Legacy paths
-(`oauth2`, `basic`, `graph`/federated) are out of V2 scope and are not part of this
-checklist — they remain reachable only behind the legacy gate in the connect flow.
+(`oauth2`, `basic`, `graph`/federated) are out of scope and are not supported; only
+the two Entra sign-in methods are offered.
 
 ## Checklist
 

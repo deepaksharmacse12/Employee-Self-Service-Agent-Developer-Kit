@@ -66,9 +66,8 @@ on the flows, and validates end to end. It is resume-aware: it renders a working
 checklist to `.local/setup/servicenow/tasks.md`, persists `setupStatus` in
 `.local/connect/servicenow/config.json`, picks up at the first unverified step, and
 fast-forwards steps that are already done. Changing the sign-in method or reconnecting
-is handled inside its first skill (capture-servicenow-config, S3.1), which also owns
-the legacy-path gate (`.local/connect/servicenow/ALLOW_LEGACY`); only `entra_user` and
-`entra_certificate` are in scope for V2.
+is handled inside its first skill (capture-servicenow-config, S3.1); only `entra_user`
+and `entra_certificate` are supported (the legacy oauth2/basic/graph paths were retired).
 
 Now read `src/skills/setup/servicenow/SKILL.md` and follow it.
 

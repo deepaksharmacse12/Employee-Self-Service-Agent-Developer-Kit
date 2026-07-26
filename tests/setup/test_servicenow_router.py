@@ -64,6 +64,22 @@ class TestServiceNowRouter:
             "connect/SKILL.md must route ServiceNow to its setup orchestrator"
         )
 
+    def test_connect_servicenow_monolith_removed(self):
+        # The connect/servicenow/ step monolith was retired when ServiceNow
+        # moved to the setup orchestrator (matching the Workday migration).
+        monolith = _SOLUTION / "src" / "skills" / "connect" / "servicenow"
+        assert not monolith.exists(), (
+            "the connect/servicenow/ monolith must be deleted"
+        )
+        skill = _CONNECT_SKILL.read_text(encoding="utf-8")
+        step1 = _CONNECT_STEP1.read_text(encoding="utf-8")
+        assert "connect/servicenow/step" not in skill, (
+            "connect/SKILL.md must not reference the retired monolith step files"
+        )
+        assert "connect/servicenow/step" not in step1, (
+            "connect/step1.md must not reference the retired monolith step files"
+        )
+
     def test_router_dispatches_to_every_playbook(self):
         text = _ROUTER.read_text(encoding="utf-8")
         for group, filename in _PLAYBOOKS.items():

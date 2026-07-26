@@ -37,9 +37,9 @@ If the working checklist already exists, leave it alone except for the auth-path
 
 V2 setup supports exactly two sign-in methods: `entra_user` (Microsoft Entra ID user sign-in) and `entra_certificate` (Microsoft Entra ID OAuth with certificate).
 
-Legacy `oauth2`, `basic`, and `graph` / federated knowledge connector paths are out of V2 scope. They are reachable only when `.local/connect/servicenow/ALLOW_LEGACY` exists. If that file is absent, do not show legacy options.
+Legacy `oauth2`, `basic`, and `graph` / federated knowledge connector paths are **out of scope** and are not supported by this setup flow (the old `connect/servicenow/` step files were retired).
 
-If the maker requests username/password, dev/test basic auth, or Graph knowledge connector while legacy is not enabled, show this and stop:
+If the maker requests username/password, dev/test basic auth, or Graph knowledge connector, show this and stop:
 
 **Message:**
 
@@ -49,8 +49,6 @@ Graph connector paths aren't part of this setup flow. Choose one of the Entra
 sign-in methods to continue.
 
 **End message.**
-
-Even when legacy is enabled, this playbook updates only the V2 setup rows. Legacy auth-specific work belongs to the legacy connect playbooks.
 
 ---
 
@@ -73,8 +71,6 @@ Normalize answers:
 - Products set `scope.itsm`, `scope.hrsd`, and `usage` (`itsm`, `hrsd`, or `both`).
 - Connector must map to `connectorType = "powerplatform"` for V2 setup.
 - Sign-in maps to `authType = "entra_user"` or `"entra_certificate"`; "I'm not sure" triggers P3.2a.
-
-If legacy options are visible because the legacy gate is enabled and the maker selects one, stop this setup playbook and route to the legacy connect playbook.
 
 ---
 

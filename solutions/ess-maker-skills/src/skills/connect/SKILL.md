@@ -38,11 +38,10 @@ skills using a master checklist as a resume-aware spine:
   checklist as a resume-aware spine, and persists state under
   `.local/setup/servicenow/tasks.md` + `setupStatus` in
   `.local/connect/servicenow/config.json`.
-  - Auth scope (spec §0): only `entra_user` + `entra_certificate` are in-scope for
-    V2; `oauth2`/`basic`/`federated` (Graph) are retained as **legacy**, gated behind
-    `.local/connect/servicenow/ALLOW_LEGACY` (see
-    `setup/servicenow/capture-servicenow-config.md`, S3.1). The superseded
-    `connect/servicenow/step*.md` files remain only to service those legacy paths.
+  - Auth scope (spec §0): only `entra_user` + `entra_certificate` are supported.
+    The legacy `oauth2`/`basic`/`federated` (Graph) paths were retired along with
+    the old `connect/servicenow/` step files (removed), matching the Workday
+    migration (see `setup/servicenow/capture-servicenow-config.md`, S3.1).
 
 - **Workday**: handled by the **setup orchestrator**
   (`src/skills/setup/SKILL.md`), not a `connect/workday/` step sequence.
