@@ -104,8 +104,9 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    **6. ServiceNow extension pack and connection**
    - {m} Install the ServiceNow extension pack
    - {m} Connect ServiceNow and Dataverse
-   - {m} Set the Portal Base URL
    - {m} Turn on the ServiceNow flows
+   - {m} Connect ServiceNow to your agent's flows
+   - {m} Set the Portal Base URL
 
    **7. Validate and hand off**
    - {m} Run an end-to-end validation
@@ -204,16 +205,20 @@ incomplete row.
 
 When it returns, go back to **Start** to resume at the next unverified row.
 
-### S6.1 through S6.4 — Install the ServiceNow extension pack and connect (skill-6)
+### S6.1 through S6.5 — Install the ServiceNow extension pack and connect (skill-6)
 
 Read `src/skills/setup/servicenow/install-servicenow-extension-pack.md` and follow
 it. That playbook role-gates (Environment Maker), guides the extension-pack install
 for each in-scope product and verifies it (`SN-PKG-001`, **S6.1**), binds the
 ServiceNow and Dataverse connections with the selected auth type (`SN-CONN-001`,
-`DV-CONN-001`, **S6.2**), sets the Portal Base URL to `/sp` for each pack
-(`SN-BASEURL-001`, **S6.3**), and confirms the ServiceNow flows are on (`SN-FLOW-*`,
-**S6.4**). S6.1 is a manual portal install (verified by checkpoint); the rest are
-programmatic gates. On resume it re-runs the role gate and the pack lookup first.
+`DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
+**S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
+(`SN-FLOWCONN-001`, **S6.4**), and sets the Portal Base URL to `/sp` for each pack
+(`SN-BASEURL-001`, **S6.5**). S6.1 is a manual portal install (verified by
+checkpoint); the rest are programmatic gates. The chain runs install → bind → turn
+on flows → connect and share → portal, in that order, because a flow can only hold
+activation once its references are bound and the invoker binding must land on the
+activated flow. On resume it re-runs the role gate and the pack lookup first.
 
 When it returns, go back to **Start** to resume at the next unverified row.
 

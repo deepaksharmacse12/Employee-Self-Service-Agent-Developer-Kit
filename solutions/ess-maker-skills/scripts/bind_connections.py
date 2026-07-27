@@ -2,41 +2,50 @@
 # Licensed under the MIT License.
 
 """
-Auto-bind the ServiceNow connection reference to an existing connection.
+Auto-bind extension-pack connection references to existing connections.
 
 Setup **action** (it mutates Dataverse) invoked by the ServiceNow setup
 orchestrator's S6.2 step (``install-servicenow-extension-pack.md`` P6.3) before
 it falls back to manual "go bind it in Copilot Studio" instructions.
 
-The problem it solves: a maker who created the ServiceNow connection during
-installation (the interactive Entra consent already happened) is still told to
-manually wire it to the extension pack's connection *reference*. Binding a
-reference to an already-created connection is **not** an OAuth flow — it is a
-single Dataverse write setting ``connectionreferences.connectionid`` to the
-connection's id (the same field ``push.py`` writes when it mirrors a
-flow-scoped connref). This script performs that write automatically.
+The problem it solves: installing an extension pack **creates** connection
+references but leaves them unbound (``connectionid == null``). A maker who
+created the connection during installation (the interactive Entra consent
+already happened) is still told to manually wire it to the extension pack's
+connection *reference*. Binding a reference to an already-created connection is
+**not** an OAuth flow — it is a single Dataverse write setting
+``connectionreferences.connectionid`` to the connection's id (the same field
+``push.py`` writes when it mirrors a flow-scoped connref). This script performs
+that write automatically for every unbound reference on the target connector.
 
-Scope: **ServiceNow only.** Dataverse and other connectors are intentionally
-out of scope (the base agent install owns the Dataverse binding).
+Supported connectors (``--connector``):
+  * ``servicenow`` — the ServiceNow HR/ITSM connection reference.
+  * ``dataverse``  — the Microsoft Dataverse connection reference(s) a pack
+    creates (there are usually two). Reuses an existing ``Connected`` Dataverse
+    connection; it does **not** mint a new one.
+  * ``all``        — bind every supported connector in one pass.
 
-Resolution order for the connection to bind:
-  1. **Sibling reuse** — another ServiceNow connection reference that is already
+Resolution order for the connection to bind (per connector):
+  1. **Sibling reuse** — another reference on the same connector that is already
      bound to an active connection; reuse its ``connectionid`` (safest — same
      maker, proven-active connection, no guessing).
   2. **BAP discovery** — list the environment's connections, keep the ones on
-     the ServiceNow connector that are ``Connected``. Zero → cannot auto-bind
+     the target connector that are ``Connected``. Zero → cannot auto-bind
      (the maker must create a connection first); exactly one → bind it; more
      than one → bind the **most recently created** and report which was chosen
      (and its owner) so the maker can veto.
 
+Every unbound reference on the connector is bound to the resolved connection.
+
 Exit codes (consumed by the playbook):
-  0  bound now, or already bound — proceed to verify with SN-CONN-001.
-  3  no ServiceNow connection reference found (extension pack not installed).
-  4  no active ServiceNow connection exists — fall back to manual create.
+  0  bound now, or already bound — proceed to verify (SN-CONN-001 / DV-CONN-001).
+  3  no connection reference found for the connector (extension pack not installed).
+  4  no active connection exists for the connector — fall back to manual create.
   1  unexpected error.
 
 Usage:
-    python scripts/bind_connections.py [--env-url URL] [--environment-id ID]
+    python scripts/bind_connections.py [--connector servicenow|dataverse|all]
+                                       [--env-url URL] [--environment-id ID]
                                        [--dry-run] [--json]
 """
 
@@ -51,11 +60,22 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
 
-# The Power Platform ServiceNow connector's apiId suffix. A connection
-# reference's ``connectorid`` looks like
-# ``/providers/Microsoft.PowerApps/apis/shared_service-now``; a BAP connection's
-# ``properties.apiId`` ends the same way.
-_SERVICENOW_CONNECTOR_KEYWORDS = ("service-now", "servicenow")
+# Per-connector matching keywords. A connection reference's ``connectorid`` and
+# a BAP connection's ``properties.apiId`` share the ``shared_<connector>`` suffix
+# (e.g. ``.../apis/shared_service-now`` or ``.../apis/shared_commondataserviceforapps``).
+_CONNECTOR_KEYWORDS = {
+    "servicenow": ("service-now", "servicenow"),
+    "dataverse": ("commondataserviceforapps",),
+}
+_CONNECTOR_LABELS = {
+    "servicenow": "ServiceNow",
+    "dataverse": "Dataverse",
+}
+# Order used by ``--connector all``.
+_ALL_CONNECTORS = ("servicenow", "dataverse")
+
+# Backward-compatible alias for callers/tests that reference the ServiceNow set.
+_SERVICENOW_CONNECTOR_KEYWORDS = _CONNECTOR_KEYWORDS["servicenow"]
 
 _REF_ENTITY = "connectionreferences"
 _REF_SELECT = (
@@ -69,14 +89,23 @@ _REF_SELECT = (
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _matches_servicenow(text: str) -> bool:
+def _matches(text: str, keywords: tuple[str, ...]) -> bool:
     low = (text or "").lower()
-    return any(kw in low for kw in _SERVICENOW_CONNECTOR_KEYWORDS)
+    return any(kw in low for kw in keywords)
+
+
+def _matches_servicenow(text: str) -> bool:
+    return _matches(text, _CONNECTOR_KEYWORDS["servicenow"])
+
+
+def select_refs(rows: list[dict], keywords: tuple[str, ...]) -> list[dict]:
+    """Return the connection references whose connector matches ``keywords``."""
+    return [r for r in rows if _matches(r.get("connectorid", ""), keywords)]
 
 
 def select_servicenow_refs(rows: list[dict]) -> list[dict]:
     """Return the connection references whose connector is ServiceNow."""
-    return [r for r in rows if _matches_servicenow(r.get("connectorid", ""))]
+    return select_refs(rows, _CONNECTOR_KEYWORDS["servicenow"])
 
 
 def ref_is_bound(ref: dict) -> bool:
@@ -117,15 +146,20 @@ def _created_time(conn: dict) -> str:
     return (conn.get("properties") or {}).get("createdTime") or ""
 
 
-def filter_servicenow_connections(conns: list[dict]) -> list[dict]:
-    """Keep only ``Connected`` connections on the ServiceNow connector."""
+def filter_connections(conns: list[dict], keywords: tuple[str, ...]) -> list[dict]:
+    """Keep only ``Connected`` connections on the connector matching ``keywords``."""
     out = []
     for c in conns:
         props = c.get("properties") or {}
         haystack = f"{props.get('apiId', '')}{props.get('displayName', '')}"
-        if _matches_servicenow(haystack) and _connection_status(c) == "Connected":
+        if _matches(haystack, keywords) and _connection_status(c) == "Connected":
             out.append(c)
     return out
+
+
+def filter_servicenow_connections(conns: list[dict]) -> list[dict]:
+    """Keep only ``Connected`` connections on the ServiceNow connector."""
+    return filter_connections(conns, _CONNECTOR_KEYWORDS["servicenow"])
 
 
 def pick_connection(conns: list[dict]) -> tuple[dict | None, int]:
@@ -174,106 +208,172 @@ def _discover_connections(env_url: str, dv_token: str, environment_id: str | Non
     return conns if isinstance(conns, list) else []
 
 
-def run(env_url: str, *, environment_id: str | None, dry_run: bool) -> dict:
-    """Resolve and (unless ``dry_run``) perform the ServiceNow bind.
+def _resolve_connection(
+    connector: str, refs: list[dict], env_url: str, dv_token: str,
+    environment_id: str | None,
+) -> tuple[str | None, str, str | None, int | None, dict | None]:
+    """Resolve the connection id to bind the connector's unbound refs to.
 
-    Returns a result dict with an ``action`` in {``already_bound``,
-    ``bound``, ``would_bind``, ``no_reference``, ``no_connection``} and an
-    ``exit_code``.
+    Returns ``(connection_id, source, owner, candidate_total, failure)``. When
+    resolution fails, ``connection_id`` is ``None`` and ``failure`` is a result
+    dict describing why (``no_connection``); otherwise ``failure`` is ``None``.
     """
-    dv_token = auth.authenticate(env_url)
-    rows = auth.query_all(env_url, dv_token, _REF_ENTITY, _REF_SELECT)
-    sn_refs = select_servicenow_refs(rows)
+    # 1) Sibling reuse — any already-bound reference on this same connector.
+    for r in refs:
+        if ref_is_bound(r):
+            return r.get("connectionid"), "sibling reference", None, None, None
 
-    if not sn_refs:
+    # 2) BAP discovery.
+    conns = _discover_connections(env_url, dv_token, environment_id)
+    candidates = filter_connections(conns, _CONNECTOR_KEYWORDS[connector])
+    chosen, total = pick_connection(candidates)
+    if chosen is None:
+        label = _CONNECTOR_LABELS[connector]
+        failure = {
+            "action": "no_connection",
+            "exit_code": 4,
+            "connector": connector,
+            "message": (
+                f"No active {label} connection exists to bind. Create the "
+                f"{label} connection in Copilot Studio (Connections), then "
+                "re-run this step."
+            ),
+        }
+        return None, "environment connection", None, total, failure
+    return chosen.get("name"), "environment connection", _connection_owner(chosen), total, None
+
+
+def bind_connector(
+    connector: str, rows: list[dict], env_url: str, dv_token: str, *,
+    environment_id: str | None, dry_run: bool,
+) -> dict:
+    """Resolve and (unless ``dry_run``) bind every unbound reference on
+    ``connector`` to a single resolved connection.
+
+    Returns a result dict with an ``action`` in {``already_bound``, ``bound``,
+    ``would_bind``, ``no_reference``, ``no_connection``} and an ``exit_code``.
+    """
+    keywords = _CONNECTOR_KEYWORDS[connector]
+    label = _CONNECTOR_LABELS[connector]
+    refs = select_refs(rows, keywords)
+
+    if not refs:
         return {
             "action": "no_reference",
             "exit_code": 3,
+            "connector": connector,
             "message": (
-                "No ServiceNow connection reference found in this environment. "
-                "Install the ServiceNow extension pack first (S6.1), then re-run."
+                f"No {label} connection reference found in this environment. "
+                "Install the extension pack first (S6.1), then re-run."
             ),
         }
 
-    already = [r for r in sn_refs if ref_is_bound(r)]
-    unbound = [r for r in sn_refs if not ref_is_bound(r)]
-
+    unbound = [r for r in refs if not ref_is_bound(r)]
     if not unbound:
-        ref = already[0]
+        ref = refs[0]
         return {
             "action": "already_bound",
             "exit_code": 0,
+            "connector": connector,
             "reference": ref.get("connectionreferencelogicalname"),
             "connection_id": ref.get("connectionid"),
-            "message": "ServiceNow connection reference is already bound and active.",
+            "message": f"{label} connection reference(s) already bound and active.",
         }
 
-    target = unbound[0]
-    ref_name = target.get("connectionreferencelogicalname")
-    ref_id = target.get("connectionreferenceid")
+    chosen_id, source, owner, total, failure = _resolve_connection(
+        connector, refs, env_url, dv_token, environment_id
+    )
+    if failure is not None:
+        failure["reference"] = unbound[0].get("connectionreferencelogicalname")
+        return failure
 
-    # 1) Sibling reuse.
-    source = "sibling reference"
-    chosen_id = sibling_connection_id(sn_refs, target)
-    owner = None
-    total = None
-
-    # 2) BAP discovery.
-    if not chosen_id:
-        conns = _discover_connections(env_url, dv_token, environment_id)
-        candidates = filter_servicenow_connections(conns)
-        chosen, total = pick_connection(candidates)
-        if chosen is None:
-            return {
-                "action": "no_connection",
-                "exit_code": 4,
-                "reference": ref_name,
-                "message": (
-                    "No active ServiceNow connection exists to bind. Create the "
-                    "ServiceNow connection in Copilot Studio (Connections), then "
-                    "re-run this step."
-                ),
-            }
-        chosen_id = chosen.get("name")
-        owner = _connection_owner(chosen)
-        source = "environment connection"
-
-    result = {
-        "action": "would_bind" if dry_run else "bound",
-        "exit_code": 0,
-        "reference": ref_name,
-        "connection_id": chosen_id,
-        "source": source,
-        "owner": owner,
-        "candidate_count": total,
-    }
+    bound_names: list[str] = []
+    for ref in unbound:
+        if not dry_run:
+            auth.update_record(
+                env_url, dv_token, _REF_ENTITY,
+                ref.get("connectionreferenceid"), {"connectionid": chosen_id},
+            )
+        bound_names.append(ref.get("connectionreferencelogicalname"))
 
     note = ""
     if total and total > 1:
         note = (
-            f" ({total} active ServiceNow connections found — bound the most "
+            f" ({total} active {label} connections found — bound the most "
             f"recently created one, owner {owner})"
         )
-    result["message"] = (
-        f"{'Would bind' if dry_run else 'Bound'} ServiceNow connection reference "
-        f"'{ref_name}' to connection {chosen_id} (via {source}){note}."
-    )
-
-    if not dry_run:
-        auth.update_record(
-            env_url, dv_token, _REF_ENTITY, ref_id, {"connectionid": chosen_id}
+    verb = "Would bind" if dry_run else "Bound"
+    if len(bound_names) == 1:
+        message = (
+            f"{verb} {label} connection reference '{bound_names[0]}' to "
+            f"connection {chosen_id} (via {source}){note}."
+        )
+    else:
+        message = (
+            f"{verb} {len(bound_names)} {label} connection references to "
+            f"connection {chosen_id} (via {source}){note}."
         )
 
-    return result
+    return {
+        "action": "would_bind" if dry_run else "bound",
+        "exit_code": 0,
+        "connector": connector,
+        "reference": bound_names[0],
+        "connection_id": chosen_id,
+        "source": source,
+        "owner": owner,
+        "candidate_count": total,
+        "bound_references": bound_names,
+        "message": message,
+    }
+
+
+def _aggregate_exit(results: list[dict]) -> int:
+    """Worst-case exit for ``--connector all``: a genuine failure (error/1 or
+    no-connection/4) fails the pass; a missing reference (3) for one connector is
+    tolerated so binding the other still reports success."""
+    codes = [r.get("exit_code", 1) for r in results]
+    if any(c == 1 for c in codes):
+        return 1
+    if any(c == 4 for c in codes):
+        return 4
+    return 0
+
+
+def run(env_url: str, *, environment_id: str | None, dry_run: bool,
+        connector: str = "servicenow") -> dict:
+    """Resolve and (unless ``dry_run``) perform the bind for ``connector``.
+
+    For a single connector, returns that connector's result dict. For ``all``,
+    returns an aggregate ``{"action": "multi", "results": [...]}``.
+    """
+    dv_token = auth.authenticate(env_url)
+    rows = auth.query_all(env_url, dv_token, _REF_ENTITY, _REF_SELECT)
+
+    if connector == "all":
+        results = [
+            bind_connector(c, rows, env_url, dv_token,
+                           environment_id=environment_id, dry_run=dry_run)
+            for c in _ALL_CONNECTORS
+        ]
+        return {
+            "action": "multi",
+            "exit_code": _aggregate_exit(results),
+            "results": results,
+            "message": " ".join(r.get("message", "") for r in results),
+        }
+
+    return bind_connector(connector, rows, env_url, dv_token,
+                          environment_id=environment_id, dry_run=dry_run)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Auto-bind the ServiceNow connection reference."
+        description="Auto-bind extension-pack connection references."
     )
     parser.add_argument("--connector", default="servicenow",
-                        choices=["servicenow"],
-                        help="Connector to bind (only 'servicenow' is supported).")
+                        choices=["servicenow", "dataverse", "all"],
+                        help="Connector(s) to bind (default: servicenow).")
     parser.add_argument("--env-url", default=None,
                         help="Dataverse environment URL (default: .local/config.json).")
     parser.add_argument("--environment-id", default=None,
@@ -292,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = run(env_url, environment_id=args.environment_id,
-                     dry_run=args.dry_run)
+                     dry_run=args.dry_run, connector=args.connector)
     except Exception as e:  # noqa: BLE001 — surface a clean message, no stack
         result = {"action": "error", "exit_code": 1,
                   "message": f"{type(e).__name__}: {e}"}

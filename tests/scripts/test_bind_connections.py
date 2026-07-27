@@ -216,3 +216,110 @@ def test_run_dry_run_does_not_write(patched, monkeypatch):
     assert res["connection_id"] == "c1"
     assert patched["update"] == []
     assert res["message"].startswith("Would bind")
+
+
+# ── Dataverse + multi-connector ──────────────────────────────────────
+
+def test_select_refs_matches_dataverse_connector():
+    rows = [
+        _ref(rid="sn", connector=SN_CONNECTOR),
+        _ref(rid="dv", connector=OTHER_CONNECTOR),
+    ]
+    got = bc.select_refs(rows, bc._CONNECTOR_KEYWORDS["dataverse"])
+    assert [r["connectionreferenceid"] for r in got] == ["dv"]
+
+
+def test_filter_connections_keeps_only_connected_dataverse():
+    conns = [
+        _conn(name="dv-ok", api=OTHER_CONNECTOR, display="Dataverse"),
+        _conn(name="dv-down", api=OTHER_CONNECTOR, display="Dataverse", status="Error"),
+        _conn(name="sn", api=SN_CONNECTOR, display="ServiceNow"),
+    ]
+    got = bc.filter_connections(conns, bc._CONNECTOR_KEYWORDS["dataverse"])
+    assert [c["name"] for c in got] == ["dv-ok"]
+
+
+def test_run_dataverse_binds_all_unbound_refs(patched, monkeypatch):
+    refs = [
+        _ref(rid="dv1", connector=OTHER_CONNECTOR, name="pack.bot.dv1"),
+        _ref(rid="dv2", connector=OTHER_CONNECTOR, name="pack.bot.dv2"),
+        _ref(rid="sn", connector=SN_CONNECTOR),  # different connector, ignored
+    ]
+    monkeypatch.setattr(bc.auth, "query_all", lambda *a, **k: refs)
+    monkeypatch.setattr(
+        bc, "_discover_connections",
+        lambda *a, **k: [_conn(name="dv-conn", api=OTHER_CONNECTOR, display="Dataverse")],
+    )
+    res = bc.run("https://x", environment_id=None, dry_run=False,
+                 connector="dataverse")
+    assert res["action"] == "bound"
+    assert res["connection_id"] == "dv-conn"
+    assert set(res["bound_references"]) == {"pack.bot.dv1", "pack.bot.dv2"}
+    assert patched["update"] == [
+        ("connectionreferences", "dv1", {"connectionid": "dv-conn"}),
+        ("connectionreferences", "dv2", {"connectionid": "dv-conn"}),
+    ]
+    assert "2 Dataverse connection references" in res["message"]
+
+
+def test_run_dataverse_no_reference(patched, monkeypatch):
+    monkeypatch.setattr(
+        bc.auth, "query_all", lambda *a, **k: [_ref(rid="sn", connector=SN_CONNECTOR)]
+    )
+    res = bc.run("https://x", environment_id=None, dry_run=False,
+                 connector="dataverse")
+    assert res["action"] == "no_reference"
+    assert res["exit_code"] == 3
+    assert patched["update"] == []
+
+
+def test_run_all_binds_both_connectors(patched, monkeypatch):
+    refs = [
+        _ref(rid="sn", connector=SN_CONNECTOR, name="pack.bot.sn"),
+        _ref(rid="dv1", connector=OTHER_CONNECTOR, name="pack.bot.dv1"),
+    ]
+    monkeypatch.setattr(bc.auth, "query_all", lambda *a, **k: refs)
+
+    def _disco(env, tok, env_id):
+        return [
+            _conn(name="sn-conn", api=SN_CONNECTOR, display="ServiceNow"),
+            _conn(name="dv-conn", api=OTHER_CONNECTOR, display="Dataverse"),
+        ]
+
+    monkeypatch.setattr(bc, "_discover_connections", _disco)
+    res = bc.run("https://x", environment_id=None, dry_run=False, connector="all")
+    assert res["action"] == "multi"
+    assert res["exit_code"] == 0
+    actions = {r["connector"]: r["action"] for r in res["results"]}
+    assert actions == {"servicenow": "bound", "dataverse": "bound"}
+    assert ("connectionreferences", "sn", {"connectionid": "sn-conn"}) in patched["update"]
+    assert ("connectionreferences", "dv1", {"connectionid": "dv-conn"}) in patched["update"]
+
+
+def test_run_all_tolerates_missing_reference(patched, monkeypatch):
+    # Only ServiceNow refs present; Dataverse absent -> 'all' still succeeds.
+    monkeypatch.setattr(
+        bc.auth, "query_all",
+        lambda *a, **k: [_ref(rid="sn", connector=SN_CONNECTOR)],
+    )
+    monkeypatch.setattr(
+        bc, "_discover_connections", lambda *a, **k: [_conn(name="sn-conn")]
+    )
+    res = bc.run("https://x", environment_id=None, dry_run=False, connector="all")
+    assert res["action"] == "multi"
+    assert res["exit_code"] == 0
+    actions = {r["connector"]: r["action"] for r in res["results"]}
+    assert actions["servicenow"] == "bound"
+    assert actions["dataverse"] == "no_reference"
+
+
+def test_run_all_fails_when_no_connection(patched, monkeypatch):
+    monkeypatch.setattr(
+        bc.auth, "query_all",
+        lambda *a, **k: [_ref(rid="dv1", connector=OTHER_CONNECTOR)],
+    )
+    monkeypatch.setattr(bc, "_discover_connections", lambda *a, **k: [])
+    res = bc.run("https://x", environment_id=None, dry_run=False, connector="all")
+    assert res["action"] == "multi"
+    assert res["exit_code"] == 4
+    assert patched["update"] == []

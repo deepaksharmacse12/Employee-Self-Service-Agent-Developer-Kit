@@ -110,10 +110,12 @@ the two Entra sign-in methods are offered.
   <!-- id: S6.1 | role: Environment Maker | skill: skill-6 | automatable: No | checkpoints: SN-PKG-001 | gate: manual | status: pending -->
 - [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow connection (with your chosen sign-in method) and the Dataverse connection so the agent can talk to ServiceNow and read its configuration.
   <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-CONN-001, DV-CONN-001 (reuse) | gate: prog; else attest for auth-type | status: pending -->
-- [ ] **Set the Portal Base URL** — Point each in-scope pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
-  <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 - [ ] **Turn on the ServiceNow flows** — Switch on the background flows that carry requests between the agent and ServiceNow.
-  <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
+  <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
+- [ ] **Connect ServiceNow to your agent's flows** — Bind the ServiceNow flow invoker connection so Copilot Studio shows the connection as connected.
+  <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOWCONN-001 | gate: prog | status: pending -->
+- [ ] **Set the Portal Base URL** — Point each in-scope pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
+  <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 
 ### 7. Validate and hand off
 

@@ -125,7 +125,12 @@ def build_flow_bindings(
     ServiceNow does not clear a flow's Dataverse binding). Returns
     ``(flow_bindings, changed_flow_ids)`` where ``flow_bindings`` maps a flow id
     to a *direct array* of connector dicts (the write shape) and
-    ``changed_flow_ids`` lists the flows whose ServiceNow connection changed.
+    ``changed_flow_ids`` lists the flows whose ServiceNow binding needs a write.
+
+    A flow needs a write when the target connector's connection id differs *or*
+    the connector is not currently ``Connected`` (e.g. ``Stale`` after a pack
+    install replaced the flow) — a stale binding carries the right connection id
+    but must be re-POSTed to become active again.
     """
     # Group all connectors by flow id (from the nested GET shape).
     flows: dict[str, list[dict]] = {}
@@ -149,7 +154,7 @@ def build_flow_bindings(
             short = connector_short_name(connector_id)
             connection_id = c.get("connectionId")
             if short == connector_name:
-                if connection_id != target_connection_id:
+                if connection_id != target_connection_id or not connector_is_connected(c):
                     flow_changed = True
                 connection_id = target_connection_id
             out.append(

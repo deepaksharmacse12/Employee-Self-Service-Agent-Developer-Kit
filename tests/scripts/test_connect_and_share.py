@@ -131,6 +131,16 @@ def test_build_flow_bindings_no_change_when_already_target():
     assert FLOW_ID in bindings  # still emits the body, just unchanged
 
 
+def test_build_flow_bindings_rebinds_stale_even_when_id_matches():
+    # A pack install can leave the binding with the right connectionId but a
+    # 'Stale' status; it must be re-POSTed to become active again.
+    data = _user_connections(CONN_ID, status="Stale")
+    bindings, changed = cs.build_flow_bindings(data, "shared_service-now", CONN_ID)
+    assert changed == [FLOW_ID]
+    sn = next(c for c in bindings[FLOW_ID] if c["connectorId"] == SN_CONNECTOR)
+    assert sn["connectionId"] == CONN_ID
+
+
 def test_build_param_config_reduces_to_value_only():
     assert cs.build_param_config(_connection()) == PARAM_CONFIG
 

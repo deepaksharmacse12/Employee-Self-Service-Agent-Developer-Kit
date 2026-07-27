@@ -45,6 +45,16 @@ PP_API_SCOPE = "https://api.powerplatform.com/.default"
 
 API_VERSION = "2022-03-01-preview"
 
+# Global Power Platform API host. Unlike the per-environment host used for
+# user-connections / connectivity, the Application Management (appmanagement)
+# API — used to install/uninstall Dynamics 365 application packages — is served
+# from this single global endpoint.
+GLOBAL_API_HOST = "api.powerplatform.com"
+
+# Terminal states for an application-package install operation
+# (GET .../operations/{operationId}).
+TERMINAL_OPERATION_STATUSES = frozenset({"Succeeded", "Failed", "Canceled"})
+
 _CACHE_PATH = os.path.join(".local", ".pac_token_cache.bin")
 
 
@@ -177,10 +187,59 @@ class PPEnvClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- application packages (appmanagement, global host) ----------------
+    def _appmgmt_base(self) -> str:
+        return f"https://{GLOBAL_API_HOST}/appmanagement/environments/{self.env_id}"
 
-# ---------------------------------------------------------------------------
-# Pure helpers (unit-testable without HTTP)
-# ---------------------------------------------------------------------------
+    def list_application_packages(self) -> list[dict]:
+        """GET the application packages this environment is entitled to install.
+
+        Returns the ``value`` array; each entry carries ``uniqueName``, ``state``
+        (``None`` = not installed, ``Installed``, ``Installing``, ``InstallFailed``,
+        …), ``version`` and ``instancePackageId``.
+        """
+        url = f"{self._appmgmt_base()}/applicationPackages?api-version={API_VERSION}"
+        resp = requests.get(url, headers=self._headers(), timeout=60)
+        resp.raise_for_status()
+        return (resp.json() or {}).get("value") or []
+
+    def install_application_package(self, unique_name: str) -> dict:
+        """POST to start installing an application package by unique name.
+
+        Returns ``{"status_code", "operation_id", "body"}``. The operation id is
+        read from the response body's ``lastOperation.operationId`` (falling back
+        to the ``Operation-Location`` header). NOTE: this call is *not*
+        idempotent server-side — re-posting on an already-installed package
+        starts a fresh install operation — so callers must check
+        :meth:`list_application_packages` state first.
+        """
+        url = (
+            f"{self._appmgmt_base()}/applicationPackages/{unique_name}"
+            f"/install?api-version={API_VERSION}"
+        )
+        resp = requests.post(
+            url, headers=self._headers(with_content_type=True), json={}, timeout=120
+        )
+        resp.raise_for_status()
+        body = {}
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        op_id = ((body.get("lastOperation") or {}).get("operationId")
+                 or body.get("operationId")
+                 or _operation_id_from_header(resp.headers.get("Operation-Location")))
+        return {"status_code": resp.status_code, "operation_id": op_id, "body": body}
+
+    def get_operation(self, operation_id: str) -> dict:
+        """GET the status of an install operation (``status`` + ``statusMessage``)."""
+        url = (
+            f"{self._appmgmt_base()}/operations/{operation_id}"
+            f"?api-version={API_VERSION}"
+        )
+        resp = requests.get(url, headers=self._headers(), timeout=60)
+        resp.raise_for_status()
+        return resp.json()
 def connector_short_name(connector_id: str) -> str:
     """Return the connector's short name from its provider path.
 
@@ -221,3 +280,42 @@ def connector_is_connected(connector: dict) -> bool:
     return bool(connector.get("connectionId")) and (
         str(connector.get("status", "")).lower() == "connected"
     )
+
+
+def _operation_id_from_header(operation_location: str | None) -> str | None:
+    """Extract the operation id from an ``Operation-Location`` header URL.
+
+    ``https://.../operations/18a6d34e-...?api-version=1`` -> ``18a6d34e-...``
+    """
+    if not operation_location:
+        return None
+    path = operation_location.split("?", 1)[0]
+    marker = "/operations/"
+    idx = path.find(marker)
+    if idx == -1:
+        return None
+    return path[idx + len(marker):].strip("/") or None
+
+
+def find_application_package(packages: list[dict], unique_name: str) -> dict | None:
+    """Return the package entry whose ``uniqueName`` matches (case-insensitive)."""
+    target = (unique_name or "").lower()
+    for pkg in packages or []:
+        if (pkg.get("uniqueName") or "").lower() == target:
+            return pkg
+    return None
+
+
+def package_is_installed(package: dict | None) -> bool:
+    """True when a package entry's ``state`` is ``Installed``."""
+    return bool(package) and str(package.get("state", "")).lower() == "installed"
+
+
+def operation_is_terminal(status: str | None) -> bool:
+    """True when an install operation status is terminal (case-insensitive)."""
+    return (status or "").lower() in {s.lower() for s in TERMINAL_OPERATION_STATUSES}
+
+
+def operation_succeeded(status: str | None) -> bool:
+    """True when an install operation status is ``Succeeded`` (case-insensitive)."""
+    return (status or "").lower() == "succeeded"

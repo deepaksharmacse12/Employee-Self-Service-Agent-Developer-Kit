@@ -2,7 +2,7 @@
 # Skill 6 — Install the ServiceNow Extension Pack
 Role: **Environment Maker**. This skill installs the ServiceNow extension pack(s),
 binds ServiceNow and Dataverse connections, sets the portal URL used by returned
-links, verifies the ServiceNow cloud flows, and records rows **S6.1 through S6.4**.
+links, verifies the ServiceNow cloud flows, and records rows **S6.1 through S6.5**.
 Depends on skills 1–5 as applicable: the environment, Dataverse, ESS base agent,
 ServiceNow connection basics, and the selected ServiceNow sign-in path must already
 exist. Read the selected path from `.local/connect/servicenow/config.json` as
@@ -32,9 +32,9 @@ password to any config file.
 | S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | manual |
 | S6.2 | `SN-CONN-001` — ServiceNow connection reference active | prog; auth type may require attestation |
 | S6.2 | `DV-CONN-001` *(reuse)* — Dataverse connection reference active | prog |
-| S6.2 | `SN-FLOWCONN-001` — ServiceNow flow invoker connection connected | prog |
-| S6.3 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
-| S6.4 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
+| S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
+| S6.4 | `SN-FLOWCONN-001` — ServiceNow flow invoker connection connected | prog |
+| S6.5 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
 Run any one checkpoint by itself:
 ```
 python scripts/flightcheck/cli.py --checkpoint <ID>
@@ -47,13 +47,18 @@ full verification steps — before you show any later Message block or ask any
 attestation question. Single-checkpoint runs never open the HTML report, so this
 in-chat render is the only place the user sees manual steps; never ask a user to
 attest to steps they have not been shown.
-`SN-FLOW-*` is a data-driven family. Expand S6.4 into one checkbox per emitted flow
+`SN-FLOW-*` is a data-driven family. Expand S6.3 into one checkbox per emitted flow
 result, using the checkpoint description as the visible flow label, and update each
 generated row immediately. Do not batch the flow updates.
 **Build order and resume.** Always run P6.0 first, then run P6.2's pack lookup
 before the first incomplete row. Both are idempotent and rehydrate state used by the
-connection, portal URL, and flow checks. After that, skip any row whose
+connection, flow, and portal URL checks. After that, skip any row whose
 `setupStatus` state is already `done`.
+The connection/flow chain runs in this order: **install (P6.2) → bind connection
+references (P6.3) → turn on flows (P6.4) → connect and share (P6.5) → portal URL
+(P6.6)**. A cloud flow can only hold activation once its connection references are
+bound, and the flow invoker binding must land on the activated flow definition, so
+this order is deliberate — do not reorder it.
 ---
 ## P6.0 — Role gate (Environment Maker)
 Apply the shared [`permission-gate.md`](../shared/permission-gate.md) before any
@@ -249,22 +254,23 @@ Now I'll check that the ServiceNow connection is bound and active.
 
 **End message.**
 
-First, attempt to bind the ServiceNow reference automatically. If the maker
-already created the ServiceNow connection during installation, this wires it to
-the extension pack's connection reference for them (a single Dataverse write —
-no re-authentication). The action is ServiceNow-only and self-reports which
-connection it chose.
+First, attempt to bind both connection references automatically. If the maker
+already created the ServiceNow (and Dataverse) connection during installation,
+this wires each to the extension pack's connection reference for them (a single
+Dataverse write per reference — no re-authentication). The action reuses an
+existing active connection per connector and self-reports which one it chose.
 ```
-python scripts/bind_connections.py --connector servicenow
+python scripts/bind_connections.py --connector all
 ```
 Interpret the exit code and render the printed summary:
-- **Exit 0** — the reference is now bound (or was already bound). If more than
-  one active ServiceNow connection existed, the action bound the most recently
+- **Exit 0** — every reference is now bound (or was already bound). If more than
+  one active connection existed for a connector, the action bound the most recently
   created one and named it (with its owner) in the summary; relay that to the
-  maker so they can veto. Continue to the checkpoint below.
-- **Exit 4** — no active ServiceNow connection exists to bind. Show the manual
+  maker so they can veto. Continue to the checkpoints below.
+- **Exit 4** — no active connection exists to bind for a connector. Show the manual
   message below so the maker creates one, then re-run this section.
-- **Exit 3** — the extension pack reference is missing; return to S6.1.
+- **Exit 3** — reported per connector when a reference is missing; if ServiceNow is
+  missing, return to S6.1. A missing Dataverse reference alone does not block.
 - **Exit 1** — the action errored; surface the message and fall back to the
   manual bind message below.
 
@@ -316,7 +322,9 @@ Now I'll check that the Dataverse connection is bound to an active connection.
 ```
 python scripts/flightcheck/cli.py --checkpoint DV-CONN-001
 ```
-Render the result. On `FAILED` / `NotConfigured`, show:
+Render the result. The auto-bind above already attempts the Dataverse reference
+(reusing the environment's active Dataverse connection). On `FAILED` /
+`NotConfigured`, show:
 **Message:**
 
 The Dataverse connection for the ServiceNow pack isn't bound to an active
@@ -327,11 +335,83 @@ account. Then tell me and I'll re-check.
 **End message.**
 Re-run until it passes. If the result is `Skipped` because a Dataverse token is
 unavailable, re-authenticate and re-run; do not complete the row on a skip.
-### P6.3c — Connect the ServiceNow flow invoker connection (SN-FLOWCONN-001)
-Binding the connection *reference* (P6.3) is necessary but not sufficient: Copilot
-Studio still shows the ServiceNow connection as **Not connected** until the agent's
-per-flow *invoker connection* is bound. This step performs that binding and shares
-the connection parameters onto the reference, then verifies it.
+### P6.3c — Write connection-reference state
+When both connection-reference checkpoints pass (`SN-CONN-001`, `DV-CONN-001`) and
+any auth-type attestation is satisfied, merge
+`.local/connect/servicenow/config.json` to record this step:
+```json
+{
+  "connections": {
+    "servicenow": { "state": "bound", "authType": "{authType}", "verifiedBy": "programmatic-or-attested" },
+    "dataverse": { "state": "bound", "verifiedBy": "programmatic" }
+  }
+}
+```
+Update S6.2 only after both checkpoints pass and auth-type evidence is present.
+Use `GATE="prog"` when fully programmatic; if auth type required maker confirmation,
+record the auth evidence as attested in the row mirror while keeping the row's
+checkpoint evidence from the two passing checks. Persist immediately.
+The flow invoker binding (making Copilot Studio show the connection as
+**Connected**) happens later in P6.5, after the flows are turned on.
+---
+## P6.4 — Turn on the ServiceNow flows (SN-FLOW-*) *(completes S6.3)*
+Installing an extension pack lands its cloud flows in **Draft**. Copilot Studio will
+not invoke a draft flow, so they must be turned on. This runs before the flow
+invoker binding (P6.5) so the invoker connection lands on the activated flow
+definition and does not go stale.
+**Message:**
+
+Now I'll turn on the ServiceNow cloud flows so your agent can use them.
+
+**End message.**
+First, turn on any off flows automatically. Activating a flow is a single Dataverse
+write (`statecode`/`statuscode`); the action is ServiceNow-only, idempotent, and
+self-reports which flows it switched on. A flow can only hold activation once its
+connection references are bound, so this must run after P6.3.
+```
+python scripts/activate_flows.py --connector servicenow
+```
+Interpret the exit code and render the printed summary:
+- **Exit 0** — every ServiceNow flow is on now, or was already on. Continue to the
+  checkpoint below.
+- **Exit 3** — no ServiceNow cloud flow was found; the pack may not have landed.
+  Return to S6.1.
+- **Exit 1** — the action errored; surface the message and fall back to the manual
+  message below.
+
+Then verify every ServiceNow cloud flow emitted by the installed packs.
+```
+python scripts/flightcheck/cli.py --checkpoint SN-FLOW-*
+```
+Render the result. If every emitted flow row passes, expand/update S6.3 as one
+checkbox per flow result with `GATE="prog"`, persisting each generated row
+immediately. If any flow row fails, show:
+**Message:**
+
+One or more ServiceNow cloud flows are turned off. In Power Platform, open the
+managed ServiceNow solution, go to **Cloud flows**, and turn on any flow that is
+off. Then tell me and I'll re-check.
+
+**End message.**
+Re-run the family checkpoint after the maker confirms. Leave each failing generated
+row `in-progress` or `blocked` according to the checkpoint result; do not complete
+the family until every emitted flow row passes. Do not invent flow names — use the
+checkpoint descriptions.
+When every flow row passes, merge `.local/connect/servicenow/config.json` to record
+this step:
+```json
+{
+  "flows": { "state": "on", "verifiedBy": "programmatic" }
+}
+```
+---
+## P6.5 — Connect and share the ServiceNow flow invoker connection (SN-FLOWCONN-001) *(completes S6.4)*
+Binding the connection *reference* (P6.3) and turning on the flows (P6.4) is
+necessary but not sufficient: Copilot Studio still shows the ServiceNow connection
+as **Not connected** until the agent's per-flow *invoker connection* is bound. This
+step performs that binding and shares the connection parameters onto the reference,
+then verifies it. Because it runs after the flows are on, the binding lands on the
+final, activated flow definition and will not go stale.
 **Message:**
 
 Now I'll connect the ServiceNow connection to your agent's flows so it shows as
@@ -371,15 +451,14 @@ connection, and connect it. Then tell me and I'll re-check.
 If the checkpoint is `Skipped` because no Power Platform token is cached, re-run the
 `connect_and_share.py` action above (it establishes the token), then re-check. Loop
 until `SN-FLOWCONN-001` passes.
-### P6.3d — Write connection state
-When all three connection checkpoints pass (`SN-CONN-001`, `DV-CONN-001`,
-`SN-FLOWCONN-001`) and any auth-type attestation is satisfied,
-merge `.local/connect/servicenow/config.json`:
+### P6.5a — Write flow invoker state
+When `SN-FLOWCONN-001` passes, merge `.local/connect/servicenow/config.json` to
+record this step (the reference-level `servicenow`/`dataverse` state was already
+written in P6.3c; here we add the flow binding and overall status):
 ```json
 {
   "connections": {
-    "servicenow": { "state": "active", "authType": "{authType}", "flowBinding": "connected", "verifiedBy": "programmatic-or-attested" },
-    "dataverse": { "state": "active", "verifiedBy": "programmatic" }
+    "servicenow": { "state": "active", "authType": "{authType}", "flowBinding": "connected", "verifiedBy": "programmatic-or-attested" }
   },
   "status": "connected"
 }
@@ -399,12 +478,10 @@ can discover the ServiceNow connection. Preserve every existing key:
   }
 }
 ```
-Update S6.2 only after all three checkpoints pass and auth-type evidence is present.
-Use `GATE="prog"` when fully programmatic; if auth type required maker confirmation,
-record the auth evidence as attested in the row mirror while keeping the row's
-checkpoint evidence from the three passing checks. Persist immediately.
+Update S6.4 only after `SN-FLOWCONN-001` passes. Use `GATE="prog"`. Persist
+immediately.
 ---
-## P6.4 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.3)*
+## P6.6 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.5)*
 Derive `{PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
 `https://contoso.service-now.com/sp`. Merge it into
 `.local/connect/servicenow/config.json` as `portalBaseUrl` before verification.
@@ -435,7 +512,7 @@ ITSM is in scope. After confirmation, run:
 ```
 python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001
 ```
-Render the result. `PASSED` updates S6.3 with `GATE="prog"`. `FAILED`,
+Render the result. `PASSED` updates S6.5 with `GATE="prog"`. `FAILED`,
 `NotConfigured`, or partial coverage requires attestation after the rendered result:
 **Message:**
 
@@ -445,10 +522,10 @@ installed.
 
 **End message.**
 Use the question tool with options **Yes, it's set** and **Not yet**. On **Yes**,
-update S6.3 with attested evidence and `ACK=true`. On **Not yet**, leave S6.3
+update S6.5 with attested evidence and `ACK=true`. On **Not yet**, leave S6.5
 `in-progress`, return to the portal setting instructions, and re-check or re-attest
 after they finish.
-Always include this note after S6.3 is recorded:
+Always include this note after S6.5 is recorded:
 **Message:**
 
 Remember: the ServiceNow Portal Base URL can reset after an extension-pack update.
@@ -457,40 +534,15 @@ opening in the portal.
 
 **End message.**
 ---
-## P6.5 — Turn on the ServiceNow flows (SN-FLOW-*) *(completes S6.4)*
-Verify every ServiceNow cloud flow emitted by the installed packs.
-**Message:**
-
-Now I'll confirm the ServiceNow cloud flows are turned on.
-
-**End message.**
-```
-python scripts/flightcheck/cli.py --checkpoint SN-FLOW-*
-```
-Render the result. If every emitted flow row passes, expand/update S6.4 as one
-checkbox per flow result with `GATE="prog"`, persisting each generated row
-immediately. If any flow row fails, show:
-**Message:**
-
-One or more ServiceNow cloud flows are turned off. In Power Platform, open the
-managed ServiceNow solution, go to **Cloud flows**, and turn on any flow that is
-off. Then tell me and I'll re-check.
-
-**End message.**
-Re-run the family checkpoint after the maker confirms. Leave each failing generated
-row `in-progress` or `blocked` according to the checkpoint result; do not complete
-the family until every emitted flow row passes. Do not invent flow names — use the
-checkpoint descriptions.
----
 ## Done
-When S6.1, S6.2, S6.3, and every generated S6.4 flow row are `done`, return control
-to the setup router (`SKILL.md`) to resume at validation and handoff. Do not run the
-end-to-end ServiceNow prompt test here; that belongs to the separate
+When S6.1, S6.2, every generated S6.3 flow row, S6.4, and S6.5 are `done`, return
+control to the setup router (`SKILL.md`) to resume at validation and handoff. Do not
+run the end-to-end ServiceNow prompt test here; that belongs to the separate
 `validate-and-handoff.md` playbook.
 **Message:**
 
 Your ServiceNow extension pack is installed and wired — the ServiceNow and
-Dataverse connections are bound, the portal link setting is recorded, and the
-ServiceNow cloud flows are on. Next up is validating the setup end to end.
+Dataverse connections are bound, the cloud flows are on and connected to your agent,
+and the portal link setting is recorded. Next up is validating the setup end to end.
 
 **End message.**

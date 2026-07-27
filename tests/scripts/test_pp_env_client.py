@@ -76,3 +76,109 @@ def test_connector_is_connected():
     assert not ppe.connector_is_connected({"connectionId": None, "status": "Connected"})
     assert not ppe.connector_is_connected({"connectionId": "c1", "status": "NotConnected"})
     assert not ppe.connector_is_connected({"connectionId": "c1"})
+
+
+# ── application-package helpers ──────────────────────────────────────────
+def test_operation_id_from_header_parses_url():
+    hdr = (
+        "https://api.powerplatform.com/appmanagement/environments/env/"
+        "operations/18a6d34e-15cb-446a-b4b7-20e55ca5b5bf?api-version=1"
+    )
+    assert ppe._operation_id_from_header(hdr) == "18a6d34e-15cb-446a-b4b7-20e55ca5b5bf"
+
+
+def test_operation_id_from_header_tolerates_missing():
+    assert ppe._operation_id_from_header(None) is None
+    assert ppe._operation_id_from_header("https://x/y/z") is None
+
+
+def test_find_application_package_case_insensitive():
+    pkgs = [
+        {"uniqueName": "msdyn_EssHRServiceNowHRSD", "state": "None"},
+        {"uniqueName": "msdyn_CopilotForEmployeeSelfServiceHR", "state": "Installed"},
+    ]
+    assert ppe.find_application_package(pkgs, "msdyn_esshrservicenowhrsd")["state"] == "None"
+    assert ppe.find_application_package(pkgs, "missing") is None
+    assert ppe.find_application_package([], "x") is None
+
+
+def test_package_is_installed():
+    assert ppe.package_is_installed({"state": "Installed"})
+    assert ppe.package_is_installed({"state": "installed"})
+    assert not ppe.package_is_installed({"state": "None"})
+    assert not ppe.package_is_installed({"state": "InstallFailed"})
+    assert not ppe.package_is_installed(None)
+
+
+def test_operation_terminal_and_succeeded():
+    for s in ("Succeeded", "Failed", "Canceled", "succeeded"):
+        assert ppe.operation_is_terminal(s)
+    for s in ("NotStarted", "Running", None, ""):
+        assert not ppe.operation_is_terminal(s)
+    assert ppe.operation_succeeded("Succeeded")
+    assert ppe.operation_succeeded("succeeded")
+    assert not ppe.operation_succeeded("Failed")
+
+
+def test_install_application_package_reads_operation_id_from_body():
+    class _Resp:
+        status_code = 202
+        headers: dict = {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"lastOperation": {"operationId": "op-from-body"}}
+
+    client = ppe.PPEnvClient("tenant", "11a02d3a-172c-ef48-8b74-8e2975c2fb05")
+    client._token = "t"  # skip auth
+    import pp_env_client as mod
+
+    captured = {}
+
+    def _fake_post(url, **kwargs):
+        captured["url"] = url
+        return _Resp()
+
+    original = mod.requests.post
+    mod.requests.post = _fake_post
+    try:
+        out = client.install_application_package("msdyn_EssHRServiceNowHRSD")
+    finally:
+        mod.requests.post = original
+
+    assert out["operation_id"] == "op-from-body"
+    assert out["status_code"] == 202
+    assert "api.powerplatform.com/appmanagement/environments/" in captured["url"]
+    assert "/applicationPackages/msdyn_EssHRServiceNowHRSD/install" in captured["url"]
+
+
+def test_install_application_package_falls_back_to_header():
+    op_url = (
+        "https://api.powerplatform.com/appmanagement/environments/env/"
+        "operations/op-from-header?api-version=1"
+    )
+
+    class _Resp:
+        status_code = 202
+        headers = {"Operation-Location": op_url}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    client = ppe.PPEnvClient("tenant", "11a02d3a-172c-ef48-8b74-8e2975c2fb05")
+    client._token = "t"
+    import pp_env_client as mod
+
+    original = mod.requests.post
+    mod.requests.post = lambda url, **kwargs: _Resp()
+    try:
+        out = client.install_application_package("pkg")
+    finally:
+        mod.requests.post = original
+
+    assert out["operation_id"] == "op-from-header"
