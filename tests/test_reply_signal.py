@@ -56,6 +56,14 @@ def test_timeout_with_no_text_is_timeout_not_empty():
     assert classify_reply_signal("", timed_out=True) is ReplySignal.TIMEOUT
 
 
+def test_timeout_beats_consent_text():
+    # Precedence guard: a timed-out turn whose partial scrape happens to contain
+    # a consent marker must still report TIMEOUT — the turn did not complete, so
+    # the caller must not be routed down the consent-recovery path on stale text.
+    reply = "Connect to continue\nServiceNow"
+    assert classify_reply_signal(reply, timed_out=True) is ReplySignal.TIMEOUT
+
+
 def test_signal_actionable_flags():
     # The caller uses these to decide: is this a real reply to assert against?
     assert ReplySignal.OK.is_reply is True
