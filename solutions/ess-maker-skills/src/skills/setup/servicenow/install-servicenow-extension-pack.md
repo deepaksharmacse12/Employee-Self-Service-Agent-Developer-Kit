@@ -181,35 +181,89 @@ product(s) before running the real install.
 I'll install the ServiceNow extension pack content for you now — no clicks needed.
 
 **End message.**
-First preview, then install (the install prints progress heartbeats to stderr and can
-take several minutes; it keeps running on the server even if interrupted, so do not
-kill it early — re-check state instead):
+First preview the target set (this prints exactly which pack unique name(s) would be
+installed — confirm they match the requested product(s) before the real install):
 ```
 python scripts/install_extension_pack.py --connector servicenow --dry-run --json
-python scripts/install_extension_pack.py --connector servicenow --json
 ```
-Interpret the exit code and render the printed summary:
-- **Exit 0** (`installed` / `already_installed`) — the pack content is in. Re-run
-  `SN-PKG-001` to confirm, then go to **Record S6.1** with `installMode="automated"`.
+
+#### P6.2-A.1 — Set expectations and open the live status block
+Before the install runs, set expectations and render the shared status block so the
+maker sees continuous motion instead of a silent multi-minute wait.
+**Message:**
+
+Installing the ServiceNow extension pack now. This usually takes **2–5 minutes** (up
+to 10). You don't have to wait here — keep working and I'll keep the checklist below
+updated and tell you the moment each step is done.
+
+**End message.**
+Then render the **live setup status block** — one compact checklist, covering the whole
+connect chain, that you rewrite **in place** on each update (edit/replace the same
+block; never post a fresh one each cycle):
+```
+Setting up ServiceNow {product}…
+[~] Install extension pack — installing… (0s; ~2–5 min)
+[ ] Bind connections (ServiceNow + Dataverse)
+[ ] Turn on the ServiceNow flows
+[ ] Connect & share the flow invoker connection (in Copilot Studio)
+[ ] Set the Portal Base URL
+```
+`{product}` is the in-scope product label (e.g. `HR`). Row icons: `[x]` done (with
+elapsed, e.g. `— done (2m10s)`), `[~]` in progress (short status + elapsed), `[ ]`
+pending. The five rows map 1:1 to P6.2→P6.6, and each later step updates **its own row
+in this same block** — never start a second block.
+
+#### P6.2-A.2 — Fire the install and poll it (keeps the block moving)
+Fire the install and poll it yourself so the install row animates. **Do not** use the
+blocking `--json` form here — it hides all progress until the whole install returns.
+```
+python scripts/install_extension_pack.py --connector servicenow --start --json
+```
+Read the result:
 - **Exit 3** (`parent_missing`) — the parent ESS solution is not installed. Stop and
   route back to the ESS solution import step; the extension pack cannot install first.
-- **Exit 4** (`not_found` / `no_targets`) — either no product is selected in `scope`
-  (fix the scope precondition above and re-run) or no matching pack exists for the
-  in-scope product(s). If the pack truly is unavailable, fall back to manual.
+- **Exit 4** (`no_targets`) — no product is selected in `scope`; fix the scope
+  precondition above and re-run. (`not_found` means no matching pack — fall back to
+  manual.)
 - **Exit 5** (`no_environment`) — the environment could not be resolved. Surface the
   message and stop; do not fall back.
-- **Exit 6** (`install_failed`) or **Exit 1** (`error`) — surface the message, then
-  offer the maker a fallback:
-  **Message:**
+- **Exit 1** (`error`) — surface the message and offer the fallback below.
+- **Exit 0** — read `operations[]`. If it is empty and every result is
+  `already_installed`, the pack is already in: mark the install row `[x] done` and go
+  to **Record S6.1**. Otherwise each entry has an `operation_id` to poll.
 
-  The automated install didn't complete. Would you like to install the pack manually
-  in Copilot Studio instead? I'll verify it and then continue automating the rest.
+Poll each `operation_id` about every 15s, rewriting the install row from each result,
+until it is terminal:
+```
+python scripts/install_extension_pack.py --connector servicenow --status --operation-id <id> --json
+```
+- `running` (`"terminal": false`) → keep the row `[~] Install extension pack —
+  installing… (Ns)`. Show `percentComplete` when the payload has it; otherwise show
+  elapsed against the typical **2–5 min** (never the 10-min timeout, so a normal
+  install never looks broken). Surface any `statusMessage` as the sub-status.
+- `succeeded` (`"terminal": true, "succeeded": true`, exit 0) → flip the row to
+  `[x] Install extension pack — done (Ns)`, then confirm with the `SN-PKG-001` pack
+  check below and go to **Record S6.1**; set the Bind row to `[~]` as you enter P6.3.
+- `failed` (`"terminal": true, "succeeded": false`, exit 6) → surface `statusMessage`
+  and offer the fallback below.
 
-  **End message.**
-  Use the question tool with options **Install manually** and **Retry automated**. On
-  **Install manually**, set `packs.installMode="manual"` and go to **P6.2-M**. On
-  **Retry automated**, first re-check state with `SN-PKG-001` (the prior operation may
-  have completed server-side); only re-run the install if the pack is still missing.
+The install continues **server-side** even if you stop polling. If ~10 minutes pass
+without a terminal status, do **not** declare it stuck: re-run `--start` (it no-ops and
+returns `already_installed` once the pack has landed) or the `SN-PKG-001` scope check to
+confirm, then continue.
+
+**Fallback (on exit 1 / exit 6):**
+**Message:**
+
+The automated install didn't complete. Would you like to install the pack manually
+in Copilot Studio instead? I'll verify it and then continue automating the rest.
+
+**End message.**
+Use the question tool with options **Install manually** and **Retry automated**. On
+**Install manually**, set `packs.installMode="manual"` and go to **P6.2-M**. On
+**Retry automated**, first re-check state with `--start` / `SN-PKG-001` (the prior
+operation may have completed server-side); only re-fire the install if the pack is
+still missing.
 
 After a successful automated install, re-run:
 ```
@@ -351,6 +405,8 @@ The gate depends on how the pack was installed:
 Persist immediately before continuing.
 ---
 ## P6.3 — Bind the ServiceNow and Dataverse connections (DV-CONN-001) *(completes S6.2)*
+If the live status block (P6.2-A.1) is active, flip the **Bind connections** row to
+`[~]` now, and to `[x]` when Record S6.2 (P6.3c) completes.
 Verify the ServiceNow reference first.
 **Message:**
 
@@ -463,6 +519,8 @@ The flow invoker binding (making Copilot Studio show the connection as
 **Connected**) happens later in P6.5, after the flows are turned on.
 ---
 ## P6.4 — Turn on the ServiceNow flows (SN-FLOW-*) *(completes S6.3)*
+If the live status block (P6.2-A.1) is active, flip the **Turn on the ServiceNow
+flows** row to `[~]` now, and to `[x]` when this step completes.
 Installing an extension pack lands its cloud flows in **Draft**. Copilot Studio will
 not invoke a draft flow, so they must be turned on. This runs before the flow
 invoker binding (P6.5) so the invoker connection lands on the activated flow
@@ -515,6 +573,8 @@ this step:
 ```
 ---
 ## P6.5 — Connect and share the ServiceNow flow invoker connection (SN-FLOWCONN-001) *(completes S6.4)*
+If the live status block (P6.2-A.1) is active, flip the **Connect & share the flow
+invoker connection** row to `[~]` now, and to `[x]` when this step completes.
 Binding the connection *reference* (P6.3) and turning on the flows (P6.4) is
 necessary but not sufficient: Copilot Studio still shows the ServiceNow connection
 as **Not connected** until the agent's per-flow *invoker connection* is bound. This
@@ -591,6 +651,8 @@ Update S6.4 only after `SN-FLOWCONN-001` passes. Use `GATE="prog"`. Persist
 immediately.
 ---
 ## P6.6 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.5)*
+If the live status block (P6.2-A.1) is active, flip the **Set the Portal Base URL**
+row to `[~]` now, and to `[x]` when this step completes — the whole block is then done.
 Derive `{PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
 `https://contoso.service-now.com/sp`. Merge it into
 `.local/connect/servicenow/config.json` as `portalBaseUrl` before verification.

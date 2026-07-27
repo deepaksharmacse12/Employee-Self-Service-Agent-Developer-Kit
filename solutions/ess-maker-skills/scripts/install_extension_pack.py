@@ -33,6 +33,19 @@ config ``scope`` (``hrsd`` / ``itsm``) are installed. An empty/all-false scope
 installs NOTHING (exit 4, ``no_targets``) rather than silently installing every
 pack the maker did not request.
 
+**Fire-and-poll modes** (so a caller can animate a long install instead of
+blocking on one silent call):
+
+  * ``--start`` fires the install(s) and prints the ``operationId``(s) without
+    polling. Installs continue server-side.
+  * ``--status --operation-id <id>`` polls one operation once and reports
+    ``status`` / ``terminal`` / ``succeeded`` / ``percentComplete``. Exit 0 while
+    running or succeeded, exit 6 on a terminal non-success — the caller loops on
+    the JSON ``terminal``/``succeeded`` flags, posting a chat update each cycle.
+
+  Omitting both keeps the original **blocking** behavior (POST then poll to
+  terminal, with a stderr heartbeat).
+
 Authentication uses the Power Platform CLI ("pac") public client via
 ``pp_env_client`` (interactive browser sign-in on the action path, cached
 thereafter). The kit's default Azure CLI client is not pre-authorized for the
@@ -51,6 +64,7 @@ Usage:
     python scripts/install_extension_pack.py [--connector servicenow]
         [--package UNIQUE_NAME ...] [--env-url URL] [--environment-id ID]
         [--timeout SECONDS] [--dry-run] [--json]
+        [--start | --status --operation-id ID]
 """
 
 from __future__ import annotations
@@ -173,6 +187,72 @@ def _resolve_environment_id(env_url, dv_token, environment_id, tenant_id):
     return derive_environment_id(env_url, dv_token, pp_admin=pp)
 
 
+def _percent(operation: dict) -> int | None:
+    """Best-effort percent-complete from an operation body (``None`` if absent)."""
+    for key in ("percentComplete", "percentageComplete", "progress"):
+        val = operation.get(key)
+        if isinstance(val, (int, float)):
+            return int(val)
+    return None
+
+
+def _precheck(packages, unique_name, parent) -> dict | None:
+    """Return an early per-package result, or ``None`` when an install is needed.
+
+    Shared by the blocking (``_install_one``) and fire-and-poll (``_start_one``)
+    paths so both apply the same not-found / already-installed / parent-missing
+    guards before any non-idempotent install POST.
+    """
+    pkg = find_application_package(packages, unique_name)
+    if pkg is None:
+        return {
+            "package": unique_name, "action": "not_found", "exit_code": 4,
+            "message": (
+                f"Package '{unique_name}' is not available in this environment "
+                "(not entitled, or wrong unique name)."
+            ),
+        }
+    if package_is_installed(pkg):
+        return {"package": unique_name, "action": "already_installed", "exit_code": 0}
+    if parent is not None:
+        parent_pkg = find_application_package(packages, parent)
+        if not package_is_installed(parent_pkg):
+            return {
+                "package": unique_name, "action": "parent_missing", "exit_code": 3,
+                "message": (
+                    f"The parent ESS solution '{parent}' is not installed; "
+                    "install it before the extension pack."
+                ),
+            }
+    return None
+
+
+def _start_one(client, packages, unique_name, parent) -> dict:
+    """Fire a single install and return its operation id **without polling**.
+
+    The fire-and-poll counterpart to :func:`_install_one`: the caller (the
+    playbook) polls each returned ``operation_id`` via ``--status`` so it can post
+    a chat update every cycle instead of blocking on one long call.
+    """
+    early = _precheck(packages, unique_name, parent)
+    if early is not None:
+        return early
+    resp = client.install_application_package(unique_name)
+    operation_id = resp.get("operation_id")
+    if not operation_id:
+        return {
+            "package": unique_name, "action": "no_operation", "exit_code": 6,
+            "message": (
+                f"Install POST for '{unique_name}' returned "
+                f"{resp.get('status_code')} without an operation id."
+            ),
+        }
+    return {
+        "package": unique_name, "action": "started", "exit_code": 0,
+        "operation_id": operation_id,
+    }
+
+
 def _poll_install(
     client: PPEnvClient,
     operation_id: str,
@@ -205,29 +285,10 @@ def _poll_install(
 
 def _install_one(client, packages, unique_name, parent, *, dry_run, timeout,
                  progress=None):
-    """Install a single package; return a per-package result dict."""
-    pkg = find_application_package(packages, unique_name)
-    if pkg is None:
-        return {
-            "package": unique_name, "action": "not_found", "exit_code": 4,
-            "message": (
-                f"Package '{unique_name}' is not available in this environment "
-                "(not entitled, or wrong unique name)."
-            ),
-        }
-    if package_is_installed(pkg):
-        return {"package": unique_name, "action": "already_installed", "exit_code": 0}
-
-    if parent is not None:
-        parent_pkg = find_application_package(packages, parent)
-        if not package_is_installed(parent_pkg):
-            return {
-                "package": unique_name, "action": "parent_missing", "exit_code": 3,
-                "message": (
-                    f"The parent ESS solution '{parent}' is not installed; "
-                    "install it before the extension pack."
-                ),
-            }
+    """Install a single package (blocking: POST then poll to terminal)."""
+    early = _precheck(packages, unique_name, parent)
+    if early is not None:
+        return early
 
     if dry_run:
         return {"package": unique_name, "action": "would_install", "exit_code": 0}
@@ -269,19 +330,13 @@ def _install_one(client, packages, unique_name, parent, *, dry_run, timeout,
     }
 
 
-def run(
-    env_url: str,
-    *,
-    config: dict,
-    environment_id: str | None,
-    packages: list[str] | None,
-    timeout: int,
-    dry_run: bool,
-) -> dict:
-    """Install the resolved extension pack(s) into the environment."""
-    schema = bot_schema(config)
-    persona = resolve_persona(schema)
+def _resolve_targets(config: dict, packages: list[str] | None):
+    """Resolve install targets.
 
+    Returns ``(targets, parent, persona)`` on success, or a ``no_targets`` result
+    dict when nothing is selected. Shared by the blocking and fire-and-poll paths.
+    """
+    persona = resolve_persona(bot_schema(config))
     targets = list(packages or [])
     parent = None
     if not targets:
@@ -305,6 +360,47 @@ def run(
                     "--package <uniqueName>. Nothing was installed."
                 ),
             }
+    return targets, parent, persona
+
+
+def _connect_client(env_url, environment_id, *, interactive):
+    """Authenticate and return ``(client, None)`` or ``(None, early_result)``."""
+    dv_token = auth.authenticate(env_url)
+    from auth import discover_tenant
+
+    tenant_id = discover_tenant(env_url)
+    env_id = _resolve_environment_id(env_url, dv_token, environment_id, tenant_id)
+    if not env_id:
+        return None, {
+            "action": "no_environment", "exit_code": 5,
+            "message": (
+                "Could not resolve the Power Platform environment id. Pass "
+                "--environment-id <guid>."
+            ),
+        }
+    client = PPEnvClient(tenant_id, env_id)
+    if not client.authenticate(interactive=interactive):
+        return None, {
+            "action": "error", "exit_code": 1,
+            "message": "Power Platform sign-in failed; cannot reach the install API.",
+        }
+    return client, None
+
+
+def run(
+    env_url: str,
+    *,
+    config: dict,
+    environment_id: str | None,
+    packages: list[str] | None,
+    timeout: int,
+    dry_run: bool,
+) -> dict:
+    """Install the resolved extension pack(s) into the environment (blocking)."""
+    resolved = _resolve_targets(config, packages)
+    if isinstance(resolved, dict):
+        return resolved
+    targets, parent, persona = resolved
 
     dv_token = auth.authenticate(env_url)
     from auth import discover_tenant
@@ -358,6 +454,95 @@ def run(
     }
 
 
+def run_start(
+    env_url: str,
+    *,
+    config: dict,
+    environment_id: str | None,
+    packages: list[str] | None,
+    timeout: int,
+) -> dict:
+    """Fire the install(s) and return operation id(s) **without polling**.
+
+    The fire half of the fire-and-poll pattern: the playbook calls this once, then
+    polls each returned ``operation_id`` with ``--status`` so it can post a live
+    progress update every cycle instead of blocking on one multi-minute call.
+    """
+    resolved = _resolve_targets(config, packages)
+    if isinstance(resolved, dict):
+        return resolved
+    targets, parent, persona = resolved
+
+    client, early = _connect_client(env_url, environment_id, interactive=True)
+    if early is not None:
+        return early
+
+    packages_list = client.list_application_packages()
+    results = [_start_one(client, packages_list, name, parent) for name in targets]
+    exit_code = next((r["exit_code"] for r in results if r["exit_code"] != 0), 0)
+    operations = [
+        {"package": r["package"], "operation_id": r["operation_id"]}
+        for r in results if r["action"] == "started"
+    ]
+    already = [r["package"] for r in results if r["action"] == "already_installed"]
+    if exit_code != 0:
+        summary = next(r.get("message") for r in results if r["exit_code"] != 0)
+    elif operations:
+        names = ", ".join(o["package"] for o in operations)
+        summary = (
+            f"Started install of {names}. Poll each operation with "
+            "`--status --operation-id <id>` (installs continue server-side)."
+        )
+    else:
+        summary = f"Already installed: {', '.join(already)}." if already else "Nothing to install."
+    return {
+        "action": "start", "exit_code": exit_code, "persona": persona,
+        "results": results, "operations": operations,
+        "timeout_hint": timeout, "message": summary,
+    }
+
+
+def run_status(
+    env_url: str,
+    *,
+    config: dict,
+    environment_id: str | None,
+    operation_id: str,
+) -> dict:
+    """Poll a single install operation once and report its state.
+
+    The poll half of the fire-and-poll pattern. Exit code is 0 while the operation
+    is running or has succeeded, and 6 if it reached a terminal non-success state,
+    so the playbook can loop on the ``terminal`` / ``succeeded`` flags in the JSON.
+    """
+    client, early = _connect_client(env_url, environment_id, interactive=True)
+    if early is not None:
+        return early
+
+    operation = client.get_operation(operation_id)
+    status = operation.get("status")
+    terminal = operation_is_terminal(status)
+    succeeded = operation_succeeded(status)
+    pct = _percent(operation)
+    if terminal and not succeeded:
+        exit_code, action = 6, "failed"
+    elif terminal:
+        exit_code, action = 0, "succeeded"
+    else:
+        exit_code, action = 0, "running"
+    pct_txt = f" ({pct}%)" if pct is not None else ""
+    detail = operation.get("statusMessage")
+    message = (
+        f"Operation {operation_id}: {status or 'Running'}{pct_txt}"
+        + (f" — {detail}" if detail else "")
+    )
+    return {
+        "action": action, "exit_code": exit_code, "operation_id": operation_id,
+        "status": status, "terminal": terminal, "succeeded": succeeded,
+        "percentComplete": pct, "statusMessage": detail, "message": message,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Install an ESS extension pack (application package) "
@@ -389,8 +574,31 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true",
         help="Report what would be installed without writing.",
     )
+    parser.add_argument(
+        "--start", action="store_true",
+        help="Fire the install(s) and print operation id(s) without polling "
+        "(fire-and-poll mode; pair with --status).",
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Poll a single install operation once (requires --operation-id).",
+    )
+    parser.add_argument(
+        "--operation-id", default=None,
+        help="Install operation id to poll (with --status).",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args(argv)
+
+    if args.start and args.status:
+        print("ERROR: --start and --status are mutually exclusive.")
+        return 1
+    if args.status and not args.operation_id:
+        print("ERROR: --status requires --operation-id.")
+        return 1
+    if (args.start or args.status) and args.dry_run:
+        print("ERROR: --dry-run cannot be combined with --start/--status.")
+        return 1
 
     config = _load_config()
     env_url = _load_env_url(args.env_url, config)
@@ -400,14 +608,30 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        result = run(
-            env_url,
-            config=config,
-            environment_id=args.environment_id,
-            packages=args.packages,
-            timeout=args.timeout,
-            dry_run=args.dry_run,
-        )
+        if args.status:
+            result = run_status(
+                env_url,
+                config=config,
+                environment_id=args.environment_id,
+                operation_id=args.operation_id,
+            )
+        elif args.start:
+            result = run_start(
+                env_url,
+                config=config,
+                environment_id=args.environment_id,
+                packages=args.packages,
+                timeout=args.timeout,
+            )
+        else:
+            result = run(
+                env_url,
+                config=config,
+                environment_id=args.environment_id,
+                packages=args.packages,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+            )
     except Exception as e:  # noqa: BLE001 — surface a clean message, no stack
         result = {"action": "error", "exit_code": 1,
                   "message": f"{type(e).__name__}: {e}"}

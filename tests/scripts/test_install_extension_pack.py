@@ -269,3 +269,129 @@ def test_run_dry_run_no_install(patched, monkeypatch):
     assert result["exit_code"] == 0
     assert client.installed == []
     assert result["results"][0]["action"] == "would_install"
+
+
+# ── fire-and-poll: _start_one / run_start ────────────────────────────
+def test_start_one_fires_without_polling():
+    client = _FakeClient(operation_id="op-42")
+    res = iep._start_one(client, _pkgs(), SN_HRSD_HR, PARENT_HR)
+    assert res["action"] == "started"
+    assert res["operation_id"] == "op-42"
+    assert res["exit_code"] == 0
+    assert client.installed == [SN_HRSD_HR]
+
+
+def test_start_one_already_installed_no_post():
+    client = _FakeClient()
+    res = iep._start_one(client, _pkgs(target_state="Installed"), SN_HRSD_HR, PARENT_HR)
+    assert res["action"] == "already_installed"
+    assert client.installed == []
+
+
+def test_start_one_parent_missing_no_post():
+    client = _FakeClient()
+    res = iep._start_one(client, _pkgs(parent_state="None"), SN_HRSD_HR, PARENT_HR)
+    assert res["action"] == "parent_missing"
+    assert res["exit_code"] == 3
+    assert client.installed == []
+
+
+def test_run_start_returns_operations_without_polling(patched, monkeypatch):
+    client = _install_client(monkeypatch, _pkgs())
+
+    def _boom(op):  # start mode must never poll
+        raise AssertionError("run_start must not call get_operation")
+
+    client.get_operation = _boom
+    config = dict(CONFIG_HR, scope={"hrsd": True, "itsm": False})
+    result = iep.run_start("https://org.crm.dynamics.com", config=config,
+                           environment_id="env-guid", packages=None, timeout=600)
+    assert result["action"] == "start"
+    assert result["exit_code"] == 0
+    assert client.installed == [SN_HRSD_HR]
+    assert result["operations"] == [{"package": SN_HRSD_HR, "operation_id": "op-1"}]
+
+
+def test_run_start_already_installed_no_operations(patched, monkeypatch):
+    _install_client(monkeypatch, _pkgs(target_state="Installed"))
+    result = iep.run_start("https://org.crm.dynamics.com", config=CONFIG_HR,
+                           environment_id="env-guid", packages=[SN_HRSD_HR],
+                           timeout=600)
+    assert result["exit_code"] == 0
+    assert result["operations"] == []
+    assert result["results"][0]["action"] == "already_installed"
+
+
+def test_run_start_no_targets_fails_closed(patched, monkeypatch):
+    _install_client(monkeypatch, _pkgs())
+    config = dict(CONFIG_HR, scope={"hrsd": False, "itsm": False})
+    result = iep.run_start("https://org.crm.dynamics.com", config=config,
+                           environment_id="env-guid", packages=None, timeout=600)
+    assert result["action"] == "no_targets"
+    assert result["exit_code"] == 4
+
+
+# ── fire-and-poll: run_status ────────────────────────────────────────
+class _StatusClient:
+    def __init__(self, operation):
+        self._operation = operation
+
+    def authenticate(self, interactive=True):
+        return "pac-token"
+
+    def get_operation(self, operation_id):
+        return self._operation
+
+
+def _status_client(monkeypatch, operation):
+    client = _StatusClient(operation)
+    monkeypatch.setattr(iep, "PPEnvClient", lambda tenant, env_id: client)
+    return client
+
+
+def test_run_status_running_is_nonterminal(patched, monkeypatch):
+    _status_client(monkeypatch, {"status": "Running", "percentComplete": 40})
+    result = iep.run_status("https://org.crm.dynamics.com", config=CONFIG_HR,
+                            environment_id="env-guid", operation_id="op-1")
+    assert result["action"] == "running"
+    assert result["exit_code"] == 0
+    assert result["terminal"] is False
+    assert result["succeeded"] is False
+    assert result["percentComplete"] == 40
+
+
+def test_run_status_succeeded_is_terminal(patched, monkeypatch):
+    _status_client(monkeypatch, {"status": "Succeeded"})
+    result = iep.run_status("https://org.crm.dynamics.com", config=CONFIG_HR,
+                            environment_id="env-guid", operation_id="op-1")
+    assert result["action"] == "succeeded"
+    assert result["exit_code"] == 0
+    assert result["terminal"] is True
+    assert result["succeeded"] is True
+
+
+def test_run_status_failed_exit_6(patched, monkeypatch):
+    _status_client(monkeypatch, {"status": "Failed", "statusMessage": "boom"})
+    result = iep.run_status("https://org.crm.dynamics.com", config=CONFIG_HR,
+                            environment_id="env-guid", operation_id="op-1")
+    assert result["action"] == "failed"
+    assert result["exit_code"] == 6
+    assert result["terminal"] is True
+    assert result["succeeded"] is False
+    assert "boom" in result["message"]
+
+
+# ── main() routing / validation ──────────────────────────────────────
+def test_main_status_requires_operation_id(capsys):
+    assert iep.main(["--status", "--json"]) == 1
+    assert "requires --operation-id" in capsys.readouterr().out
+
+
+def test_main_start_and_status_mutually_exclusive(capsys):
+    assert iep.main(["--start", "--status", "--operation-id", "x"]) == 1
+    assert "mutually exclusive" in capsys.readouterr().out
+
+
+def test_main_start_rejects_dry_run(capsys):
+    assert iep.main(["--start", "--dry-run"]) == 1
+    assert "cannot be combined" in capsys.readouterr().out
