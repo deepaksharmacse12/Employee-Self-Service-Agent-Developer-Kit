@@ -73,3 +73,28 @@ def test_signal_actionable_flags():
     # Consent gate is specifically recoverable by a manual/inline consent click.
     assert ReplySignal.CONSENT_GATE.needs_consent is True
     assert ReplySignal.OK.needs_consent is False
+
+
+def test_cli_prints_signal_and_remediation(capsys):
+    from reply_signal import main
+    rc = main(["Connect to continue\nServiceNow"])
+    out = capsys.readouterr().out.splitlines()
+    assert rc == 0
+    assert out[0] == "consent_gate"
+    assert "Authorize the connection" in out[1]
+
+
+def test_cli_timeout_flag(capsys):
+    from reply_signal import main
+    rc = main(["partial...", "--timed-out"])
+    out = capsys.readouterr().out.splitlines()
+    assert rc == 0
+    assert out[0] == "timeout"
+
+
+def test_cli_ok_reply(capsys):
+    from reply_signal import main
+    rc = main(["You have 3 open HR cases."])
+    out = capsys.readouterr().out.splitlines()
+    assert rc == 0
+    assert out[0] == "ok"

@@ -331,8 +331,11 @@ Then show:
 > Your topic is ready. After publishing, test it here:
 > [Open Copilot Studio](https://copilotstudio.microsoft.com/)
 
+If the topic misbehaves at runtime — a generic error, a blank field, a branch that fires wrong, or a reply that turns out to be a consent gate — run the **`topics/test`** skill (`src/skills/topics/test/SKILL.md`). It drives the topic, confirms the reply is real (`reply_signal.py`), inspects the flow's run history for flow-backed topics (`flow_run_inspect.py`), and plants/strips a byte-reversible DBG node to expose topic-internal state (`plant_debug.py` / `strip_debug.py`).
+
 ## Step 7: Offer Next Steps
 
 After the topic is pushed and verified:
 - "Would you like to create another topic?"
+- "Want to test or debug it? Type `/test` (or run the topics/test skill) to drive it and diagnose any runtime issue."
 - "Type `/menu` to see other options."

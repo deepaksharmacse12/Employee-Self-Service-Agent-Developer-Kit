@@ -76,3 +76,37 @@ def test_missing_keys_do_not_raise():
     # Defensive: a partial action dict must not KeyError the interpreter.
     summary = summarize_actions([{"status": "Succeeded"}])
     assert summary == [{"name": None, "status": "Succeeded", "statusCode": None}]
+
+
+def test_cli_requires_flow_token(capsys, monkeypatch):
+    import flow_run_inspect
+    monkeypatch.delenv("FLOW_API_TOKEN", raising=False)
+    rc = flow_run_inspect.main(["--environment", "e" * 32, "--flow", "f" * 32])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "FLOW_API_TOKEN" in out
+
+
+def test_cli_renders_cascade(capsys, monkeypatch):
+    import flow_run_inspect
+    monkeypatch.setenv("FLOW_API_TOKEN", "tok")
+    monkeypatch.setattr(flow_run_inspect, "get_latest_run",
+                        lambda env, flow, token: {"name": "run-123"})
+    monkeypatch.setattr(flow_run_inspect, "get_run_actions",
+                        lambda env, flow, run_id, token: _G23_ACTIONS)
+    rc = flow_run_inspect.main(["--environment", "e" * 32, "--flow", "f" * 32])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "run-123" in out
+    assert "Invoke_ServiceNow" in out
+    assert "400" in out
+
+
+def test_cli_no_run_found(capsys, monkeypatch):
+    import flow_run_inspect
+    monkeypatch.setenv("FLOW_API_TOKEN", "tok")
+    monkeypatch.setattr(flow_run_inspect, "get_latest_run",
+                        lambda env, flow, token: None)
+    rc = flow_run_inspect.main(["--environment", "e" * 32, "--flow", "f" * 32])
+    assert rc == 1
+    assert "No run found" in capsys.readouterr().out

@@ -182,3 +182,60 @@ def summarize_actions(actions: list[dict]) -> list[dict]:
         }
         for a in actions
     ]
+
+
+def _render_cascade(summary: list[dict]) -> str:
+    """Format a summarized cascade as an aligned name/status/statusCode table."""
+    if not summary:
+        return "(run has no actions)"
+    width = max(len(str(row["name"])) for row in summary)
+    lines = []
+    for row in summary:
+        code = row["statusCode"] if row["statusCode"] is not None else "—"
+        lines.append(f"{str(row['name']):<{width}}  {row['status']:<10}  {code}")
+    return "\n".join(lines)
+
+
+def main(argv=None) -> int:
+    """CLI: dump a flow run's action cascade for interpretation.
+
+    Reads a Flow Management API bearer token from the ``FLOW_API_TOKEN`` env var
+    (the maker kit's MSAL flow is Dataverse-scoped, so a Flow-scoped token is
+    supplied here rather than acquired). Interpret the output with the companion
+    doc reference/ess-docs/operations/flow-run-inspection.md.
+    """
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(
+        description="Dump a cloud flow run's per-action cascade (read-only).")
+    parser.add_argument("--environment", required=True,
+                        help="environment id (GUID)")
+    parser.add_argument("--flow", required=True, help="flow id (GUID)")
+    parser.add_argument("--run", default=None,
+                        help="run id (default: the latest run)")
+    args = parser.parse_args(argv)
+
+    token = os.environ.get("FLOW_API_TOKEN", "").strip()
+    if not token:
+        print("Set FLOW_API_TOKEN to a Flow Management API bearer token "
+              "(resource https://service.flow.microsoft.com/).")
+        return 2
+
+    if args.run:
+        run = get_run_by_id(args.environment, args.flow, args.run, token)
+    else:
+        run = get_latest_run(args.environment, args.flow, token)
+    if not run:
+        print("No run found for that flow.")
+        return 1
+
+    run_id = run.get("name") or args.run
+    actions = get_run_actions(args.environment, args.flow, run_id, token)
+    print(f"Run {run_id}:")
+    print(_render_cascade(summarize_actions(actions)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -72,3 +72,45 @@ def classify_reply_signal(reply: str | None, *, timed_out: bool = False) -> Repl
     if _is_consent_text(text):
         return ReplySignal.CONSENT_GATE
     return ReplySignal.OK
+
+
+_REMEDIATION = {
+    ReplySignal.OK: "Real reply — safe to assert against; continue diagnosis.",
+    ReplySignal.CONSENT_GATE: (
+        "Authorize the connection (inline consent card or the maker portal's "
+        "connection manager), then re-drive the turn."
+    ),
+    ReplySignal.TIMEOUT: (
+        "The turn did not complete — re-drive (a hibernating backend may need a "
+        "warm-up call first)."
+    ),
+    ReplySignal.EMPTY: (
+        "No reply captured — confirm the topic actually triggered, then re-drive."
+    ),
+}
+
+
+def main(argv=None) -> int:
+    """CLI: classify a captured reply so a driver knows whether to trust it.
+
+    Prints the signal (ok / consent_gate / timeout / empty) on the first line
+    and a one-line remediation on the second.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Classify a captured bot reply into a drive-outcome signal.")
+    parser.add_argument("reply", nargs="?", default="",
+                        help="the captured reply text (quote it)")
+    parser.add_argument("--timed-out", action="store_true",
+                        help="the drive reported a timeout (the turn did not complete)")
+    args = parser.parse_args(argv)
+
+    signal = classify_reply_signal(args.reply, timed_out=args.timed_out)
+    print(signal.value)
+    print(_REMEDIATION[signal])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
