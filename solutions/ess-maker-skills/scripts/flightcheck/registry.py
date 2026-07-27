@@ -45,6 +45,9 @@ from typing import Callable, Optional
 from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
 from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
+from flightcheck.checks.servicenow_flow_binding import (
+    run_servicenow_flow_binding_checks,
+)
 from flightcheck.checks.environment import run_environment_checks
 from flightcheck.checks.external_systems import run_external_systems_checks
 from flightcheck.checks.solution import run_solution_checks
@@ -91,6 +94,7 @@ CATEGORY_ORDER = [
     "Graph Connector KB",
     "ServiceNow",
     "ServiceNow Entra App",
+    "ServiceNow Flow Binding",
     "Local Files",
     "Licensing",
     "Publishing",
@@ -396,6 +400,24 @@ _SPECS: list[CheckpointSpec] = [
         priority=Priority.CRITICAL.value,
         roles=(Role.ENTRA_ADMIN.value,),
     ),
+    # ServiceNow flow invoker-connection binding (setup skill 6, S6.5). Emitted
+    # by checks/servicenow_flow_binding.run_servicenow_flow_binding_checks. It
+    # verifies the Copilot Studio "Connections" Connected state (a per-flow
+    # object distinct from the Dataverse connection reference). Needs the BAP
+    # environment id (PP_ADMIN) to derive the Power Platform API host; the check
+    # itself authenticates that host silently via the pac client and degrades to
+    # SKIPPED when no cached token exists. "SN-FLOWCONN" is in OWNED_PREFIXES, so
+    # the drift test forces this entry to exist.
+    CheckpointSpec(
+        key="SN-FLOWCONN-001",
+        category_fn=run_servicenow_flow_binding_checks,
+        category_label="ServiceNow Flow Binding",
+        clients=frozenset({PP_ADMIN}),
+        requires_config=True,
+        requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value,),
+    ),
     CheckpointSpec(
         key="WD-ENTRA-NAMEID-001",
         category_fn=run_entra_app_checks,
@@ -591,6 +613,7 @@ OWNED_PREFIXES: tuple = (
     "WD-ENTRA",
     "WD-ASSIGN",
     "SN-ENTRA",
+    "SN-FLOWCONN",
     "WD-TENANT",
     "WD-API-CLIENT",
     "WD-REST",

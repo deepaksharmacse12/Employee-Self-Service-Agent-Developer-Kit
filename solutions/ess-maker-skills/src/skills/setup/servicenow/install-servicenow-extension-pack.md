@@ -25,13 +25,14 @@ password to any config file.
 - Checklist template: `src/skills/setup/servicenow/tasks.md`
 **Files this skill may read, but not own:**
 - `.local/config.json` — read-only source for `dataverseEndpoint` and agent details;
-  write only the legacy `connections.ServiceNow` summary described in P6.3c.
+  write only the legacy `connections.ServiceNow` summary described in P6.3d.
 **Checkpoints this skill drives (run each in isolation):**
 | Step | Checkpoint | Gate |
 |------|------------|------|
 | S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | manual |
 | S6.2 | `SN-CONN-001` — ServiceNow connection reference active | prog; auth type may require attestation |
 | S6.2 | `DV-CONN-001` *(reuse)* — Dataverse connection reference active | prog |
+| S6.2 | `SN-FLOWCONN-001` — ServiceNow flow invoker connection connected | prog |
 | S6.3 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
 | S6.4 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
 Run any one checkpoint by itself:
@@ -98,7 +99,7 @@ user-facing names. Ensure each in-scope `packs.<product>` exists with at least
 fields written by earlier setup skills.
 Read `.local/config.json` read-only for `dataverseEndpoint` and `agent` details. Do
 not write ServiceNow setup fields into that file except for the legacy connection
-summary in P6.3c.
+summary in P6.3d.
 ---
 ## P6.2 — Install the extension pack and verify it landed (SN-PKG-001) *(completes S6.1)*
 First check whether the ServiceNow pack content is already installed, so resume does
@@ -326,13 +327,58 @@ account. Then tell me and I'll re-check.
 **End message.**
 Re-run until it passes. If the result is `Skipped` because a Dataverse token is
 unavailable, re-authenticate and re-run; do not complete the row on a skip.
-### P6.3c — Write connection state
-When both connection checkpoints pass and any auth-type attestation is satisfied,
+### P6.3c — Connect the ServiceNow flow invoker connection (SN-FLOWCONN-001)
+Binding the connection *reference* (P6.3) is necessary but not sufficient: Copilot
+Studio still shows the ServiceNow connection as **Not connected** until the agent's
+per-flow *invoker connection* is bound. This step performs that binding and shares
+the connection parameters onto the reference, then verifies it.
+**Message:**
+
+Now I'll connect the ServiceNow connection to your agent's flows so it shows as
+connected in Copilot Studio.
+
+**End message.**
+Run the connect-and-share action. It is ServiceNow-only, idempotent, and
+self-reports what it changed. It signs in to the Power Platform API (this may open a
+browser the first time) and caches the token for the verification step.
+```
+python scripts/connect_and_share.py --connector servicenow
+```
+Interpret the exit code:
+- **Exit 0** — the flow invoker connection is connected (or already was) and the
+  parameters are shared. Continue to the checkpoint below.
+- **Exit 4** — the ServiceNow reference isn't bound to a connection yet, or the
+  extension-pack flows don't reference the ServiceNow connector. Return to P6.3 to
+  bind the reference, then re-run this step.
+- **Exit 3** — the extension pack reference is missing; return to S6.1.
+- **Exit 5** — the Power Platform environment id could not be resolved; re-run with
+  `--environment-id <guid>` (from the Copilot Studio bot URL).
+- **Exit 1** — the action errored; surface the message and fall back to the manual
+  message below.
+
+Then verify the flow invoker binding.
+```
+python scripts/flightcheck/cli.py --checkpoint SN-FLOWCONN-001
+```
+Render the result. On `FAILED` / `NotConfigured`, show:
+**Message:**
+
+The ServiceNow connection isn't connected to your agent's flows yet. In Copilot
+Studio, open your agent's **Settings → Connections**, find the ServiceNow
+connection, and connect it. Then tell me and I'll re-check.
+
+**End message.**
+If the checkpoint is `Skipped` because no Power Platform token is cached, re-run the
+`connect_and_share.py` action above (it establishes the token), then re-check. Loop
+until `SN-FLOWCONN-001` passes.
+### P6.3d — Write connection state
+When all three connection checkpoints pass (`SN-CONN-001`, `DV-CONN-001`,
+`SN-FLOWCONN-001`) and any auth-type attestation is satisfied,
 merge `.local/connect/servicenow/config.json`:
 ```json
 {
   "connections": {
-    "servicenow": { "state": "active", "authType": "{authType}", "verifiedBy": "programmatic-or-attested" },
+    "servicenow": { "state": "active", "authType": "{authType}", "flowBinding": "connected", "verifiedBy": "programmatic-or-attested" },
     "dataverse": { "state": "active", "verifiedBy": "programmatic" }
   },
   "status": "connected"
@@ -353,10 +399,10 @@ can discover the ServiceNow connection. Preserve every existing key:
   }
 }
 ```
-Update S6.2 only after both checkpoints pass and auth-type evidence is present. Use
-`GATE="prog"` when fully programmatic; if auth type required maker confirmation,
+Update S6.2 only after all three checkpoints pass and auth-type evidence is present.
+Use `GATE="prog"` when fully programmatic; if auth type required maker confirmation,
 record the auth evidence as attested in the row mirror while keeping the row's
-checkpoint evidence from the two passing checks. Persist immediately.
+checkpoint evidence from the three passing checks. Persist immediately.
 ---
 ## P6.4 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.3)*
 Derive `{PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example

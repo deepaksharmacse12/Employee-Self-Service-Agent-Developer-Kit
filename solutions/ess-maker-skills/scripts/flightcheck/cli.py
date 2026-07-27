@@ -68,6 +68,9 @@ from flightcheck.checks.workday_extension import run_workday_extension_checks
 from flightcheck.checks.topics import run_topic_checks
 from flightcheck.checks.servicenow import run_servicenow_checks
 from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
+from flightcheck.checks.servicenow_flow_binding import (
+    run_servicenow_flow_binding_checks,
+)
 from flightcheck.checks.local_files import run_local_file_checks
 from flightcheck.checks.publishing import run_publishing_checks
 from flightcheck.checks.licensing import run_licensing_checks
@@ -102,6 +105,7 @@ SCOPE_MAP = {
         ("External Systems", run_external_systems_checks),
         ("ServiceNow", run_servicenow_checks),
         ("ServiceNow Entra App", run_servicenow_entra_checks),
+        ("ServiceNow Flow Binding", run_servicenow_flow_binding_checks),
     ],
     "servicenowentra": [
         ("ServiceNow Entra App", run_servicenow_entra_checks),
@@ -127,6 +131,7 @@ FULL_SCOPE = [
     ("Graph Connector KB", run_graph_connector_kb_checks),
     ("ServiceNow", run_servicenow_checks),
     ("ServiceNow Entra App", run_servicenow_entra_checks),
+    ("ServiceNow Flow Binding", run_servicenow_flow_binding_checks),
     ("Local Files", run_local_file_checks),
     ("Licensing", run_licensing_checks),
     ("Publishing", run_publishing_checks),
@@ -332,6 +337,7 @@ def _run_single_checkpoint(args):
     runner.pva = pva
     runner.powerplatform = powerplatform
     runner.azure_arm = None
+    runner.tenant_id = tenant_id
 
     for label, fn in plan.ordered_fns:
         runner.register(label, fn)
@@ -709,6 +715,7 @@ def main():
     runner.pva = pva
     runner.powerplatform = powerplatform
     runner.azure_arm = azure_arm
+    runner.tenant_id = tenant_id
 
     # Register checks based on scope
     if args.scope == "full":
