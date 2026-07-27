@@ -24,7 +24,14 @@ Flow (validated live against the appmanagement API):
   4. **Install** — ``POST .../applicationPackages/{uniqueName}/install`` returns
      ``202`` with an ``operationId``.
   5. **Poll** — ``GET .../operations/{operationId}`` until a terminal status
-     (``Succeeded`` / ``Failed`` / ``Canceled``).
+     (``Succeeded`` / ``Failed`` / ``Canceled``). Polling emits a heartbeat to
+     **stderr** each interval so a multi-minute install is not mistaken for a
+     hang (stdout stays a clean ``--json`` document).
+
+Package selection **fails closed**: only products explicitly selected in the
+config ``scope`` (``hrsd`` / ``itsm``) are installed. An empty/all-false scope
+installs NOTHING (exit 4, ``no_targets``) rather than silently installing every
+pack the maker did not request.
 
 Authentication uses the Power Platform CLI ("pac") public client via
 ``pp_env_client`` (interactive browser sign-in on the action path, cached
@@ -34,7 +41,8 @@ thereafter). The kit's default Azure CLI client is not pre-authorized for the
 Exit codes:
   0  installed (now or already).
   3  the parent ESS solution is not installed (install it first).
-  4  the target package is not found / not entitled in this environment.
+  4  the target package is not found / not entitled, or no product is selected
+     in scope (nothing to install).
   5  could not resolve the Power Platform environment id.
   6  the install operation failed, was canceled, or timed out.
   1  unexpected error.
@@ -87,6 +95,16 @@ SERVICENOW_PACK_CATALOG = {
 _POLL_INTERVAL_SECONDS = 15
 
 
+def _progress(msg: str) -> None:
+    """Emit a progress/heartbeat line to stderr.
+
+    Install operations are long-running and polled silently; without a heartbeat
+    the run is indistinguishable from a hang and gets killed prematurely. Progress
+    goes to **stderr** so ``--json`` stdout stays a single clean document.
+    """
+    print(msg, file=sys.stderr, flush=True)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Pure helpers (no I/O — unit-testable).
 # ─────────────────────────────────────────────────────────────────────
@@ -108,16 +126,19 @@ def servicenow_packages(persona: str | None, scope: dict | None) -> list[str]:
     """Resolve the ServiceNow extension pack unique names for a persona + scope.
 
     ``scope`` is the config ``scope`` object (``{"hrsd": bool, "itsm": bool}``).
-    When ``scope`` is falsy/empty, both products are targeted.
+    Only products explicitly selected (truthy) in ``scope`` are targeted. This
+    fails **closed**: if no product is selected (empty/all-false scope), NOTHING
+    is targeted — installing every pack when the maker picked none would silently
+    install products they never requested. Callers turn an empty result into a
+    ``no_targets`` stop.
     """
     catalog = SERVICENOW_PACK_CATALOG.get(persona or "", {})
     scope = scope or {}
-    want_any = bool(scope.get("hrsd") or scope.get("itsm"))
-    packages = []
-    for product, unique_name in catalog.items():
-        if not want_any or scope.get(product):
-            packages.append(unique_name)
-    return packages
+    return [
+        unique_name
+        for product, unique_name in catalog.items()
+        if scope.get(product)
+    ]
 
 
 def parent_package(persona: str | None) -> str | None:
@@ -152,20 +173,38 @@ def _resolve_environment_id(env_url, dv_token, environment_id, tenant_id):
     return derive_environment_id(env_url, dv_token, pp_admin=pp)
 
 
-def _poll_install(client: PPEnvClient, operation_id: str, timeout: int) -> dict:
-    """Poll an install operation until terminal or ``timeout`` seconds elapse."""
-    deadline = time.monotonic() + timeout
+def _poll_install(
+    client: PPEnvClient,
+    operation_id: str,
+    timeout: int,
+    *,
+    progress=None,
+) -> dict:
+    """Poll an install operation until terminal or ``timeout`` seconds elapse.
+
+    ``progress`` is an optional callback invoked each poll with a heartbeat
+    string so the caller can show the operation is still running.
+    """
+    start = time.monotonic()
+    deadline = start + timeout
     last = {"status": None}
     while time.monotonic() < deadline:
         last = client.get_operation(operation_id)
         status = last.get("status")
         if operation_is_terminal(status):
             return last
+        if progress is not None:
+            elapsed = int(time.monotonic() - start)
+            progress(
+                f"  ...still installing (status: {status or 'Running'}; "
+                f"{elapsed}s elapsed, waiting up to {timeout}s)"
+            )
         time.sleep(_POLL_INTERVAL_SECONDS)
     return {"status": "Timeout", "statusMessage": last.get("statusMessage")}
 
 
-def _install_one(client, packages, unique_name, parent, *, dry_run, timeout):
+def _install_one(client, packages, unique_name, parent, *, dry_run, timeout,
+                 progress=None):
     """Install a single package; return a per-package result dict."""
     pkg = find_application_package(packages, unique_name)
     if pkg is None:
@@ -203,9 +242,18 @@ def _install_one(client, packages, unique_name, parent, *, dry_run, timeout):
                 f"{resp.get('status_code')} without an operation id."
             ),
         }
-    final = _poll_install(client, operation_id, timeout)
+    if progress is not None:
+        progress(
+            f"[install] {unique_name}: operation {operation_id} started; "
+            f"polling every {_POLL_INTERVAL_SECONDS}s (up to {timeout}s). "
+            "This can take several minutes — the install continues on the "
+            "server even if this run is interrupted."
+        )
+    final = _poll_install(client, operation_id, timeout, progress=progress)
     status = final.get("status")
     if operation_succeeded(status):
+        if progress is not None:
+            progress(f"[install] {unique_name}: completed (status: {status}).")
         return {
             "package": unique_name, "action": "installed", "exit_code": 0,
             "operation_id": operation_id,
@@ -240,11 +288,21 @@ def run(
         targets = servicenow_packages(persona, config.get("scope"))
         parent = parent_package(persona)
         if not targets:
+            scope = config.get("scope") or {}
+            selected = [p for p in ("hrsd", "itsm") if scope.get(p)]
             return {
                 "action": "no_targets", "exit_code": 4,
                 "message": (
-                    "No extension packs resolved. Pass --package <uniqueName>, "
-                    "or set config scope (hrsd/itsm) and a resolvable persona."
+                    "No extension packs resolved — nothing to install. "
+                    + (
+                        f"Persona '{persona}' could not be derived from the agent "
+                        "schema."
+                        if not persona else
+                        "No ServiceNow product is selected in config scope "
+                        f"(hrsd/itsm both off; selected={selected})."
+                    )
+                    + " Select a product (set scope.hrsd or scope.itsm) or pass "
+                    "--package <uniqueName>. Nothing was installed."
                 ),
             }
 
@@ -279,9 +337,10 @@ def run(
         }
 
     packages_list = client.list_application_packages()
+    emit = None if dry_run else _progress
     results = [
         _install_one(client, packages_list, name, parent,
-                     dry_run=dry_run, timeout=timeout)
+                     dry_run=dry_run, timeout=timeout, progress=emit)
         for name in targets
     ]
     exit_code = next((r["exit_code"] for r in results if r["exit_code"] != 0), 0)

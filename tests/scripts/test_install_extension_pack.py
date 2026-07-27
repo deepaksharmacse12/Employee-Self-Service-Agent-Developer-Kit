@@ -38,9 +38,16 @@ def test_servicenow_packages_scope_filters():
     }
 
 
-def test_servicenow_packages_empty_scope_targets_all():
-    assert set(iep.servicenow_packages("hr", None)) == {SN_HRSD_HR, SN_ITSM_HR}
-    assert set(iep.servicenow_packages("hr", {})) == {SN_HRSD_HR, SN_ITSM_HR}
+def test_servicenow_packages_empty_scope_fails_closed():
+    # Fail closed: no product selected -> install NOTHING (never silently both).
+    assert iep.servicenow_packages("hr", None) == []
+    assert iep.servicenow_packages("hr", {}) == []
+    assert iep.servicenow_packages("hr", {"hrsd": False, "itsm": False}) == []
+
+
+def test_servicenow_packages_only_selected_products():
+    assert iep.servicenow_packages("hr", {"hrsd": True, "itsm": False}) == [SN_HRSD_HR]
+    assert iep.servicenow_packages("hr", {"hrsd": False, "itsm": True}) == [SN_ITSM_HR]
 
 
 def test_servicenow_packages_unknown_persona():
@@ -157,6 +164,27 @@ def test_poll_install_times_out(monkeypatch):
     assert out["status"] == "Timeout"
 
 
+def test_poll_install_emits_heartbeat(monkeypatch):
+    clock = iter(float(n) for n in range(0, 100))
+    monkeypatch.setattr(iep.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(iep.time, "sleep", lambda s: None)
+
+    class _RunningThenDone:
+        def __init__(self):
+            self.calls = 0
+
+        def get_operation(self, op):
+            self.calls += 1
+            return {"status": "Running" if self.calls == 1 else "Succeeded"}
+
+    beats: list[str] = []
+    out = iep._poll_install(_RunningThenDone(), "op", timeout=60,
+                            progress=beats.append)
+    assert out["status"] == "Succeeded"
+    # At least one heartbeat emitted while the operation was still Running.
+    assert beats and "still installing" in beats[0]
+
+
 # ── run() orchestration ──────────────────────────────────────────────
 @pytest.fixture
 def patched(monkeypatch):
@@ -217,6 +245,20 @@ def test_run_no_targets(patched, monkeypatch):
                      timeout=60, dry_run=False)
     assert result["exit_code"] == 4
     assert result["action"] == "no_targets"
+
+
+def test_run_no_targets_when_scope_all_false(patched, monkeypatch):
+    # Regression: a valid HR persona with NO product selected must install
+    # nothing (fail closed), not silently install both HRSD and ITSM.
+    client = _install_client(monkeypatch, _pkgs())
+    config = dict(CONFIG_HR, scope={"hrsd": False, "itsm": False})
+    result = iep.run("https://org.crm.dynamics.com", config=config,
+                     environment_id="env-guid", packages=None,
+                     timeout=60, dry_run=False)
+    assert result["exit_code"] == 4
+    assert result["action"] == "no_targets"
+    assert "no servicenow product is selected" in result["message"].lower()
+    assert client.installed == []
 
 
 def test_run_dry_run_no_install(patched, monkeypatch):

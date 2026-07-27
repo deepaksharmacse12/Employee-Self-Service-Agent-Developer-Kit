@@ -152,12 +152,25 @@ API. This installs pack **content only** — it does not create the ServiceNow o
 Dataverse connections. That is expected: P6.3 binds connections by reusing an
 existing active connection, and if none exists yet it guides the maker to create one
 (the graceful fallback), then continues automated.
+**Scope precondition (do not skip).** The installer installs **only** the products
+selected in `.local/connect/servicenow/config.json` `scope` (`hrsd` / `itsm`), and it
+**fails closed** — an empty or all-`false` scope installs nothing (exit 4). Before
+running it, confirm `scope` reflects exactly the product(s) the maker asked for (e.g.
+`{ "hrsd": true, "itsm": false }` for HR only). If `scope` is missing or all-`false`,
+re-derive it from the maker's earlier product selection (P6.1) and persist it first —
+never run the install against an unset scope, or the maker may get products they did
+not request.
+The preview run below is the safe way to confirm the target set: it prints exactly
+which pack unique name(s) would be installed. Verify that list matches the requested
+product(s) before running the real install.
 **Message:**
 
 I'll install the ServiceNow extension pack content for you now — no clicks needed.
 
 **End message.**
-First preview, then install:
+First preview, then install (the install prints progress heartbeats to stderr and can
+take several minutes; it keeps running on the server even if interrupted, so do not
+kill it early — re-check state instead):
 ```
 python scripts/install_extension_pack.py --connector servicenow --dry-run --json
 python scripts/install_extension_pack.py --connector servicenow --json
@@ -167,8 +180,9 @@ Interpret the exit code and render the printed summary:
   `SN-PKG-001` to confirm, then go to **Record S6.1** with `installMode="automated"`.
 - **Exit 3** (`parent_missing`) — the parent ESS solution is not installed. Stop and
   route back to the ESS solution import step; the extension pack cannot install first.
-- **Exit 4** (`not_found` / `no_targets`) — no matching pack for the in-scope
-  product(s). Re-check scope; if the pack truly is unavailable, fall back to manual.
+- **Exit 4** (`not_found` / `no_targets`) — either no product is selected in `scope`
+  (fix the scope precondition above and re-run) or no matching pack exists for the
+  in-scope product(s). If the pack truly is unavailable, fall back to manual.
 - **Exit 5** (`no_environment`) — the environment could not be resolved. Surface the
   message and stop; do not fall back.
 - **Exit 6** (`install_failed`) or **Exit 1** (`error`) — surface the message, then
@@ -181,7 +195,8 @@ Interpret the exit code and render the printed summary:
   **End message.**
   Use the question tool with options **Install manually** and **Retry automated**. On
   **Install manually**, set `packs.installMode="manual"` and go to **P6.2-M**. On
-  **Retry automated**, re-run the install command once more.
+  **Retry automated**, first re-check state with `SN-PKG-001` (the prior operation may
+  have completed server-side); only re-run the install if the pack is still missing.
 
 After a successful automated install, re-run:
 ```
