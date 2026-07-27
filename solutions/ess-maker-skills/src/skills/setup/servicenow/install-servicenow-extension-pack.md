@@ -127,19 +127,17 @@ Render the checkpoint result before continuing.
 Only the pack **install** differs by mode; every later step (bind connections, turn
 on flows, connect and share, portal URL) is automated in both cases.
 If `packs.installMode` is already recorded in `.local/connect/servicenow/config.json`,
-reuse it silently (do not re-ask on resume). Otherwise ask:
+reuse it silently (do not re-ask on resume). Otherwise ask with the question tool so
+the maker gets selectable options (do not enumerate the choices as a bulleted list in
+the message body — that renders as plain text instead of a picker):
 **Message:**
 
-How would you like to install the ServiceNow extension pack?
-
-- **Automated (recommended)** — I install the pack content for you headlessly. Fast
-  and hands-off; no clicking through Copilot Studio.
-- **Manual** — you install it yourself in Copilot Studio and I verify it. Choose this
-  if your organization requires a person to perform the install, or you want to review
-  each step.
-
-Either way, once the pack is in, I automate the rest (connections, flows, sharing,
-and the portal link).
+How would you like to install the ServiceNow extension pack? **Automated** is fast
+and hands-off — I install the pack content for you headlessly, no clicking through
+Copilot Studio. **Manual** means you install it yourself in Copilot Studio and I
+verify it; choose that if your organization requires a person to perform the install
+or you want to review each step. Either way, once the pack is in I automate the rest
+— connections, flows, sharing, and the portal link.
 
 **End message.**
 Use the question tool with options **Automated (recommended)** and **Manual**.
