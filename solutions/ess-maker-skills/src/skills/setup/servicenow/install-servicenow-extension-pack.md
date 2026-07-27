@@ -29,7 +29,7 @@ password to any config file.
 **Checkpoints this skill drives (run each in isolation):**
 | Step | Checkpoint | Gate |
 |------|------------|------|
-| S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | manual |
+| S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | prog when installed automatically; manual when installed by the maker |
 | S6.2 | `SN-CONN-001` — ServiceNow connection reference active | prog; auth type may require attestation |
 | S6.2 | `DV-CONN-001` *(reuse)* — Dataverse connection reference active | prog |
 | S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
@@ -120,9 +120,81 @@ python scripts/flightcheck/cli.py --checkpoint SN-PKG-001
 ```
 Render the checkpoint result before continuing.
 - `PASSED` → the expected pack content is present; go to **Record S6.1**.
-- `FAILED`, `NotConfigured`, or a manual install finding → guide the maker through
-  installation for each in-scope pack, then re-run the checkpoint.
-### P6.2a — User sign-in install values
+- `FAILED`, `NotConfigured`, or a manual install finding → choose an install mode
+  (below), install each in-scope pack, then re-run the checkpoint.
+
+### P6.2 — Choose the install mode
+Only the pack **install** differs by mode; every later step (bind connections, turn
+on flows, connect and share, portal URL) is automated in both cases.
+If `packs.installMode` is already recorded in `.local/connect/servicenow/config.json`,
+reuse it silently (do not re-ask on resume). Otherwise ask:
+**Message:**
+
+How would you like to install the ServiceNow extension pack?
+
+- **Automated (recommended)** — I install the pack content for you headlessly. Fast
+  and hands-off; no clicking through Copilot Studio.
+- **Manual** — you install it yourself in Copilot Studio and I verify it. Choose this
+  if your organization requires a person to perform the install, or you want to review
+  each step.
+
+Either way, once the pack is in, I automate the rest (connections, flows, sharing,
+and the portal link).
+
+**End message.**
+Use the question tool with options **Automated (recommended)** and **Manual**.
+Persist the answer to `.local/connect/servicenow/config.json` as
+`packs.installMode` (`"automated"` or `"manual"`) before continuing.
+- **Automated** → go to **P6.2-A**.
+- **Manual** → go to **P6.2-M**.
+
+### P6.2-A — Automated headless install *(when `installMode == "automated"`)*
+Install the in-scope pack content headlessly via the Power Platform appmanagement
+API. This installs pack **content only** — it does not create the ServiceNow or
+Dataverse connections. That is expected: P6.3 binds connections by reusing an
+existing active connection, and if none exists yet it guides the maker to create one
+(the graceful fallback), then continues automated.
+**Message:**
+
+I'll install the ServiceNow extension pack content for you now — no clicks needed.
+
+**End message.**
+First preview, then install:
+```
+python scripts/install_extension_pack.py --connector servicenow --dry-run --json
+python scripts/install_extension_pack.py --connector servicenow --json
+```
+Interpret the exit code and render the printed summary:
+- **Exit 0** (`installed` / `already_installed`) — the pack content is in. Re-run
+  `SN-PKG-001` to confirm, then go to **Record S6.1** with `installMode="automated"`.
+- **Exit 3** (`parent_missing`) — the parent ESS solution is not installed. Stop and
+  route back to the ESS solution import step; the extension pack cannot install first.
+- **Exit 4** (`not_found` / `no_targets`) — no matching pack for the in-scope
+  product(s). Re-check scope; if the pack truly is unavailable, fall back to manual.
+- **Exit 5** (`no_environment`) — the environment could not be resolved. Surface the
+  message and stop; do not fall back.
+- **Exit 6** (`install_failed`) or **Exit 1** (`error`) — surface the message, then
+  offer the maker a fallback:
+  **Message:**
+
+  The automated install didn't complete. Would you like to install the pack manually
+  in Copilot Studio instead? I'll verify it and then continue automating the rest.
+
+  **End message.**
+  Use the question tool with options **Install manually** and **Retry automated**. On
+  **Install manually**, set `packs.installMode="manual"` and go to **P6.2-M**. On
+  **Retry automated**, re-run the install command once more.
+
+After a successful automated install, re-run:
+```
+python scripts/flightcheck/cli.py --checkpoint SN-PKG-001
+```
+Render the result and loop until it passes, then go to **Record S6.1**.
+
+### P6.2-M — Manual portal install *(when `installMode == "manual"`)*
+Guide the maker through installing each in-scope pack in Copilot Studio using the
+values for the selected auth type below.
+#### P6.2a — User sign-in install values
 Use only when `authType == "entra_user"`. Require `entra.appClientId`; if missing,
 route back to the user sign-in playbook.
 For each in-scope pack, show this message with `{PACK_NAME}` set to **ServiceNow
@@ -156,7 +228,7 @@ existing connection.
 Tell me when the install finishes, or say **help** if something went wrong.
 
 **End message.**
-### P6.2b — Certificate install values
+#### P6.2b — Certificate install values
 Use only when `authType == "entra_certificate"`. Require `certificate.tenantId`,
 `certificate.appAClientId`, `certificate.appBClientId`, and
 `certificate.certPfxPath`; if any are missing, route back to the certificate
@@ -234,17 +306,23 @@ is still installing or retrying.
 ### Record S6.1
 When the pack checkpoint passes, merge `.local/connect/servicenow/config.json`:
 - Set each in-scope `packs.<product>` to `"installed"`.
-- Preserve out-of-scope packs and unknown fields.
+- Preserve `packs.installMode`, out-of-scope packs, and unknown fields.
 Then show:
 **Message:**
 
 The ServiceNow extension pack content is installed for the products in scope.
 
 **End message.**
-S6.1 is a manual gate. Even with a passing checkpoint, ask for the explicit
-acknowledgement required by [`../shared/checklist-updater.md`](../shared/checklist-updater.md).
-Update S6.1 with `GATE="manual"`, the pack checkpoint result, and `ACK=true` only
-when the maker confirms. Persist immediately before continuing.
+The gate depends on how the pack was installed:
+- **`installMode == "automated"`** — the kit performed and verified the install, so
+  this is a programmatic gate. Update S6.1 with `GATE="prog"` and the pack checkpoint
+  result; no separate maker acknowledgement is required.
+- **`installMode == "manual"`** — this is a manual gate. Even with a passing
+  checkpoint, ask for the explicit acknowledgement required by
+  [`../shared/checklist-updater.md`](../shared/checklist-updater.md). Update S6.1 with
+  `GATE="manual"`, the pack checkpoint result, and `ACK=true` only when the maker
+  confirms.
+Persist immediately before continuing.
 ---
 ## P6.3 — Bind the ServiceNow and Dataverse connections (SN-CONN-001, DV-CONN-001) *(completes S6.2)*
 Verify the ServiceNow reference first.

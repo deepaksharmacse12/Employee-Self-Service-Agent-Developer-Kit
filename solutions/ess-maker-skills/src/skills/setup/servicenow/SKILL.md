@@ -214,11 +214,14 @@ ServiceNow and Dataverse connections with the selected auth type (`SN-CONN-001`,
 `DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
 **S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
 (`SN-FLOWCONN-001`, **S6.4**), and sets the Portal Base URL to `/sp` for each pack
-(`SN-BASEURL-001`, **S6.5**). S6.1 is a manual portal install (verified by
-checkpoint); the rest are programmatic gates. The chain runs install → bind → turn
-on flows → connect and share → portal, in that order, because a flow can only hold
-activation once its references are bound and the invoker binding must land on the
-activated flow. On resume it re-runs the role gate and the pack lookup first.
+(`SN-BASEURL-001`, **S6.5**). At S6.1 the maker chooses an **automated** headless
+install or a **manual** Copilot Studio install; automated is the recommended default
+and makes S6.1 a programmatic gate, while a manual install keeps the manual gate. All
+later steps (S6.2–S6.5) are automated regardless of the install mode. The chain runs
+install → bind → turn on flows → connect and share → portal, in that order, because a
+flow can only hold activation once its references are bound and the invoker binding
+must land on the activated flow. On resume it re-runs the role gate and the pack
+lookup first, reusing the stored install mode without re-asking.
 
 When it returns, go back to **Start** to resume at the next unverified row.
 

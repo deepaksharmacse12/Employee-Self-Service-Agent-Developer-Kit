@@ -106,8 +106,8 @@ the two Entra sign-in methods are offered.
 
 ### 6. ServiceNow extension pack and connection
 
-- [ ] **Install the ServiceNow extension pack** — Add the ServiceNow extension pack(s) for your in-scope products (HRSD / ITSM) to your agent.
-  <!-- id: S6.1 | role: Environment Maker | skill: skill-6 | automatable: No | checkpoints: SN-PKG-001 | gate: manual | status: pending -->
+- [ ] **Install the ServiceNow extension pack** — Add the ServiceNow extension pack(s) for your in-scope products (HRSD / ITSM) to your agent. You choose automated (headless) or manual (Copilot Studio) install; either way the remaining steps are automated.
+  <!-- id: S6.1 | role: Environment Maker | skill: skill-6 | automatable: Yes (maker may choose manual install) | checkpoints: SN-PKG-001 | gate: prog when automated; manual when maker installs | status: pending -->
 - [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow connection (with your chosen sign-in method) and the Dataverse connection so the agent can talk to ServiceNow and read its configuration.
   <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-CONN-001, DV-CONN-001 (reuse) | gate: prog; else attest for auth-type | status: pending -->
 - [ ] **Turn on the ServiceNow flows** — Switch on the background flows that carry requests between the agent and ServiceNow.
