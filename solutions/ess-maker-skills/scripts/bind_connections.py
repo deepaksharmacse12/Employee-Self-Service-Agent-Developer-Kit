@@ -399,7 +399,9 @@ def _persist_bind_state(args, result: dict) -> None:
         connect_state.record_connections("servicenow", conns)
         if "servicenow" in conns:
             connect_state.record_setup_step(
-                "servicenow", "S6.2", "SN-CONN-001, SN-DV-CONN-001")
+                "servicenow", "S6.2", "SN-CONN-001, SN-DV-CONN-001",
+                note="Bind the ServiceNow and Dataverse connection references so "
+                     "the agent can talk to ServiceNow and read its config.")
     except Exception:  # noqa: BLE001 — persistence must never change exit code
         pass
 

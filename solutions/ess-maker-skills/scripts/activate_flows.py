@@ -173,7 +173,10 @@ def _persist_activate_state(args, result: dict) -> None:
         if result.get("action") not in ("activated", "already_on"):
             return
         connect_state.merge("servicenow", {"flows": {"state": "enabled"}})
-        connect_state.record_setup_step("servicenow", "S6.3", "SN-FLOW-000..004")
+        connect_state.record_setup_step(
+            "servicenow", "S6.3", "SN-FLOW-000..004",
+            note="Turn on the background cloud flows that carry requests between "
+                 "the agent and ServiceNow.")
     except Exception:  # noqa: BLE001 — persistence must never change exit code
         pass
 

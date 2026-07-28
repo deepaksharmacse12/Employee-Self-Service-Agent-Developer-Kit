@@ -112,14 +112,24 @@ def record_setup_step(
     gate: str = "prog",
     verified_by: str = "programmatic",
     state: str = "done",
+    note: str | None = None,
 ) -> dict:
-    """Record a ``setupStatus`` entry for a master-checklist step (e.g. ``S6.2``)."""
-    return merge(connector, {"setupStatus": {step_id: {
+    """Record a ``setupStatus`` entry for a master-checklist step (e.g. ``S6.2``).
+
+    ``note`` is an optional human-readable one-liner explaining what the stage is
+    about; when provided it is stored under a ``note`` key alongside the standard
+    ``state``/``checkpoint``/``gate``/``verifiedBy`` fields. When omitted the key
+    is not written (and any note recorded by an earlier merge is preserved).
+    """
+    entry = {
         "state": state,
         "checkpoint": checkpoint,
         "gate": gate,
         "verifiedBy": verified_by,
-    }}})
+    }
+    if note:
+        entry["note"] = note
+    return merge(connector, {"setupStatus": {step_id: entry}})
 
 
 def record_legacy_servicenow_summary(summary: dict) -> dict:

@@ -88,6 +88,10 @@ view of the same data.
   `checklist-updater.md` and `permission-gate.md`). An `advisory` row (no
   checkpoint) completes with `verifiedBy: "reviewed"` once its report has been
   shown; it never blocks.
+- `note` (optional) — a human-readable one-liner describing what the stage is
+  about (typically the checklist item's visible description). Omit the key rather
+  than storing an empty string; writers must merge it without clobbering an
+  existing note with a blank value.
 
 ### Optional ready-made-topics state (owned by the OOTB-topics installer)
 

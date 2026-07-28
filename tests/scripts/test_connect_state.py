@@ -79,6 +79,31 @@ def test_record_setup_step_preserves_earlier_steps(tmp_path, monkeypatch):
     assert set(setup) == {"S6.1", "S6.2"}
 
 
+def test_record_setup_step_with_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    connect_state.record_setup_step(
+        "servicenow", "S6.1", "SN-001", note="Install the ServiceNow pack.")
+    step = _read(_sn_config())["setupStatus"]["S6.1"]
+    assert step["note"] == "Install the ServiceNow pack."
+
+
+def test_record_setup_step_omits_blank_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    connect_state.record_setup_step("servicenow", "S6.1", "SN-001")
+    assert "note" not in _read(_sn_config())["setupStatus"]["S6.1"]
+    connect_state.record_setup_step("servicenow", "S6.2", "SN-001", note="")
+    assert "note" not in _read(_sn_config())["setupStatus"]["S6.2"]
+
+
+def test_record_setup_step_note_merge_preserves_existing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    connect_state.record_setup_step(
+        "servicenow", "S6.1", "SN-001", note="Install the ServiceNow pack.")
+    connect_state.record_setup_step("servicenow", "S6.1", "SN-001", state="done")
+    step = _read(_sn_config())["setupStatus"]["S6.1"]
+    assert step["note"] == "Install the ServiceNow pack."
+
+
 def test_record_packs_empty_is_noop(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert connect_state.record_packs("servicenow", []) is None

@@ -584,7 +584,10 @@ def _persist_install_state(config: dict, args, result: dict) -> None:
         if not products:
             return
         connect_state.record_packs("servicenow", products, "installed")
-        connect_state.record_setup_step("servicenow", "S6.1", "SN-001")
+        connect_state.record_setup_step(
+            "servicenow", "S6.1", "SN-001",
+            note="Install the ServiceNow extension pack(s) for the in-scope "
+                 "products (HRSD / ITSM) into the agent.")
     except Exception:  # noqa: BLE001 — persistence must never change exit code
         pass
 

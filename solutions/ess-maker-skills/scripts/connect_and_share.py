@@ -399,7 +399,10 @@ def _persist_connect_state(args, result: dict) -> None:
             conn["authType"] = cfg["authType"]
         connect_state.record_connections("servicenow", {"servicenow": conn})
         connect_state.record_status("servicenow", "connected")
-        connect_state.record_setup_step("servicenow", "S6.4", "SN-FLOWCONN-001")
+        connect_state.record_setup_step(
+            "servicenow", "S6.4", "SN-FLOWCONN-001",
+            note="Bind the ServiceNow flow-invoker connection so Copilot Studio "
+                 "shows the connection as connected to the agent.")
         if cfg.get("instanceName"):
             connect_state.record_legacy_servicenow_summary({
                 "instanceName": cfg.get("instanceName"),

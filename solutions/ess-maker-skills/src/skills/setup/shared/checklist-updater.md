@@ -240,13 +240,17 @@ lost — the orchestrator resumes from the first non-`done` row in `setupStatus`
          "state": "<resulting status>",
          "checkpoint": "<the item's checkpoint ID>",
          "gate": "<prog|manual|attest|advisory>",
-         "verifiedBy": "<programmatic|attested|null>"
+         "verifiedBy": "<programmatic|attested|null>",
+         "note": "<optional one-line description of what this stage is about>"
        }
      }
    }
    ```
    Merge — do not drop other `setupStatus` keys (round-trip contract in
-   `config-schema.md`).
+   `config-schema.md`). `note` is optional; when you include it, use the item's
+   visible description (the text after the em dash on the checklist line) so the
+   record is self-explaining. Omit the key rather than writing an empty string,
+   and never overwrite an existing note with a blank one.
 
 Return control to the calling file. Do not announce file paths or internal
 mechanics to the user.
