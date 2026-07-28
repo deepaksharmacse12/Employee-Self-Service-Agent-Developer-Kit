@@ -163,12 +163,33 @@ def parent_package(persona: str | None) -> str | None:
 # ─────────────────────────────────────────────────────────────────────
 # Orchestration.
 # ─────────────────────────────────────────────────────────────────────
-def _load_config() -> dict:
-    config_path = os.path.join(".local", "config.json")
-    if os.path.exists(config_path):
-        with open(config_path, encoding="utf-8") as f:
+def _read_json(path: str) -> dict:
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     return {}
+
+
+def _load_config() -> dict:
+    """Load the installer's effective config.
+
+    The root ``.local/config.json`` is the ESS-package config: it provides the
+    Dataverse endpoint and the agent schema used to derive the persona (hr/it).
+    Product ``scope`` (``hrsd`` / ``itsm``), however, is **ServiceNow-specific**
+    and is captured by setup skill 3 (S3.1) into the ServiceNow connect config
+    ``.local/connect/servicenow/config.json`` — not the root ESS config. Read
+    scope from there and overlay it, so an automated install run (S6.1) resolves
+    the products the maker actually selected. A root-level ``scope`` is honored
+    only as a back-compat fallback when the ServiceNow config has none.
+    """
+    config = _read_json(os.path.join(".local", "config.json"))
+    sn_config = _read_json(
+        os.path.join(".local", "connect", "servicenow", "config.json")
+    )
+    sn_scope = sn_config.get("scope")
+    if sn_scope is not None:
+        config["scope"] = sn_scope
+    return config
 
 
 def _load_env_url(cli_value: str | None, config: dict) -> str | None:
@@ -356,7 +377,9 @@ def _resolve_targets(config: dict, packages: list[str] | None):
                         "No ServiceNow product is selected in config scope "
                         f"(hrsd/itsm both off; selected={selected})."
                     )
-                    + " Select a product (set scope.hrsd or scope.itsm) or pass "
+                    + " Select a product in "
+                    ".local/connect/servicenow/config.json "
+                    "(set scope.hrsd or scope.itsm) or pass "
                     "--package <uniqueName>. Nothing was installed."
                 ),
             }

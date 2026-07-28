@@ -60,6 +60,55 @@ def test_parent_package():
     assert iep.parent_package(None) is None
 
 
+# ── _load_config: scope comes from the ServiceNow connect config ─────
+import json as _json
+import os as _os
+
+
+def _write(path, obj):
+    _os.makedirs(_os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        _json.dump(obj, f)
+
+
+def test_load_config_reads_scope_from_servicenow_config(tmp_path, monkeypatch):
+    """scope (hrsd/itsm) is ServiceNow-specific: S3.1 writes it to the ServiceNow
+    connect config, so the installer must read it there, not from root ESS config."""
+    monkeypatch.chdir(tmp_path)
+    _write(".local/config.json", dict(CONFIG_HR, dataverseEndpoint="https://x"))
+    _write(".local/connect/servicenow/config.json",
+           {"scope": {"hrsd": True, "itsm": False}})
+    config = iep._load_config()
+    # persona-bearing fields still come from the root ESS config…
+    assert config["dataverseEndpoint"] == "https://x"
+    assert config["activeAgent"] == "ess"
+    # …but scope is overlaid from the ServiceNow connect config.
+    assert config["scope"] == {"hrsd": True, "itsm": False}
+
+
+def test_load_config_servicenow_scope_overrides_root(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write(".local/config.json", dict(CONFIG_HR, scope={"hrsd": False, "itsm": True}))
+    _write(".local/connect/servicenow/config.json",
+           {"scope": {"hrsd": True, "itsm": False}})
+    assert iep._load_config()["scope"] == {"hrsd": True, "itsm": False}
+
+
+def test_load_config_falls_back_to_root_scope_for_backcompat(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write(".local/config.json", dict(CONFIG_HR, scope={"hrsd": True, "itsm": False}))
+    # ServiceNow config exists but carries no scope key.
+    _write(".local/connect/servicenow/config.json", {"instanceUrl": "https://sn"})
+    assert iep._load_config()["scope"] == {"hrsd": True, "itsm": False}
+
+
+def test_load_config_no_servicenow_config_is_safe(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write(".local/config.json", dict(CONFIG_HR))
+    config = iep._load_config()
+    assert "scope" not in config  # nothing to overlay; no crash
+
+
 # ── _install_one branches ────────────────────────────────────────────
 def _pkgs(target_state="None", parent_state="Installed"):
     return [
