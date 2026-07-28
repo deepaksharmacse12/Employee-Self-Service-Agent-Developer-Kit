@@ -24,14 +24,15 @@ CONN_ID = "0fdad2b7f5454ab1b9d41bb8058ed13d"
 REF_ID = "c359730a-ad8d-442e-baf4-9ea7857c5537"
 SCHEMA = "msdyn_copilotforemployeeselfservicehr"
 FLOW_ID = "a1f4c28d-6b7c-49b9-a32e-55d8f19c7a03"
+SHARED_NAME = f"{SCHEMA}.{FLOW_ID}.shared_service-now"
 
 CONFIG = {"agents": [{"slug": "ess", "schemaName": SCHEMA}], "activeAgent": "ess"}
 
 
 def _ref(*, connectionid=CONN_ID, statuscode=1, connector=SN_CONNECTOR,
-         config=None, logicalname="msdyn.bot.shared_service-now"):
+         config=None, logicalname=SHARED_NAME, refid=REF_ID):
     return {
-        "connectionreferenceid": REF_ID,
+        "connectionreferenceid": refid,
         "connectionreferencelogicalname": logicalname,
         "connectorid": connector,
         "connectionid": connectionid,
@@ -182,11 +183,25 @@ def test_pick_shared_ref_prefers_shared_over_solution():
 
 
 def test_shared_ref_logical_name_shape():
-    name = cs.shared_ref_logical_name(SCHEMA)
-    assert name.startswith(SCHEMA + ".")
-    assert name.endswith(".shared_service-now")
-    # middle segment is a fresh guid (distinct each call)
-    assert cs.shared_ref_logical_name(SCHEMA) != name
+    name = cs.shared_ref_logical_name(SCHEMA, FLOW_ID)
+    assert name == f"{SCHEMA}.{FLOW_ID}.shared_service-now"
+    # Deterministic: derived from the flow id, NOT random.
+    assert cs.shared_ref_logical_name(SCHEMA, FLOW_ID) == name
+
+
+def test_find_shared_ref_by_name_case_insensitive():
+    name = f"{SCHEMA}.{FLOW_ID}.shared_service-now"
+    ref = _ref(logicalname=name)
+    assert cs.find_shared_ref_by_name([ref], name.upper()) is ref
+    assert cs.find_shared_ref_by_name([ref], "other.name") is None
+
+
+def test_flow_id_from_shared_ref_name_roundtrips():
+    name = cs.shared_ref_logical_name(SCHEMA, FLOW_ID)
+    assert cs.flow_id_from_shared_ref_name(SCHEMA, name) == FLOW_ID
+    # Non-shared / mismatched names yield None.
+    assert cs.flow_id_from_shared_ref_name(SCHEMA, "msdyn.cr.w2LCWZTZ") is None
+    assert cs.flow_id_from_shared_ref_name(SCHEMA, "") is None
 
 
 def test_resolve_connection_id_prefers_latest(monkeypatch):
@@ -294,8 +309,9 @@ def test_run_no_connection_found(patched, monkeypatch):
 
 
 def test_run_binds_and_shares(patched, monkeypatch):
+    # The flow-id-keyed shared reference already exists (unshared) -> UPDATE it.
     client = _install_client(monkeypatch, _user_connections(None), _connection())
-    result = _run(monkeypatch, [_ref(config=None)])
+    result = _run(monkeypatch, [_ref(logicalname=SHARED_NAME, config=None)])
     assert result["exit_code"] == 0
     assert result["action"] == "connected"
     assert result["flow_binding"] == "bound"
@@ -312,8 +328,9 @@ def test_run_binds_and_shares(patched, monkeypatch):
 
 
 def test_run_creates_shared_ref_when_absent(patched, monkeypatch):
-    # Only the solution-shipped ``.cr.<short>`` reference exists (no portal-owned
-    # ``.shared_service-now`` reference) -> the share must CREATE one.
+    # Only the solution-shipped ``.cr.<short>`` reference exists (no flow-id-keyed
+    # ``.shared_service-now`` reference) -> the share must CREATE one named after
+    # the flow id, exactly like the portal.
     client = _install_client(monkeypatch, _user_connections(CONN_ID), _connection())
     solution_ref = _ref(logicalname="msdyn.cr.w2LCWZTZ")
     result = _run(monkeypatch, [solution_ref])
@@ -325,10 +342,43 @@ def test_run_creates_shared_ref_when_absent(patched, monkeypatch):
     assert ent == "connectionreferences"
     assert data["connectionid"] == CONN_ID
     assert data["connectorid"] == cs._CONNECTOR_ID
-    assert data["connectionreferencelogicalname"].endswith(".shared_service-now")
-    assert data["connectionreferencelogicalname"].startswith(SCHEMA + ".")
+    # Name derived from the flow id (deterministic, portal-matching).
+    assert data["connectionreferencelogicalname"] == SHARED_NAME
+    assert data["connectionreferencedisplayname"] == SHARED_NAME
     assert json.loads(data["connectionparametersetconfig"]) == PARAM_CONFIG
-    assert result["shared_reference"] == data["connectionreferencelogicalname"]
+    assert result["shared_reference"] == SHARED_NAME
+    assert result["shared_references"] == [
+        {"flow": FLOW_ID, "reference": SHARED_NAME, "action": "created_shared_ref"}
+    ]
+
+
+def test_run_shares_shipped_ref_not_in_user_connections(patched, monkeypatch):
+    # A second extension pack (e.g. HRSD installed alongside ITSM) ships its own
+    # flow-id-keyed ``.shared_service-now`` reference whose flow is NOT registered
+    # in the agent's user_connections. Bind sets its connectionid but leaves it
+    # unshared; the union logic must still share it (set the param config),
+    # matching what the portal reads — otherwise that pack shows "not shared".
+    other_flow = "7e2b1c3a-9f4a-4e2a-8b1e-2c3a9f4a8b1e"
+    other_name = f"{SCHEMA}.{other_flow}.shared_service-now"
+    stored = json.dumps(PARAM_CONFIG, separators=(",", ":"))
+    _install_client(monkeypatch, _user_connections(CONN_ID), _connection())
+    registered = _ref(logicalname=SHARED_NAME, config=stored)          # already shared
+    shipped = _ref(refid="ship-ref-id", logicalname=other_name, config=None)
+    result = _run(monkeypatch, [registered, shipped])
+    assert result["exit_code"] == 0
+    # Only the shipped ref needs a PATCH; the registered one is already shared.
+    assert patched["create"] == []
+    assert len(patched["update"]) == 1
+    ent, rid, data = patched["update"][0]
+    assert ent == "connectionreferences"
+    assert rid == "ship-ref-id"
+    assert data["connectionid"] == CONN_ID
+    assert json.loads(data["connectionparametersetconfig"]) == PARAM_CONFIG
+    # Both refs reported; the registered one already shared, the shipped one shared.
+    actions = {r["reference"]: r["action"] for r in result["shared_references"]}
+    assert actions[SHARED_NAME] == "already_shared"
+    assert actions[other_name] == "shared"
+    assert cs.flow_id_from_shared_ref_name(SCHEMA, other_name) == other_flow
 
 
 def test_run_prefers_latest_discovered_connection(patched, monkeypatch):

@@ -17,11 +17,13 @@ Copilot Studio UI performs when a maker connects the connection:
   2. **Read the connection parameters** — GET the live connection to capture its
      ``connectionParametersSet`` (Entra app resource uri + instance name).
   3. **Share the parameters** — write ``connectionparametersetconfig`` onto the
-     Copilot Studio *shared-connector* reference (logical name
-     ``{schema}.<guid>.shared_service-now``). The portal creates this reference
-     on demand when the maker shares; this script finds it and updates it, or
-     creates it when absent. (The solution-shipped ``.cr.<short>`` reference is
-     NOT what the portal's sharing state reflects.)
+     Copilot Studio *shared-connector* references, one per ServiceNow invoker
+     flow, named ``{schema}.{flowId}.shared_service-now`` (flowId = the flow's
+     Dataverse workflowid). The portal creates these on demand when the maker
+     shares; this script finds each and updates it, or creates it when absent.
+     The name is derived from the flow id (NOT random) so the portal correlates
+     it back to the flow — a random name shows as "not shared". (The
+     solution-shipped ``.cr.<short>`` reference is NOT what the portal reflects.)
 
 Scope: **ServiceNow only.** Resolves the connection to connect dynamically —
 the live most-recently-created Connected ServiceNow connection (BAP discovery,
@@ -51,7 +53,6 @@ import argparse
 import json
 import os
 import sys
-import uuid
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -112,32 +113,60 @@ def _is_shared_connector_ref(ref: dict) -> bool:
 
     Copilot Studio's "share connection parameters with users" feature does not
     read the solution-shipped reference (logical name ``{schema}.cr.<short>``).
-    Instead it owns a reference whose logical name ends with the connector's
-    shared name, e.g. ``{schema}.<guid>.shared_service-now``, and *creates it on
-    demand* when the maker shares. That is the only reference the portal's
-    sharing state reflects — patching the solution reference leaves the portal
-    showing "not shared".
+    Instead it owns a reference named ``{schema}.<flowId>.shared_service-now``
+    — one per ServiceNow invoker flow — and *creates it on demand* when the maker
+    shares. Those are the only references the portal's sharing state reflects;
+    patching the solution reference leaves the portal showing "not shared".
     """
     ln = (ref.get("connectionreferencelogicalname") or "").lower()
     return ln.endswith("." + _CONNECTOR_NAME)
 
 
 def pick_shared_ref(refs: list[dict]) -> dict | None:
-    """Return the portal-owned ``.shared_service-now`` reference, if one exists."""
+    """Return the first portal-owned ``.shared_service-now`` reference, if any."""
     for r in refs:
         if _is_shared_connector_ref(r):
             return r
     return None
 
 
-def shared_ref_logical_name(schema: str) -> str:
+def shared_ref_logical_name(schema: str, flow_id: str) -> str:
     """Build a Copilot Studio shared-connector reference logical name.
 
-    Matches the portal's convention ``{schema}.<guid>.shared_service-now``. The
-    middle GUID is a fresh per-reference identifier (Dataverse does not validate
-    it against anything); a random uuid4 mirrors what the portal generates.
+    Mirrors the portal's convention **exactly**: ``{schema}.{flowId}.\
+shared_service-now`` where ``flowId`` is the invoker flow's Dataverse
+    ``workflowid``. The GUID is NOT random — the portal derives the reference
+    name from the flow id so it can correlate the shared parameters back to that
+    flow. Using a random uuid here produced a reference the portal could not find
+    (it still showed "not shared"); keying by flow id is what makes sharing take.
     """
-    return f"{schema}.{uuid.uuid4()}.{_CONNECTOR_NAME}"
+    return f"{schema}.{flow_id}.{_CONNECTOR_NAME}"
+
+
+def find_shared_ref_by_name(refs: list[dict], logical_name: str) -> dict | None:
+    """Return the reference whose logical name matches ``logical_name`` (case-
+    insensitive), or ``None``."""
+    target = (logical_name or "").lower()
+    for r in refs:
+        if (r.get("connectionreferencelogicalname") or "").lower() == target:
+            return r
+    return None
+
+
+def flow_id_from_shared_ref_name(schema: str, logical_name: str) -> str | None:
+    """Extract the invoker flow id from a ``.shared_service-now`` reference name.
+
+    Inverse of :func:`shared_ref_logical_name`: given ``{schema}.{flowId}.\
+shared_service-now`` returns ``flowId``. Returns ``None`` when the name does not
+    match the portal's shared-reference convention (used only for reporting).
+    """
+    ln = logical_name or ""
+    prefix = f"{schema}."
+    suffix = f".{_CONNECTOR_NAME}"
+    low = ln.lower()
+    if low.startswith(prefix.lower()) and low.endswith(suffix.lower()):
+        return ln[len(prefix): len(ln) - len(suffix)]
+    return None
 
 
 def resolve_connection_id(
@@ -412,57 +441,85 @@ def run(
     connection = client.get_connection(_CONNECTOR_NAME, connection_id)
     param_config = build_param_config(connection)
 
-    # --- Step 3: share parameters onto the portal-owned shared reference ---
+    # --- Step 3: share parameters onto the portal-owned shared reference(s) ---
     #
     # Copilot Studio's "share connection parameters" feature reads its *own*
-    # ``.shared_service-now`` reference, which it creates on demand — NOT the
-    # solution-shipped ``.cr.<short>`` reference. Patching the solution reference
-    # (what this script used to do) left the portal showing "not shared". Mirror
-    # the portal: find the shared reference and update it, or create it if absent.
-    share_action = "skipped"
-    shared_ref_name = None
+    # references named ``{schema}.{flowId}.shared_service-now`` — one per
+    # ServiceNow invoker flow — NOT the solution-shipped ``.cr.<short>``
+    # reference, and NOT a randomly-named one. It creates them on demand when the
+    # maker shares. Mirror the portal: for every ServiceNow invoker flow, find
+    # the flow-id-keyed shared reference and update it, or create it if absent.
+    shared_records: list[dict] = []
     if param_config is not None:
         desired = json.dumps(param_config, separators=(",", ":"))
-        shared_ref = pick_shared_ref(sn_refs)
-        if shared_ref is not None:
-            shared_ref_name = shared_ref.get("connectionreferencelogicalname")
-            already = (
-                _config_equal(shared_ref.get("connectionparametersetconfig"), param_config)
-                and shared_ref.get("connectionid") == connection_id
-            )
-            if already:
-                share_action = "already_shared"
+        # Build the unified set of shared references to configure: one per
+        # ServiceNow invoker flow registered on the agent, UNION every
+        # portal-owned ``.shared_service-now`` reference already present in
+        # Dataverse. Relying on the agent's registered flows alone misses
+        # solution-shipped shared references — e.g. a second extension pack's
+        # orchestrator (HRSD installed alongside ITSM) ships its own
+        # ``{schema}.{flowId}.shared_service-now`` reference whose flow may not
+        # yet be registered on the agent, yet the portal still reads it for the
+        # connection's sharing state. Missing it leaves that pack "not shared".
+        targets: dict[str, tuple[str, str | None]] = {}
+        for flow_id, _connector in sn_flows:
+            name = shared_ref_logical_name(schema, flow_id)
+            targets[name.lower()] = (name, flow_id)
+        for r in sn_refs:
+            if _is_shared_connector_ref(r):
+                name = r.get("connectionreferencelogicalname") or ""
+                if name:
+                    targets.setdefault(
+                        name.lower(),
+                        (name, flow_id_from_shared_ref_name(schema, name)),
+                    )
+        for name, flow_id in targets.values():
+            existing = find_shared_ref_by_name(sn_refs, name)
+            if existing is not None:
+                already = (
+                    _config_equal(
+                        existing.get("connectionparametersetconfig"), param_config
+                    )
+                    and existing.get("connectionid") == connection_id
+                )
+                if already:
+                    act = "already_shared"
+                elif dry_run:
+                    act = "would_share"
+                else:
+                    auth.update_record(
+                        env_url,
+                        dv_token,
+                        _REF_ENTITY,
+                        existing["connectionreferenceid"],
+                        {
+                            "connectionparametersetconfig": desired,
+                            "connectionid": connection_id,
+                        },
+                    )
+                    act = "shared"
             elif dry_run:
-                share_action = "would_share"
+                act = "would_create_shared_ref"
             else:
-                auth.update_record(
+                auth.create_record(
                     env_url,
                     dv_token,
                     _REF_ENTITY,
-                    shared_ref["connectionreferenceid"],
                     {
-                        "connectionparametersetconfig": desired,
+                        "connectionreferencelogicalname": name,
+                        "connectionreferencedisplayname": name,
+                        "connectorid": _CONNECTOR_ID,
                         "connectionid": connection_id,
+                        "connectionparametersetconfig": desired,
                     },
                 )
-                share_action = "shared"
-        elif dry_run:
-            share_action = "would_create_shared_ref"
-        else:
-            shared_ref_name = shared_ref_logical_name(schema)
-            auth.create_record(
-                env_url,
-                dv_token,
-                _REF_ENTITY,
-                {
-                    "connectionreferencelogicalname": shared_ref_name,
-                    "connectionreferencedisplayname": shared_ref_name,
-                    "connectorid": _CONNECTOR_ID,
-                    "connectionid": connection_id,
-                    "connectionparametersetconfig": desired,
-                },
+                act = "created_shared_ref"
+            shared_records.append(
+                {"flow": flow_id, "reference": name, "action": act}
             )
-            share_action = "created_shared_ref"
+
+    share_action = _aggregate_share(shared_records)
+    shared_ref_name = shared_records[0]["reference"] if shared_records else None
 
     verb = "Would connect" if dry_run else "Connected"
     return {
@@ -470,6 +527,7 @@ def run(
         "exit_code": 0,
         "reference": ref_name,
         "shared_reference": shared_ref_name,
+        "shared_references": shared_records,
         "connection_id": connection_id,
         "connection_source": conn_source,
         "flow_binding": bind_action,
@@ -480,6 +538,29 @@ def run(
             f"(flow binding: {bind_action}; parameter sharing: {share_action})."
         ),
     }
+
+
+def _aggregate_share(records: list[dict]) -> str:
+    """Collapse per-flow share outcomes into a single status for the summary.
+
+    Precedence (most-actionable first): an actual write (``created_shared_ref``
+    / ``shared``) or its dry-run equivalent wins over ``already_shared``, which
+    wins over ``skipped``. With a single flow this is just that flow's action.
+    """
+    if not records:
+        return "skipped"
+    actions = [r["action"] for r in records]
+    for status in (
+        "created_shared_ref",
+        "shared",
+        "would_create_shared_ref",
+        "would_share",
+    ):
+        if status in actions:
+            return status
+    if "already_shared" in actions:
+        return "already_shared"
+    return "skipped"
 
 
 def _config_equal(current, desired: dict) -> bool:
