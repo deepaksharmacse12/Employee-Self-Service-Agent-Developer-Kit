@@ -278,3 +278,110 @@ def test_servicenow_dataverse_wrapper_self_contained(monkeypatch):
     r = _by_id(run_servicenow_dataverse_checks(_dv_runner()), "SN-DV-CONN-001")
     assert r.status == "Passed"
 
+
+# --------------------------------------------------------------------------
+# _check_portal_base_url — SN-BASEURL-001 (portal base URL set on the
+# per-product parent template-config record; P6.6 / S6.5).
+# --------------------------------------------------------------------------
+import json as _json
+
+
+def _portal_row(name, uri=None, *, raw=None):
+    """A template-config parent row. ``uri=None`` → key present but empty."""
+    if raw is not None:
+        value = raw
+    else:
+        value = _json.dumps({"ServiceNowPortalBaseURI": uri or ""})
+    return {"msdyn_name": name, "msdyn_value": value}
+
+
+def _portal_runner():
+    return SimpleNamespace(env_url="https://org.crm.dynamics.com", dv_token="t")
+
+
+def test_portal_base_url_set_passes(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSD", "https://dev184242.service-now.com/sp"),
+        # Unrelated child record must be ignored.
+        _portal_row("msdyn_ServiceNowHRSDGetCaseDetails", ""),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Passed"
+    assert "HRSD" in r.result
+    assert "Note:" not in r.result
+
+
+def test_portal_base_url_non_portal_path_passes_with_note(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSD", "https://dev184242.service-now.com"),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Passed"
+    assert "Service Portal path" in r.result
+
+
+def test_portal_base_url_empty_fails(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSD", ""),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Failed"
+    assert "empty for HRSD" in r.result
+
+
+def test_portal_base_url_malformed_fails(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowITSM", "dev184242.service-now.com/sp"),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Failed"
+    assert "not a URL for ITSM" in r.result
+
+
+def test_portal_base_url_no_parent_not_configured(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSDGetCaseDetails", "x"),  # child only
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "NotConfigured"
+    assert "not installed" in r.result
+
+
+def test_portal_base_url_skipped_without_token():
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    runner = SimpleNamespace(env_url="", dv_token="")
+    r = _by_id(_check_portal_base_url(runner), "SN-BASEURL-001")
+    assert r.status == "Skipped"
+
+
+def test_portal_base_url_bad_json_treated_as_unset(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSD", raw="not-json"),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Failed"
+    assert "empty for HRSD" in r.result
+
+
+def test_servicenow_portal_wrapper_self_contained(monkeypatch):
+    """The wrapper emits SN-BASEURL-001 with no _servicenow_flows gate."""
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSD", "https://x.service-now.com/sp"),
+    ])
+    from flightcheck.checks.servicenow import run_servicenow_portal_checks
+    r = _by_id(run_servicenow_portal_checks(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Passed"
+

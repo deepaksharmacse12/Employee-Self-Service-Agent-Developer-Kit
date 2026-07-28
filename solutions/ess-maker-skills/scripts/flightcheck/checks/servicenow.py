@@ -8,6 +8,7 @@ Validates ServiceNow connection references, flow status, template configurations
 in Dataverse, and local agent topic files for ServiceNow HRSD/ITSM scenarios.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -87,6 +88,9 @@ def run_servicenow_checks(runner) -> list[CheckResult]:
     # --- Template Configurations (Dataverse) ---
     results.extend(_check_template_configs(runner))
 
+    # --- Portal Base URL (SN-BASEURL-001, S6.5) ---
+    results.extend(_check_portal_base_url(runner))
+
     # --- Local Topic Files ---
     results.extend(_check_local_topics(runner))
 
@@ -160,6 +164,18 @@ def _check_connections(runner) -> list[CheckResult]:
 
 _DV_CONNECTOR_SUFFIX = "/apis/shared_commondataserviceforapps"
 _SN_DV_DESC = "Dataverse connection reference(s) bound to an active connection you own"
+
+# ServiceNow Portal Base URL (SN-BASEURL-001, S6.5). The extension packs never
+# populate it, but the agent needs it to turn case/ticket references into working
+# links. It lives in the Dataverse template-config table on each product's parent
+# record (msdyn_ServiceNowHRSD / msdyn_ServiceNowITSM) as a JSON blob in
+# msdyn_value under this key.
+_SN_BASEURL_DESC = "ServiceNow Portal Base URL set so case/ticket links resolve"
+_SN_PORTAL_URI_KEY = "ServiceNowPortalBaseURI"
+_SN_PORTAL_PARENT_RECORDS = {
+    "hrsd": "msdyn_ServiceNowHRSD",
+    "itsm": "msdyn_ServiceNowITSM",
+}
 
 
 def _resolve_conn_owner(props: dict) -> str:
@@ -326,6 +342,149 @@ def run_servicenow_dataverse_checks(runner) -> list[CheckResult]:
     directly, so scope runs still surface it once (no double emit here).
     """
     return _check_dataverse_connection(runner)
+
+
+def _portal_uri(value) -> str:
+    """Extract the ServiceNow portal base URI from a template-config ``msdyn_value``.
+
+    ``value`` is the JSON string stored on the parent record. Returns the trimmed
+    URI or ``""`` when the blob is missing, unparseable, or the key is empty.
+    """
+    try:
+        data = json.loads(value) if isinstance(value, str) else (value or {})
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get(_SN_PORTAL_URI_KEY) or "").strip()
+
+
+def _check_portal_base_url(runner) -> list[CheckResult]:
+    """Verify the ServiceNow Portal Base URL is set for each installed product.
+
+    The extension packs create per-product parent config records
+    (``msdyn_ServiceNowHRSD`` / ``msdyn_ServiceNowITSM``) but leave the portal
+    base URL empty, so the case/ticket links the agent returns don't resolve
+    until a maker sets it. FAILS when a present product's URL is empty or not an
+    ``http(s)`` URL; NOT_CONFIGURED when no product config record exists (pack
+    not installed). Same documented Dataverse read as the template-config check.
+    """
+    roles = [Role.ESS_MAKER.value]
+    env_url = getattr(runner, "env_url", None)
+    dv_token = getattr(runner, "dv_token", None)
+    if not env_url or not dv_token:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-BASEURL-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.SKIPPED.value,
+            description=_SN_BASEURL_DESC,
+            result="Dataverse token not available — skipping the portal base URL check.",
+        )]
+
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+        from auth import query_all
+
+        rows = query_all(
+            env_url, dv_token, "msdyn_employeeselfservicetemplateconfigs",
+            "msdyn_name,msdyn_value",
+            filter_expr=(
+                "msdyn_name eq 'msdyn_ServiceNowHRSD' or "
+                "msdyn_name eq 'msdyn_ServiceNowITSM'"
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 — degrade to WARNING, never abort
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-BASEURL-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.WARNING.value,
+            description=_SN_BASEURL_DESC,
+            result=f"Unable to read ServiceNow template configs: {e}.",
+            remediation="Confirm the FlightCheck identity has Dataverse read access.",
+        )]
+
+    valid_records = set(_SN_PORTAL_PARENT_RECORDS.values())
+    parents = {
+        r.get("msdyn_name"): r for r in (rows or [])
+        if r.get("msdyn_name") in valid_records
+    }
+    if not parents:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-BASEURL-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+            description=_SN_BASEURL_DESC,
+            result=(
+                "No ServiceNow product config record (msdyn_ServiceNowHRSD / "
+                "msdyn_ServiceNowITSM) was found — the extension pack is not installed."
+            ),
+            remediation=(
+                "Install the ServiceNow extension pack (S6.1), then set the portal "
+                "base URL on the product config in Copilot Studio."
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    label_by_record = {v: k.upper() for k, v in _SN_PORTAL_PARENT_RECORDS.items()}
+    unset: list[str] = []
+    malformed: list[str] = []
+    ok: list[str] = []
+    for record_name, row in parents.items():
+        label = label_by_record.get(record_name, record_name)
+        uri = _portal_uri(row.get("msdyn_value"))
+        if not uri:
+            unset.append(label)
+        elif not uri.lower().startswith(("http://", "https://")):
+            malformed.append(f"{label} ({uri})")
+        else:
+            ok.append(f"{label} ({uri})")
+
+    if unset or malformed:
+        problems = []
+        if unset:
+            problems.append(f"empty for {', '.join(unset)}")
+        if malformed:
+            problems.append(f"not a URL for {', '.join(malformed)}")
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-BASEURL-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.FAILED.value,
+            description=_SN_BASEURL_DESC,
+            result=(
+                "ServiceNow Portal Base URL is " + "; ".join(problems)
+                + ". Case and ticket links will not resolve for employees."
+            ),
+            remediation=(
+                "In Copilot Studio, open each in-scope ServiceNow product config "
+                "and set the Portal Base URL to your Service Portal, e.g. "
+                "https://<instance>.service-now.com/sp."
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    non_portal = [u for u in ok if "/sp" not in u.lower()]
+    note = ""
+    if non_portal:
+        note = (
+            " Note: " + ", ".join(non_portal)
+            + " does not point at a Service Portal path (…/sp)."
+        )
+    return [CheckResult(roles=roles,
+        checkpoint_id="SN-BASEURL-001", category="ServiceNow",
+        priority=Priority.HIGH.value, status=Status.PASSED.value,
+        description=_SN_BASEURL_DESC,
+        result=(
+            f"Portal base URL set for {len(ok)} product(s): {', '.join(ok)}." + note
+        ),
+        doc_link=f"{DOC_BASE}/servicenow",
+    )]
+
+
+def run_servicenow_portal_checks(runner) -> list[CheckResult]:
+    """Self-contained emitter for ``SN-BASEURL-001``.
+
+    Like :func:`run_servicenow_dataverse_checks`, this wrapper has no
+    ``_servicenow_flows`` gate, so the checkpoint is independently runnable via
+    ``--checkpoint SN-BASEURL-001``. The deep ``run_servicenow_checks`` path calls
+    :func:`_check_portal_base_url` directly, so scope runs surface it once.
+    """
+    return _check_portal_base_url(runner)
 
 
 def _check_flow_status(runner, sn_flows: list) -> list[CheckResult]:

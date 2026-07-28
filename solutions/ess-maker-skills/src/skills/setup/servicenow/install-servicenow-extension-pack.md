@@ -70,6 +70,16 @@ references (P6.3) → turn on flows (P6.4) → connect and share (P6.5) → port
 (P6.6)**. A cloud flow can only hold activation once its connection references are
 bound, and the flow invoker binding must land on the activated flow definition, so
 this order is deliberate — do not reorder it.
+
+**State persistence.** The action scripts (`install_extension_pack.py`,
+`bind_connections.py`, `activate_flows.py`, `connect_and_share.py`) now self-record
+their confirmed outcome into `.local/connect/servicenow/config.json` on success —
+the factual `packs` / `connections` / `status` artifacts plus the `setupStatus`
+step they own (S6.1–S6.4), via `connect_state.py`. This keeps a headless or
+script-first drive resumable even if the row-recording Message steps below are
+skipped. The recorders are merge-only and never change a script's exit code, so
+the explicit config merges in each step remain the source of truth for gate
+evidence and stay safe to run.
 ---
 ## P6.0 — Role gate (Environment Maker)
 Apply the shared [`permission-gate.md`](../shared/permission-gate.md) before any
@@ -688,8 +698,10 @@ ITSM is in scope. After confirmation, run:
 ```
 python scripts/flightcheck/cli.py --scope servicenow --no-open
 ```
-Read the `SN-BASEURL-001` row from the results (it is emitted by the ServiceNow scope
-run, not a standalone `--checkpoint` ID). `PASSED` updates S6.5 with `GATE="prog"`. `FAILED`,
+Read the `SN-BASEURL-001` row from the results. It is emitted by the ServiceNow
+scope run and is also a registered checkpoint, so you can verify it directly with
+`python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001 --no-open`. `PASSED`
+updates S6.5 with `GATE="prog"`. `FAILED`,
 `NotConfigured`, or partial coverage requires attestation after the rendered result:
 **Message:**
 

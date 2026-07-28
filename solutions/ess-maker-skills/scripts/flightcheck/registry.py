@@ -45,7 +45,10 @@ from typing import Callable, Optional
 from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
 from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
-from flightcheck.checks.servicenow import run_servicenow_dataverse_checks
+from flightcheck.checks.servicenow import (
+    run_servicenow_dataverse_checks,
+    run_servicenow_portal_checks,
+)
 from flightcheck.checks.servicenow_flow_binding import (
     run_servicenow_flow_binding_checks,
 )
@@ -432,6 +435,23 @@ _SPECS: list[CheckpointSpec] = [
         category_fn=run_servicenow_dataverse_checks,
         category_label="ServiceNow",
         clients=frozenset({DATAVERSE, PP_ADMIN}),
+        requires_config=True,
+        requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value,),
+    ),
+    # ServiceNow Portal Base URL (setup skill 6, S6.5). Emitted by
+    # checks/servicenow.run_servicenow_portal_checks — a self-contained wrapper
+    # (no ServiceNow-flow gate) so it is independently runnable via --checkpoint.
+    # Reads the per-product parent template-config record's msdyn_value JSON, so
+    # it needs a Dataverse endpoint. Registered with an exact key so the drift
+    # test resolves the emitted ID and P6.6 finally has a real gate (previously
+    # this ID was referenced in docs only, with no implementation).
+    CheckpointSpec(
+        key="SN-BASEURL-001",
+        category_fn=run_servicenow_portal_checks,
+        category_label="ServiceNow",
+        clients=frozenset({DATAVERSE}),
         requires_config=True,
         requires_dataverse_endpoint=True,
         priority=Priority.HIGH.value,
