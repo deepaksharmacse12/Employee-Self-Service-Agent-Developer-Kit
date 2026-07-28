@@ -78,13 +78,21 @@ def test_missing_keys_do_not_raise():
     assert summary == [{"name": None, "status": "Succeeded", "statusCode": None}]
 
 
-def test_cli_requires_flow_token(capsys, monkeypatch):
+def test_cli_falls_back_to_acquire_when_no_env_token(capsys, monkeypatch):
+    # With no FLOW_API_TOKEN, main() acquires a token via _resolve_token. Here the
+    # acquisition path fails (no config), so it reports cleanly and returns 2.
     import flow_run_inspect
     monkeypatch.delenv("FLOW_API_TOKEN", raising=False)
+    monkeypatch.setattr(flow_run_inspect, "_resolve_token", lambda env_tok: None)
     rc = flow_run_inspect.main(["--environment", "e" * 32, "--flow", "f" * 32])
     out = capsys.readouterr().out
     assert rc == 2
     assert "FLOW_API_TOKEN" in out
+
+
+def test_resolve_token_prefers_env_token():
+    import flow_run_inspect
+    assert flow_run_inspect._resolve_token("explicit-tok") == "explicit-tok"
 
 
 def test_cli_renders_cascade(capsys, monkeypatch):

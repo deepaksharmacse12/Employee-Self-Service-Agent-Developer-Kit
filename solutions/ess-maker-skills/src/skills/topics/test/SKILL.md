@@ -48,11 +48,10 @@ Only proceed past this step on an `ok` reply.
 
 When the reply is a real answer but wrong (generic error, missing data), read the flow's run history — the decisive "why" surface.
 
-1. Get the **environment id** (GUID) and the **flow id** (GUID) of the flow the topic calls. Provide a Flow Management API bearer token (resource `https://service.flow.microsoft.com/`) via the `FLOW_API_TOKEN` environment variable.
+1. Get the **environment id** (GUID) and the **flow id** (GUID) of the flow the topic calls. The tool acquires a Flow-scoped token automatically via the kit's sign-in (set `FLOW_API_TOKEN` only to override with your own).
 2. Dump the latest run's action cascade:
 
    ```
-   $env:FLOW_API_TOKEN = "<flow token>"
    python scripts/flow_run_inspect.py --environment <env-guid> --flow <flow-guid>
    ```
 

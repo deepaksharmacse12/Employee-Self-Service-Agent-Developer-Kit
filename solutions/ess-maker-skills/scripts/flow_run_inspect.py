@@ -196,13 +196,33 @@ def _render_cascade(summary: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_token(explicit_env_token: str) -> str | None:
+    """Resolve a Flow Management API bearer token.
+
+    Prefers the ``FLOW_API_TOKEN`` env var (explicit / CI / bring-your-own).
+    Falls back to acquiring one via the kit's MSAL flow (``auth.get_flow_token``)
+    using the active agent's environment from ``.local/config.json`` for tenant
+    discovery. Returns None if neither path yields a token.
+    """
+    if explicit_env_token:
+        return explicit_env_token
+    try:
+        from auth import get_flow_token, load_config
+        env_url = load_config()["dataverseEndpoint"]
+    except Exception as exc:  # noqa: BLE001 — surface a clean message, no token
+        print(f"Could not load environment config for token acquisition: {exc}")
+        return None
+    return get_flow_token(env_url)
+
+
 def main(argv=None) -> int:
     """CLI: dump a flow run's action cascade for interpretation.
 
-    Reads a Flow Management API bearer token from the ``FLOW_API_TOKEN`` env var
-    (the maker kit's MSAL flow is Dataverse-scoped, so a Flow-scoped token is
-    supplied here rather than acquired). Interpret the output with the companion
-    doc reference/ess-docs/operations/flow-run-inspection.md.
+    Acquires a Flow Management API bearer token: uses ``FLOW_API_TOKEN`` if set,
+    otherwise signs in via the kit's MSAL flow (Flow-scoped, using the active
+    agent's environment from ``.local/config.json`` for tenant discovery).
+    Interpret the output with the companion doc
+    reference/ess-docs/operations/flow-run-inspection.md.
     """
     import argparse
     import os
@@ -216,10 +236,10 @@ def main(argv=None) -> int:
                         help="run id (default: the latest run)")
     args = parser.parse_args(argv)
 
-    token = os.environ.get("FLOW_API_TOKEN", "").strip()
+    token = _resolve_token(os.environ.get("FLOW_API_TOKEN", "").strip())
     if not token:
-        print("Set FLOW_API_TOKEN to a Flow Management API bearer token "
-              "(resource https://service.flow.microsoft.com/).")
+        print("No Flow Management API token: set FLOW_API_TOKEN, or ensure "
+              ".local/config.json is present so a token can be acquired.")
         return 2
 
     if args.run:

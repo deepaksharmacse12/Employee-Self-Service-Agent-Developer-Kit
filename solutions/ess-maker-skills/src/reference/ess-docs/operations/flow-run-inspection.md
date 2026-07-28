@@ -13,7 +13,7 @@ This doc teaches you to read that cascade. The read is performed by `scripts/flo
 - `get_run_actions(environment, flow_id, run_id, token)` — the run's actions as `[{name, status, outputs}]`.
 - `summarize_actions(actions)` — reduces that to the `[{name, status, statusCode}]` cascade you interpret.
 
-`token` is a Flow Management API bearer token (resource `https://service.flow.microsoft.com/`). Acquire it with your own maker credentials.
+`token` is a Flow Management API bearer token (resource `https://service.flow.microsoft.com/`). The CLI acquires one automatically via the kit's MSAL sign-in (Flow-scoped, using your active agent's environment for tenant discovery); set `FLOW_API_TOKEN` to supply your own instead (CI, or bring-your-own token).
 
 A summarized cascade looks like:
 
