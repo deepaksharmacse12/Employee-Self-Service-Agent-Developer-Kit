@@ -16,13 +16,17 @@ Copilot Studio UI performs when a maker connects the connection:
      ServiceNow connector points at the connection (flips status to Connected).
   2. **Read the connection parameters** — GET the live connection to capture its
      ``connectionParametersSet`` (Entra app resource uri + instance name).
-  3. **Share the parameters** — PATCH the Dataverse ``connectionreferences`` row
-     with ``connectionparametersetconfig`` so the parameters travel with the
-     solution reference (what the portal's "share" action writes).
+  3. **Share the parameters** — write ``connectionparametersetconfig`` onto the
+     Copilot Studio *shared-connector* reference (logical name
+     ``{schema}.<guid>.shared_service-now``). The portal creates this reference
+     on demand when the maker shares; this script finds it and updates it, or
+     creates it when absent. (The solution-shipped ``.cr.<short>`` reference is
+     NOT what the portal's sharing state reflects.)
 
-Scope: **ServiceNow only.** The connection reference must already be bound to a
-connection (run ``bind_connections.py`` first); this script does not create or
-authenticate connections.
+Scope: **ServiceNow only.** Resolves the connection to connect dynamically —
+the live most-recently-created Connected ServiceNow connection (BAP discovery,
+same as ``bind_connections``) — rather than trusting a stored ``connectionid``.
+This script does not create or authenticate connections.
 
 Authentication: the environment API (steps 1–2) uses the Power Platform CLI
 ("pac") public client via ``pp_env_client`` — the kit's default Azure CLI client
@@ -32,7 +36,7 @@ normal ``auth.authenticate`` token.
 Exit codes:
   0  connected (now or already) — proceed to verify with SN-FLOWCONN-001.
   3  no ServiceNow connection reference found (extension pack not installed).
-  4  the ServiceNow reference is not bound to a connection (run bind first).
+  4  no active ServiceNow connection found to connect (create + bind first).
   5  could not resolve the Power Platform environment id.
   1  unexpected error.
 
@@ -47,11 +51,17 @@ import argparse
 import json
 import os
 import sys
+import uuid
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
 import connect_state  # noqa: E402
+from bind_connections import (  # noqa: E402
+    _discover_connections as _discover_env_connections,
+    filter_servicenow_connections,
+    pick_connection,
+)
 from pp_env_client import (  # noqa: E402
     PPEnvClient,
     connector_is_connected,
@@ -62,6 +72,7 @@ from pp_env_client import (  # noqa: E402
 
 _SERVICENOW_CONNECTOR_KEYWORDS = ("service-now", "servicenow")
 _CONNECTOR_NAME = "shared_service-now"
+_CONNECTOR_ID = "/providers/Microsoft.PowerApps/apis/shared_service-now"
 
 _REF_ENTITY = "connectionreferences"
 _REF_SELECT = (
@@ -94,6 +105,71 @@ def pick_bound_ref(refs: list[dict]) -> dict | None:
         return active[0]
     bound = [r for r in refs if r.get("connectionid")]
     return bound[0] if bound else None
+
+
+def _is_shared_connector_ref(ref: dict) -> bool:
+    """True when the reference is a Copilot Studio *shared-connector* reference.
+
+    Copilot Studio's "share connection parameters with users" feature does not
+    read the solution-shipped reference (logical name ``{schema}.cr.<short>``).
+    Instead it owns a reference whose logical name ends with the connector's
+    shared name, e.g. ``{schema}.<guid>.shared_service-now``, and *creates it on
+    demand* when the maker shares. That is the only reference the portal's
+    sharing state reflects — patching the solution reference leaves the portal
+    showing "not shared".
+    """
+    ln = (ref.get("connectionreferencelogicalname") or "").lower()
+    return ln.endswith("." + _CONNECTOR_NAME)
+
+
+def pick_shared_ref(refs: list[dict]) -> dict | None:
+    """Return the portal-owned ``.shared_service-now`` reference, if one exists."""
+    for r in refs:
+        if _is_shared_connector_ref(r):
+            return r
+    return None
+
+
+def shared_ref_logical_name(schema: str) -> str:
+    """Build a Copilot Studio shared-connector reference logical name.
+
+    Matches the portal's convention ``{schema}.<guid>.shared_service-now``. The
+    middle GUID is a fresh per-reference identifier (Dataverse does not validate
+    it against anything); a random uuid4 mirrors what the portal generates.
+    """
+    return f"{schema}.{uuid.uuid4()}.{_CONNECTOR_NAME}"
+
+
+def resolve_connection_id(
+    env_url: str,
+    dv_token: str,
+    environment_id: str | None,
+    sn_refs: list[dict],
+) -> tuple[str | None, str | None]:
+    """Resolve the ServiceNow connection id to connect and share, dynamically.
+
+    Fool-proof, and consistent with ``bind_connections``: prefer the live
+    **most-recently-created Connected** ServiceNow connection (discovered via the
+    BAP admin API) rather than trusting a value stored on a reference — a stored
+    ``connectionid`` can be stale if the maker re-created the connection. Falls
+    back to an already-bound reference's ``connectionid`` only when live
+    discovery is unavailable (e.g. missing BAP permissions).
+
+    Returns ``(connection_id, source)`` or ``(None, None)`` when neither a live
+    connection nor a bound reference is found.
+    """
+    try:
+        conns = _discover_env_connections(env_url, dv_token, environment_id)
+        chosen, _total = pick_connection(filter_servicenow_connections(conns))
+        if chosen and chosen.get("name"):
+            return chosen["name"], "latest environment connection"
+    except Exception:
+        # Discovery is best-effort; fall through to the bound-reference fallback.
+        pass
+    bound = pick_bound_ref(sn_refs)
+    if bound and bound.get("connectionid"):
+        return bound["connectionid"], "bound reference"
+    return None, None
 
 
 def bot_schema(config: dict | None) -> str | None:
@@ -253,21 +329,23 @@ def run(
             ),
         }
 
-    ref = pick_bound_ref(sn_refs)
-    if ref is None:
+    connection_id, conn_source = resolve_connection_id(
+        env_url, dv_token, environment_id, sn_refs
+    )
+    if not connection_id:
         return {
-            "action": "no_binding",
+            "action": "no_connection",
             "exit_code": 4,
             "message": (
-                "The ServiceNow connection reference is not bound to a "
-                "connection. Run `python scripts/bind_connections.py "
-                "--connector servicenow` first, then re-run."
+                "No active ServiceNow connection was found to connect. Create "
+                "the ServiceNow connection in Copilot Studio (Connections) and "
+                "bind it (`python scripts/bind_connections.py --connector "
+                "servicenow`), then re-run."
             ),
         }
 
-    connection_id = ref["connectionid"]
-    ref_id = ref["connectionreferenceid"]
-    ref_name = ref.get("connectionreferencelogicalname")
+    bound_ref = pick_bound_ref(sn_refs)
+    ref_name = (bound_ref or {}).get("connectionreferencelogicalname")
 
     from auth import discover_tenant
 
@@ -334,34 +412,66 @@ def run(
     connection = client.get_connection(_CONNECTOR_NAME, connection_id)
     param_config = build_param_config(connection)
 
-    # --- Step 3: share parameters onto the Dataverse reference ---
+    # --- Step 3: share parameters onto the portal-owned shared reference ---
+    #
+    # Copilot Studio's "share connection parameters" feature reads its *own*
+    # ``.shared_service-now`` reference, which it creates on demand — NOT the
+    # solution-shipped ``.cr.<short>`` reference. Patching the solution reference
+    # (what this script used to do) left the portal showing "not shared". Mirror
+    # the portal: find the shared reference and update it, or create it if absent.
     share_action = "skipped"
+    shared_ref_name = None
     if param_config is not None:
         desired = json.dumps(param_config, separators=(",", ":"))
-        current = ref.get("connectionparametersetconfig")
-        if _config_equal(current, param_config):
-            share_action = "already_shared"
+        shared_ref = pick_shared_ref(sn_refs)
+        if shared_ref is not None:
+            shared_ref_name = shared_ref.get("connectionreferencelogicalname")
+            already = (
+                _config_equal(shared_ref.get("connectionparametersetconfig"), param_config)
+                and shared_ref.get("connectionid") == connection_id
+            )
+            if already:
+                share_action = "already_shared"
+            elif dry_run:
+                share_action = "would_share"
+            else:
+                auth.update_record(
+                    env_url,
+                    dv_token,
+                    _REF_ENTITY,
+                    shared_ref["connectionreferenceid"],
+                    {
+                        "connectionparametersetconfig": desired,
+                        "connectionid": connection_id,
+                    },
+                )
+                share_action = "shared"
         elif dry_run:
-            share_action = "would_share"
+            share_action = "would_create_shared_ref"
         else:
-            auth.update_record(
+            shared_ref_name = shared_ref_logical_name(schema)
+            auth.create_record(
                 env_url,
                 dv_token,
                 _REF_ENTITY,
-                ref_id,
                 {
-                    "connectionparametersetconfig": desired,
+                    "connectionreferencelogicalname": shared_ref_name,
+                    "connectionreferencedisplayname": shared_ref_name,
+                    "connectorid": _CONNECTOR_ID,
                     "connectionid": connection_id,
+                    "connectionparametersetconfig": desired,
                 },
             )
-            share_action = "shared"
+            share_action = "created_shared_ref"
 
     verb = "Would connect" if dry_run else "Connected"
     return {
         "action": "would_connect" if dry_run else "connected",
         "exit_code": 0,
         "reference": ref_name,
+        "shared_reference": shared_ref_name,
         "connection_id": connection_id,
+        "connection_source": conn_source,
         "flow_binding": bind_action,
         "changed_flows": changed_flows,
         "share": share_action,

@@ -29,14 +29,27 @@ CONFIG = {"agents": [{"slug": "ess", "schemaName": SCHEMA}], "activeAgent": "ess
 
 
 def _ref(*, connectionid=CONN_ID, statuscode=1, connector=SN_CONNECTOR,
-         config=None):
+         config=None, logicalname="msdyn.bot.shared_service-now"):
     return {
         "connectionreferenceid": REF_ID,
-        "connectionreferencelogicalname": "msdyn.bot.shared_service-now",
+        "connectionreferencelogicalname": logicalname,
         "connectorid": connector,
         "connectionid": connectionid,
         "statuscode": statuscode,
         "connectionparametersetconfig": config,
+    }
+
+
+def _bap_conn(name, created, *, api=SN_CONNECTOR, status="Connected"):
+    """A BAP admin-API connection object (as bind_connections discovers them)."""
+    return {
+        "name": name,
+        "properties": {
+            "apiId": api,
+            "displayName": "ServiceNow",
+            "createdTime": created,
+            "statuses": [{"status": status}],
+        },
     }
 
 
@@ -156,6 +169,52 @@ def test_config_equal_tolerates_formatting():
     assert not cs._config_equal("not json", PARAM_CONFIG)
 
 
+def test_is_shared_connector_ref():
+    assert cs._is_shared_connector_ref(_ref(logicalname="s.guid.shared_service-now"))
+    assert not cs._is_shared_connector_ref(_ref(logicalname="s.cr.w2LCWZTZ"))
+
+
+def test_pick_shared_ref_prefers_shared_over_solution():
+    solution = _ref(logicalname="s.cr.w2LCWZTZ")
+    shared = _ref(logicalname="s.guid.shared_service-now")
+    assert cs.pick_shared_ref([solution, shared]) is shared
+    assert cs.pick_shared_ref([solution]) is None
+
+
+def test_shared_ref_logical_name_shape():
+    name = cs.shared_ref_logical_name(SCHEMA)
+    assert name.startswith(SCHEMA + ".")
+    assert name.endswith(".shared_service-now")
+    # middle segment is a fresh guid (distinct each call)
+    assert cs.shared_ref_logical_name(SCHEMA) != name
+
+
+def test_resolve_connection_id_prefers_latest(monkeypatch):
+    older = _bap_conn("old", "2024-01-01T00:00:00Z")
+    newer = _bap_conn("new", "2025-06-01T00:00:00Z")
+    monkeypatch.setattr(cs, "_discover_env_connections", lambda *a, **k: [older, newer])
+    cid, src = cs.resolve_connection_id("env", "tok", None, [_ref(connectionid="stale")])
+    assert cid == "new"
+    assert src == "latest environment connection"
+
+
+def test_resolve_connection_id_falls_back_to_bound_ref(monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("no BAP permissions")
+
+    monkeypatch.setattr(cs, "_discover_env_connections", _boom)
+    cid, src = cs.resolve_connection_id("env", "tok", None, [_ref(connectionid="c1")])
+    assert cid == "c1"
+    assert src == "bound reference"
+
+
+def test_resolve_connection_id_none_when_nothing(monkeypatch):
+    monkeypatch.setattr(cs, "_discover_env_connections", lambda *a, **k: [])
+    cid, src = cs.resolve_connection_id("env", "tok", None, [_ref(connectionid=None)])
+    assert cid is None
+    assert src is None
+
+
 # ── run() orchestration ──────────────────────────────────────────────
 class _FakeClient:
     def __init__(self, user_connections, connection):
@@ -181,12 +240,18 @@ class _FakeClient:
 
 @pytest.fixture
 def patched(monkeypatch):
-    calls = {"update": []}
+    calls = {"update": [], "create": []}
     monkeypatch.setattr(cs.auth, "authenticate", lambda env: "dvtok")
     monkeypatch.setattr(cs.auth, "discover_tenant", lambda env: "tenant")
     monkeypatch.setattr(
         cs.auth, "update_record",
         lambda env, tok, ent, rid, data: calls["update"].append((ent, rid, data)),
+    )
+    monkeypatch.setattr(
+        cs.auth, "create_record",
+        lambda env, tok, ent, data: (
+            calls["create"].append((ent, data)) or "new-ref-id"
+        ),
     )
     return calls
 
@@ -197,13 +262,19 @@ def _install_client(monkeypatch, user_connections, connection):
     return client
 
 
-def _run(monkeypatch, rows, **kw):
+def _run(monkeypatch, rows, *, connections=(), dry_run=False):
     monkeypatch.setattr(cs.auth, "query_all", lambda *a, **k: rows)
+    # Dynamic connection discovery (BAP) is monkeypatched: by default it returns
+    # no live connections so run() exercises the bound-reference fallback; tests
+    # can pass ``connections`` to exercise the latest-connection resolution path.
+    monkeypatch.setattr(
+        cs, "_discover_env_connections", lambda *a, **k: list(connections)
+    )
     return cs.run(
         "https://org.crm.dynamics.com",
         config=CONFIG,
         environment_id="env-guid",
-        dry_run=kw.get("dry_run", False),
+        dry_run=dry_run,
     )
 
 
@@ -214,10 +285,11 @@ def test_run_no_reference(patched, monkeypatch):
     assert result["exit_code"] == 3
 
 
-def test_run_unbound_reference(patched, monkeypatch):
+def test_run_no_connection_found(patched, monkeypatch):
+    # Unbound reference AND no live connection discovered -> nothing to connect.
     _install_client(monkeypatch, _user_connections(None), _connection())
     result = _run(monkeypatch, [_ref(connectionid=None)])
-    assert result["action"] == "no_binding"
+    assert result["action"] == "no_connection"
     assert result["exit_code"] == 4
 
 
@@ -228,14 +300,50 @@ def test_run_binds_and_shares(patched, monkeypatch):
     assert result["action"] == "connected"
     assert result["flow_binding"] == "bound"
     assert result["share"] == "shared"
-    # POST issued once, PATCH issued once.
+    # POST issued once, PATCH issued once (the existing shared reference).
     assert len(client.posted) == 1
     assert len(patched["update"]) == 1
+    assert patched["create"] == []
     ent, rid, data = patched["update"][0]
     assert ent == "connectionreferences"
     assert rid == REF_ID
     assert data["connectionid"] == CONN_ID
     assert json.loads(data["connectionparametersetconfig"]) == PARAM_CONFIG
+
+
+def test_run_creates_shared_ref_when_absent(patched, monkeypatch):
+    # Only the solution-shipped ``.cr.<short>`` reference exists (no portal-owned
+    # ``.shared_service-now`` reference) -> the share must CREATE one.
+    client = _install_client(monkeypatch, _user_connections(CONN_ID), _connection())
+    solution_ref = _ref(logicalname="msdyn.cr.w2LCWZTZ")
+    result = _run(monkeypatch, [solution_ref])
+    assert result["exit_code"] == 0
+    assert result["share"] == "created_shared_ref"
+    assert patched["update"] == []
+    assert len(patched["create"]) == 1
+    ent, data = patched["create"][0]
+    assert ent == "connectionreferences"
+    assert data["connectionid"] == CONN_ID
+    assert data["connectorid"] == cs._CONNECTOR_ID
+    assert data["connectionreferencelogicalname"].endswith(".shared_service-now")
+    assert data["connectionreferencelogicalname"].startswith(SCHEMA + ".")
+    assert json.loads(data["connectionparametersetconfig"]) == PARAM_CONFIG
+    assert result["shared_reference"] == data["connectionreferencelogicalname"]
+
+
+def test_run_prefers_latest_discovered_connection(patched, monkeypatch):
+    # Two live connections exist; the most recently created must win and its id
+    # (not the reference's stored connectionid) must be shared.
+    _install_client(monkeypatch, _user_connections(None), _connection())
+    older = _bap_conn("stale-old-conn", "2024-01-01T00:00:00Z")
+    newer = _bap_conn("latest-conn-id", "2025-01-01T00:00:00Z")
+    stale_ref = _ref(logicalname="msdyn.cr.w2LCWZTZ", connectionid="stale-old-conn")
+    result = _run(monkeypatch, [stale_ref], connections=[older, newer])
+    assert result["exit_code"] == 0
+    assert result["connection_id"] == "latest-conn-id"
+    assert result["connection_source"] == "latest environment connection"
+    ent, data = patched["create"][0]
+    assert data["connectionid"] == "latest-conn-id"
 
 
 def test_run_already_connected_and_shared_no_writes(patched, monkeypatch):
