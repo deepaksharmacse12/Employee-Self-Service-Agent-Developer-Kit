@@ -31,7 +31,7 @@ password to any config file.
 |------|------------|------|
 | S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | prog when installed automatically; manual when installed by the maker |
 | S6.2 | `bind_connections.py` exit 0 — ServiceNow connection reference bound (live health confirmed by `SN-FLOWCONN-001` at S6.4) | prog; auth type may require attestation |
-| S6.2 | `DV-CONN-001` *(reuse)* — Dataverse connection reference active | prog |
+| S6.2 | `SN-DV-CONN-001` — Dataverse connection reference active | prog |
 | S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
 | S6.4 | `SN-FLOWCONN-001` — ServiceNow flow invoker connection connected | prog |
 | S6.5 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
@@ -39,7 +39,7 @@ Run any individually-registered checkpoint by itself:
 ```
 python scripts/flightcheck/cli.py --checkpoint <ID>
 ```
-Only `SN-FLOWCONN-001`, `DV-CONN-001`, and the `SN-ENTRA-*` checks are registered as
+Only `SN-FLOWCONN-001`, `SN-DV-CONN-001`, and the `SN-ENTRA-*` checks are registered as
 standalone `--checkpoint` IDs. `SN-PKG-001`, `SN-FLOW-*`, and `SN-BASEURL-001` are
 emitted **only** by the ServiceNow scope run — get them with
 `python scripts/flightcheck/cli.py --scope servicenow --no-open` and read the matching
@@ -404,7 +404,7 @@ The gate depends on how the pack was installed:
   confirms.
 Persist immediately before continuing.
 ---
-## P6.3 — Bind the ServiceNow and Dataverse connections (DV-CONN-001) *(completes S6.2)*
+## P6.3 — Bind the ServiceNow and Dataverse connections (SN-DV-CONN-001) *(completes S6.2)*
 If the live status block (P6.2-A.1) is active, flip the **Bind connections** row to
 `[~]` now, and to `[x]` when Record S6.2 (P6.3c) completes.
 Verify the ServiceNow reference first.
@@ -483,10 +483,15 @@ Now I'll check that the Dataverse connection is bound to an active connection.
 
 **End message.**
 ```
-python scripts/flightcheck/cli.py --checkpoint DV-CONN-001
+python scripts/flightcheck/cli.py --checkpoint SN-DV-CONN-001
 ```
 Render the result. The auto-bind above already attempts the Dataverse reference
-(reusing the environment's active Dataverse connection). On `FAILED` /
+(reusing the environment's active Dataverse connection). This checkpoint matches
+the Dataverse connection reference by its connector
+(`shared_commondataserviceforapps`), so it validates the ServiceNow pack's own
+Dataverse reference (e.g. `new_sharedcommondataserviceforapps_…`) — not the
+Workday pack's `DV-CONN-001`, which keys on a Workday-specific reference suffix
+and would report `NotConfigured` in a ServiceNow-only environment. On `FAILED` /
 `NotConfigured`, show:
 **Message:**
 
@@ -499,7 +504,7 @@ account. Then tell me and I'll re-check.
 Re-run until it passes. If the result is `Skipped` because a Dataverse token is
 unavailable, re-authenticate and re-run; do not complete the row on a skip.
 ### P6.3c — Write connection-reference state
-When the ServiceNow bind returned exit 0, the `DV-CONN-001` checkpoint passes, and
+When the ServiceNow bind returned exit 0, the `SN-DV-CONN-001` checkpoint passes, and
 any auth-type attestation is satisfied, merge
 `.local/connect/servicenow/config.json` to record this step:
 ```json
@@ -510,10 +515,10 @@ any auth-type attestation is satisfied, merge
   }
 }
 ```
-Update S6.2 only after the ServiceNow bind returns exit 0, `DV-CONN-001` passes, and
+Update S6.2 only after the ServiceNow bind returns exit 0, `SN-DV-CONN-001` passes, and
 auth-type evidence is present. Use `GATE="prog"` when fully programmatic; if auth
 type required maker confirmation, record the auth evidence as attested in the row
-mirror while keeping the ServiceNow bind result and the passing `DV-CONN-001` check.
+mirror while keeping the ServiceNow bind result and the passing `SN-DV-CONN-001` check.
 Persist immediately.
 The flow invoker binding (making Copilot Studio show the connection as
 **Connected**) happens later in P6.5, after the flows are turned on.

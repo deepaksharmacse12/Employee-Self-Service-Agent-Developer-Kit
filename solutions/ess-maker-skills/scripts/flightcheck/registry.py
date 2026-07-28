@@ -45,6 +45,7 @@ from typing import Callable, Optional
 from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
 from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
+from flightcheck.checks.servicenow import run_servicenow_dataverse_checks
 from flightcheck.checks.servicenow_flow_binding import (
     run_servicenow_flow_binding_checks,
 )
@@ -413,6 +414,24 @@ _SPECS: list[CheckpointSpec] = [
         category_fn=run_servicenow_flow_binding_checks,
         category_label="ServiceNow Flow Binding",
         clients=frozenset({PP_ADMIN}),
+        requires_config=True,
+        requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value,),
+    ),
+    # ServiceNow Dataverse connection reference binding (setup skill 6, S6.2).
+    # Emitted by checks/servicenow.run_servicenow_dataverse_checks — a
+    # self-contained wrapper (no ServiceNow-flow gate) so it is independently
+    # runnable via --checkpoint. Connector-generic sibling of DV-CONN-001: it
+    # matches the Dataverse reference by connector (shared_commondataserviceforapps)
+    # instead of the Workday pack's hardcoded ..._92b66 logical-name suffix, so it
+    # sees the ServiceNow pack's own Dataverse reference. Registered with an exact
+    # key so the drift test resolves the emitted ID.
+    CheckpointSpec(
+        key="SN-DV-CONN-001",
+        category_fn=run_servicenow_dataverse_checks,
+        category_label="ServiceNow",
+        clients=frozenset({DATAVERSE, PP_ADMIN}),
         requires_config=True,
         requires_dataverse_endpoint=True,
         priority=Priority.HIGH.value,

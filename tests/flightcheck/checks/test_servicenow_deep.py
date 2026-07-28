@@ -164,3 +164,117 @@ def test_local_topics_none_found_not_configured(tmp_path, monkeypatch):
     r = _by_id(_check_local_topics(SimpleNamespace()), "SN-LOCAL-001")
     assert r.status == "NotConfigured"
     assert "No ServiceNow topics found" in r.result
+
+
+# --------------------------------------------------------------------------
+# _check_dataverse_connection — SN-DV-CONN-001 (connector-generic Dataverse
+# reference binding; sibling of the Workday DV-CONN-001 but matched by
+# connector instead of the ..._92b66 logical-name suffix).
+# --------------------------------------------------------------------------
+
+_DV_CONNECTOR = (
+    "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
+)
+
+
+def _dv_ref(logical, *, connectionid="c1", statuscode=1, connector=_DV_CONNECTOR):
+    return {
+        "connectionreferencelogicalname": logical,
+        "connectionreferencedisplayname": logical,
+        "connectorid": connector,
+        "connectionid": connectionid,
+        "statuscode": statuscode,
+    }
+
+
+def _dv_runner():
+    return SimpleNamespace(
+        env_url="https://org.crm.dynamics.com", dv_token="t",
+        pp_admin=None, env_id="env-1",
+    )
+
+
+def test_dataverse_connection_all_bound_active(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _dv_ref("msdyn_Dataverse"),
+        _dv_ref("new_sharedcommondataserviceforapps_41c83"),
+        # A non-Dataverse ref that must be ignored.
+        _dv_ref("msdyn_service_now",
+                connector="/providers/x/apis/shared_service-now"),
+    ])
+    from flightcheck.checks.servicenow import _check_dataverse_connection
+    r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
+    assert r.status == "Passed"
+    assert "All 2 Dataverse connection reference(s)" in r.result
+
+
+def test_dataverse_connection_none_found_not_configured(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _dv_ref("msdyn_service_now",
+                connector="/providers/x/apis/shared_service-now"),
+    ])
+    from flightcheck.checks.servicenow import _check_dataverse_connection
+    r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
+    assert r.status == "NotConfigured"
+    assert "shared_commondataserviceforapps" in r.result
+    assert "extension pack" in r.remediation
+
+
+def test_dataverse_connection_unbound_fails(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _dv_ref("msdyn_Dataverse"),
+        _dv_ref("new_sharedcommondataserviceforapps_41c83", connectionid=None),
+    ])
+    from flightcheck.checks.servicenow import _check_dataverse_connection
+    r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
+    assert r.status == "Failed"
+    assert "unbound" in r.result
+    assert "new_sharedcommondataserviceforapps_41c83" in r.result
+
+
+def test_dataverse_connection_inactive_fails(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _dv_ref("new_sharedcommondataserviceforapps_41c83", statuscode=2),
+    ])
+    from flightcheck.checks.servicenow import _check_dataverse_connection
+    r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
+    assert r.status == "Failed"
+    assert "inactive" in r.result
+
+
+def test_dataverse_connection_skipped_without_token():
+    from flightcheck.checks.servicenow import _check_dataverse_connection
+    runner = SimpleNamespace(env_url="", dv_token="")
+    r = _by_id(_check_dataverse_connection(runner), "SN-DV-CONN-001")
+    assert r.status == "Skipped"
+    assert "Dataverse token not available" in r.result
+
+
+def test_dataverse_connection_query_error_warns(monkeypatch):
+    import auth
+
+    def _boom(*a, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(auth, "query_all", _boom)
+    from flightcheck.checks.servicenow import _check_dataverse_connection
+    r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
+    assert r.status == "Warning"
+    assert "boom" in r.result
+
+
+def test_servicenow_dataverse_wrapper_self_contained(monkeypatch):
+    """The wrapper emits SN-DV-CONN-001 with no _servicenow_flows gate."""
+    import auth
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _dv_ref("new_sharedcommondataserviceforapps_41c83"),
+    ])
+    from flightcheck.checks.servicenow import run_servicenow_dataverse_checks
+    # No _servicenow_flows attribute at all — must still emit.
+    r = _by_id(run_servicenow_dataverse_checks(_dv_runner()), "SN-DV-CONN-001")
+    assert r.status == "Passed"
+

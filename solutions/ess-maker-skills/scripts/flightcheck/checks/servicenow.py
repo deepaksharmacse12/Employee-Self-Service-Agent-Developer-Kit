@@ -75,6 +75,9 @@ def run_servicenow_checks(runner) -> list[CheckResult]:
     # --- Connection References ---
     results.extend(_check_connections(runner))
 
+    # --- Dataverse connection reference binding (SN-DV-CONN-001, S6.2) ---
+    results.extend(_check_dataverse_connection(runner))
+
     # --- Flow Status ---
     results.extend(_check_flow_status(runner, sn_flows))
 
@@ -135,6 +138,194 @@ def _check_connections(runner) -> list[CheckResult]:
         not_found_remediation="Configure ServiceNow connections in the environment. Run /connect servicenow.",
         doc_link=f"{DOC_BASE}/servicenow",
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# SN-DV-CONN-001 — Dataverse connection reference binding (S6.2, PASS/FAIL).
+#
+# The ServiceNow extension pack ships its OWN Microsoft Dataverse connection
+# reference (e.g. ``new_sharedcommondataserviceforapps_41c83``) alongside the
+# ESS base agent's (``msdyn_Dataverse``). Both carry the
+# ``shared_commondataserviceforapps`` connector. This checkpoint verifies every
+# Dataverse connection reference in the environment is bound to an ACTIVE
+# connection (owner echoed), matching by CONNECTOR — never by a hardcoded
+# per-pack logical-name suffix.
+#
+# This is deliberately NOT the Workday-family ``DV-CONN-001``: that check keys
+# on the Workday pack's ``…_92b66`` logical-name suffix, so in a ServiceNow-only
+# environment it reports NotConfigured (its reference is absent) even though the
+# ServiceNow pack's own Dataverse reference is perfectly bound. Matching by
+# connector avoids repeating that coupling.
+# ─────────────────────────────────────────────────────────────────────
+
+_DV_CONNECTOR_SUFFIX = "/apis/shared_commondataserviceforapps"
+_SN_DV_DESC = "Dataverse connection reference(s) bound to an active connection you own"
+
+
+def _resolve_conn_owner(props: dict) -> str:
+    """Best-effort owner identity from a BAP connection's properties."""
+    account = props.get("accountName")
+    if account:
+        return account
+    created_by = props.get("createdBy") or {}
+    return (
+        created_by.get("userPrincipalName")
+        or created_by.get("displayName")
+        or "(unknown owner)"
+    )
+
+
+def _dv_owner_note(runner, connection_id) -> str:
+    """Return an owner-confirmation note for ``connection_id`` (best-effort).
+
+    Owner echo only — never the basis for a PASS/FAIL verdict. Degrades to an
+    empty string whenever the Power Platform admin client is unavailable.
+    """
+    pp = getattr(runner, "pp_admin", None)
+    env_id = getattr(runner, "env_id", None)
+    if pp is None or not env_id or not connection_id:
+        return ""
+    try:
+        conns = pp.get_connections(env_id)
+    except Exception:  # noqa: BLE001 — owner echo is best-effort
+        return ""
+    if isinstance(conns, dict) and "_error" in conns:
+        return ""
+    for conn in conns or []:
+        if conn.get("name") == connection_id:
+            owner = _resolve_conn_owner(conn.get("properties", {}) or {})
+            return f" Owner: {owner} — confirm this is your own account."
+    return ""
+
+
+def _check_dataverse_connection(runner) -> list[CheckResult]:
+    """Verify the ServiceNow pack's Dataverse connection reference(s) are bound.
+
+    Connector-generic sibling of the Workday-family ``DV-CONN-001``: matches
+    every Dataverse connection reference by its connector
+    (``shared_commondataserviceforapps``) rather than a hardcoded pack-specific
+    logical-name suffix, so it correctly sees the ServiceNow pack's own
+    reference (``new_sharedcommondataserviceforapps_<suffix>``).
+
+    Documented-tier Dataverse ``connectionreferences`` read (no cassette
+    required; tests stub ``query_all``). Never raises a verdict from the owner
+    echo — that is a best-effort Power Platform admin read.
+    """
+    roles = [Role.ESS_MAKER.value]
+    env_url = getattr(runner, "env_url", None)
+    dv_token = getattr(runner, "dv_token", None)
+    if not env_url or not dv_token:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-DV-CONN-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.SKIPPED.value,
+            description=_SN_DV_DESC,
+            result="Dataverse token not available — skipping the Dataverse connection-reference check.",
+        )]
+
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+        from auth import query_all
+
+        rows = query_all(
+            env_url, dv_token, "connectionreferences",
+            "connectionreferencelogicalname,connectionreferencedisplayname,"
+            "connectorid,connectionid,statuscode",
+        )
+    except Exception as e:  # noqa: BLE001 — degrade to WARNING, never abort
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-DV-CONN-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.WARNING.value,
+            description=_SN_DV_DESC,
+            result=f"Unable to read Dataverse connection references: {e}.",
+            remediation="Confirm the FlightCheck identity has Dataverse read access on connectionreferences.",
+        )]
+
+    dv_refs = [
+        r for r in (rows or [])
+        if str(r.get("connectorid") or "").lower().endswith(_DV_CONNECTOR_SUFFIX)
+    ]
+
+    def _names(refs):
+        return ", ".join(
+            str(r.get("connectionreferencelogicalname") or "?") for r in refs
+        )
+
+    if not dv_refs:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-DV-CONN-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+            description=_SN_DV_DESC,
+            result=(
+                "No Microsoft Dataverse connection reference (connector "
+                "shared_commondataserviceforapps) was found in this environment."
+            ),
+            remediation=(
+                "Install the ServiceNow extension pack so its Dataverse "
+                "connection reference is created, then run "
+                "`python scripts/bind_connections.py --connector all` to bind it."
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    unbound = [r for r in dv_refs if not r.get("connectionid")]
+    if unbound:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-DV-CONN-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.FAILED.value,
+            description=_SN_DV_DESC,
+            result=(
+                f"{len(unbound)} of {len(dv_refs)} Dataverse connection "
+                f"reference(s) are unbound (connectionid=null): {_names(unbound)}."
+            ),
+            remediation=(
+                "Run `python scripts/bind_connections.py --connector all` to bind "
+                "the Dataverse reference to an active connection you own (or bind "
+                "it in Copilot Studio > your agent > Connections)."
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    inactive = [r for r in dv_refs if r.get("statuscode") != 1]
+    if inactive:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-DV-CONN-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.FAILED.value,
+            description=_SN_DV_DESC,
+            result=(
+                f"{len(inactive)} of {len(dv_refs)} Dataverse connection "
+                f"reference(s) are bound but inactive: {_names(inactive)}."
+            ),
+            remediation=(
+                "Re-authenticate or re-bind the Dataverse connection so its "
+                "status is active, using an account you own."
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    owner_note = _dv_owner_note(runner, dv_refs[0].get("connectionid"))
+    return [CheckResult(roles=roles,
+        checkpoint_id="SN-DV-CONN-001", category="ServiceNow",
+        priority=Priority.HIGH.value, status=Status.PASSED.value,
+        description=_SN_DV_DESC,
+        result=(
+            f"All {len(dv_refs)} Dataverse connection reference(s) are bound to "
+            f"an active connection ({_names(dv_refs)})." + owner_note
+        ),
+        doc_link=f"{DOC_BASE}/servicenow",
+    )]
+
+
+def run_servicenow_dataverse_checks(runner) -> list[CheckResult]:
+    """Self-contained emitter for ``SN-DV-CONN-001``.
+
+    Unlike :func:`run_servicenow_checks` (which is gated on ServiceNow flow
+    discovery), this wrapper has no ``_servicenow_flows`` dependency, so the
+    checkpoint is independently runnable via ``--checkpoint SN-DV-CONN-001``
+    (mirroring how ``SN-FLOWCONN-001`` is self-contained). The deep
+    ``run_servicenow_checks`` path calls :func:`_check_dataverse_connection`
+    directly, so scope runs still surface it once (no double emit here).
+    """
+    return _check_dataverse_connection(runner)
 
 
 def _check_flow_status(runner, sn_flows: list) -> list[CheckResult]:

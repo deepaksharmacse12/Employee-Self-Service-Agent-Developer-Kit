@@ -211,7 +211,7 @@ Read `src/skills/setup/servicenow/install-servicenow-extension-pack.md` and foll
 it. That playbook role-gates (Environment Maker), guides the extension-pack install
 for each in-scope product and verifies it (`SN-PKG-001`, **S6.1**), binds the
 ServiceNow and Dataverse connections with the selected auth type (`bind_connections.py`
-exit 0 + `DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
+exit 0 + `SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
 **S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
 (`SN-FLOWCONN-001`, **S6.4**), and sets the Portal Base URL to `/sp` for each pack
 (`SN-BASEURL-001`, **S6.5**). At S6.1 the maker chooses an **automated** headless
