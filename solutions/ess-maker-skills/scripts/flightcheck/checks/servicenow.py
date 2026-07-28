@@ -88,7 +88,7 @@ def run_servicenow_checks(runner) -> list[CheckResult]:
     # --- Template Configurations (Dataverse) ---
     results.extend(_check_template_configs(runner))
 
-    # --- Portal Base URL (SN-BASEURL-001, S6.5) ---
+    # --- Portal Base URL (SN-BASEURL-001, S6.6) ---
     results.extend(_check_portal_base_url(runner))
 
     # --- Local Topic Files ---
@@ -165,7 +165,7 @@ def _check_connections(runner) -> list[CheckResult]:
 _DV_CONNECTOR_SUFFIX = "/apis/shared_commondataserviceforapps"
 _SN_DV_DESC = "Dataverse connection reference(s) bound to an active connection you own"
 
-# ServiceNow Portal Base URL (SN-BASEURL-001, S6.5). The extension packs never
+# ServiceNow Portal Base URL (SN-BASEURL-001, S6.6). The extension packs never
 # populate it, but the agent needs it to turn case/ticket references into working
 # links. It lives in the Dataverse template-config table on each product's parent
 # record (msdyn_ServiceNowHRSD / msdyn_ServiceNowITSM) as a JSON blob in

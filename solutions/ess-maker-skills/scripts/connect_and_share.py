@@ -35,11 +35,18 @@ Authentication: the environment API (steps 1–2) uses the Power Platform CLI
 is not pre-authorized for that resource. The Dataverse PATCH (step 3) uses the
 normal ``auth.authenticate`` token.
 
+The connect (flow invoker binding, S6.4) and share (parameter sharing, S6.5)
+stages are recorded as **separate** checkpoints so a resume picks up at whichever
+stage failed. In particular a sharing failure does NOT discard the confirmed
+flow-invoker connect: the connect is still reported (and S6.4 recorded) and the
+run exits ``6`` so a re-run retries only the share.
+
 Exit codes:
-  0  connected (now or already) — proceed to verify with SN-FLOWCONN-001.
+  0  connected and shared (now or already) — proceed to verify SN-FLOWCONN-001.
   3  no ServiceNow connection reference found (extension pack not installed).
   4  no active ServiceNow connection found to connect (create + bind first).
   5  could not resolve the Power Platform environment id.
+  6  connected but sharing the parameters failed — re-run to retry the share.
   1  unexpected error.
 
 Usage:
@@ -450,6 +457,7 @@ def run(
     # maker shares. Mirror the portal: for every ServiceNow invoker flow, find
     # the flow-id-keyed shared reference and update it, or create it if absent.
     shared_records: list[dict] = []
+    share_error: str | None = None
     if param_config is not None:
         desired = json.dumps(param_config, separators=(",", ":"))
         # Build the unified set of shared references to configure: one per
@@ -475,56 +483,81 @@ def run(
                     )
         for name, flow_id in targets.values():
             existing = find_shared_ref_by_name(sn_refs, name)
-            if existing is not None:
-                already = (
-                    _config_equal(
-                        existing.get("connectionparametersetconfig"), param_config
+            try:
+                if existing is not None:
+                    already = (
+                        _config_equal(
+                            existing.get("connectionparametersetconfig"),
+                            param_config,
+                        )
+                        and existing.get("connectionid") == connection_id
                     )
-                    and existing.get("connectionid") == connection_id
-                )
-                if already:
-                    act = "already_shared"
+                    if already:
+                        act = "already_shared"
+                    elif dry_run:
+                        act = "would_share"
+                    else:
+                        auth.update_record(
+                            env_url,
+                            dv_token,
+                            _REF_ENTITY,
+                            existing["connectionreferenceid"],
+                            {
+                                "connectionparametersetconfig": desired,
+                                "connectionid": connection_id,
+                            },
+                        )
+                        act = "shared"
                 elif dry_run:
-                    act = "would_share"
+                    act = "would_create_shared_ref"
                 else:
-                    auth.update_record(
+                    auth.create_record(
                         env_url,
                         dv_token,
                         _REF_ENTITY,
-                        existing["connectionreferenceid"],
                         {
-                            "connectionparametersetconfig": desired,
+                            "connectionreferencelogicalname": name,
+                            "connectionreferencedisplayname": name,
+                            "connectorid": _CONNECTOR_ID,
                             "connectionid": connection_id,
+                            "connectionparametersetconfig": desired,
                         },
                     )
-                    act = "shared"
-            elif dry_run:
-                act = "would_create_shared_ref"
-            else:
-                auth.create_record(
-                    env_url,
-                    dv_token,
-                    _REF_ENTITY,
-                    {
-                        "connectionreferencelogicalname": name,
-                        "connectionreferencedisplayname": name,
-                        "connectorid": _CONNECTOR_ID,
-                        "connectionid": connection_id,
-                        "connectionparametersetconfig": desired,
-                    },
-                )
-                act = "created_shared_ref"
+                    act = "created_shared_ref"
+            except Exception as exc:  # noqa: BLE001 — keep the confirmed connect
+                # A share write failed. Do NOT discard the flow-invoker connect
+                # that already succeeded above — record the error against this
+                # reference and let the caller exit 6 so a resume retries only
+                # the share stage (S6.5), not the whole connect (S6.4).
+                act = "error"
+                share_error = f"{type(exc).__name__}: {exc}"
             shared_records.append(
                 {"flow": flow_id, "reference": name, "action": act}
             )
 
     share_action = _aggregate_share(shared_records)
     shared_ref_name = shared_records[0]["reference"] if shared_records else None
+    exit_code = 6 if share_error else 0
 
     verb = "Would connect" if dry_run else "Connected"
+    if exit_code == 6:
+        action = "share_failed"
+    elif dry_run:
+        action = "would_connect"
+    else:
+        action = "connected"
+    message = (
+        f"{verb} the ServiceNow flow invoker connection "
+        f"(flow binding: {bind_action}; parameter sharing: {share_action})."
+    )
+    if share_error:
+        message += (
+            f" Sharing the parameters failed ({share_error}); the flow invoker "
+            "connection IS connected — re-run to retry sharing."
+        )
     return {
-        "action": "would_connect" if dry_run else "connected",
-        "exit_code": 0,
+        "action": action,
+        "exit_code": exit_code,
         "reference": ref_name,
         "shared_reference": shared_ref_name,
         "shared_references": shared_records,
@@ -533,24 +566,25 @@ def run(
         "flow_binding": bind_action,
         "changed_flows": changed_flows,
         "share": share_action,
-        "message": (
-            f"{verb} the ServiceNow flow invoker connection "
-            f"(flow binding: {bind_action}; parameter sharing: {share_action})."
-        ),
+        "share_error": share_error,
+        "message": message,
     }
 
 
 def _aggregate_share(records: list[dict]) -> str:
     """Collapse per-flow share outcomes into a single status for the summary.
 
-    Precedence (most-actionable first): an actual write (``created_shared_ref``
-    / ``shared``) or its dry-run equivalent wins over ``already_shared``, which
-    wins over ``skipped``. With a single flow this is just that flow's action.
+    Precedence (most-actionable first): an ``error`` on any reference surfaces
+    first (so a partial failure is never masked by a sibling's success), then an
+    actual write (``created_shared_ref`` / ``shared``) or its dry-run equivalent,
+    then ``already_shared``, then ``skipped``. With a single flow this is just
+    that flow's action.
     """
     if not records:
         return "skipped"
     actions = [r["action"] for r in records]
     for status in (
+        "error",
         "created_shared_ref",
         "shared",
         "would_create_shared_ref",
@@ -576,32 +610,53 @@ def _config_equal(current, desired: dict) -> bool:
 
 
 def _persist_connect_state(args, result: dict) -> None:
-    """On confirmed connect success, record the active ServiceNow connection,
-    ``status``, the legacy root summary, and ``S6.4`` (never raises)."""
+    """Record the connect (S6.4) and share (S6.5) stages **independently**.
+
+    The two stages are separate durable checkpoints so a resume continues from
+    whichever failed. S6.4 (flow-invoker connect) is recorded whenever the flow
+    binding is confirmed connected — even if sharing then failed (exit 6) — so
+    the re-run only retries the share. S6.5 (parameter share) is recorded only
+    when every ServiceNow shared reference is confirmed configured. Never raises
+    (persistence must not change the exit code); dry-runs record nothing.
+    """
     try:
-        if args.dry_run or result.get("exit_code") != 0:
+        if args.dry_run:
             return
-        if result.get("action") != "connected":
-            return
+        connect_ok = result.get("flow_binding") in ("bound", "already_connected")
+        share_ok = result.get("share") in (
+            "shared", "created_shared_ref", "already_shared"
+        )
         cfg = connect_state.load("servicenow")
-        conn = {"state": "active", "flowBinding": "connected",
-                "verifiedBy": "programmatic"}
-        if cfg.get("authType"):
-            conn["authType"] = cfg["authType"]
-        connect_state.record_connections("servicenow", {"servicenow": conn})
-        connect_state.record_status("servicenow", "connected")
-        connect_state.record_setup_step(
-            "servicenow", "S6.4", "SN-FLOWCONN-001",
-            note="Bind the ServiceNow flow-invoker connection so Copilot Studio "
-                 "shows the connection as connected to the agent.")
-        if cfg.get("instanceName"):
-            connect_state.record_legacy_servicenow_summary({
-                "instanceName": cfg.get("instanceName"),
-                "instanceUrl": cfg.get("instanceUrl"),
-                "usage": cfg.get("usage"),
-                "authType": cfg.get("authType"),
-                "connectedAt": connect_state.today_iso(),
-            })
+
+        # --- S6.4: flow-invoker connect (independent of sharing outcome) ---
+        if connect_ok:
+            conn = {"state": "active", "flowBinding": "connected",
+                    "verifiedBy": "programmatic"}
+            if cfg.get("authType"):
+                conn["authType"] = cfg["authType"]
+            connect_state.record_connections("servicenow", {"servicenow": conn})
+            connect_state.record_status("servicenow", "connected")
+            connect_state.record_setup_step(
+                "servicenow", "S6.4", "SN-FLOWCONN-001",
+                note="Bind the ServiceNow flow-invoker connection so Copilot "
+                     "Studio shows the connection as connected to the agent.")
+            if cfg.get("instanceName"):
+                connect_state.record_legacy_servicenow_summary({
+                    "instanceName": cfg.get("instanceName"),
+                    "instanceUrl": cfg.get("instanceUrl"),
+                    "usage": cfg.get("usage"),
+                    "authType": cfg.get("authType"),
+                    "connectedAt": connect_state.today_iso(),
+                })
+
+        # --- S6.5: share connection parameters (only when confirmed) ---
+        if share_ok:
+            connect_state.merge("servicenow", {"parameterSharing": "shared"})
+            connect_state.record_setup_step(
+                "servicenow", "S6.5", "SN-FLOWCONN-001",
+                note="Share the ServiceNow connection parameters onto the "
+                     "portal-owned reference so end users inherit the maker's "
+                     "connection instead of being prompted to create their own.")
     except Exception:  # noqa: BLE001 — persistence must never change exit code
         pass
 

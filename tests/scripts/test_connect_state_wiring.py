@@ -143,7 +143,8 @@ def test_connect_records_status_and_legacy_summary(tmp_path, monkeypatch):
         "instanceUrl": "https://dev184242.service-now.com", "usage": "hrsd",
     })
     connect_and_share._persist_connect_state(
-        _args(), {"exit_code": 0, "action": "connected"})
+        _args(), {"exit_code": 0, "action": "connected",
+                  "flow_binding": "bound", "share": "shared"})
 
     sn = _sn()
     assert sn["connections"]["servicenow"] == {
@@ -152,6 +153,9 @@ def test_connect_records_status_and_legacy_summary(tmp_path, monkeypatch):
     }
     assert sn["status"] == "connected"
     assert sn["setupStatus"]["S6.4"]["checkpoint"] == "SN-FLOWCONN-001"
+    # Share stage recorded as its own checkpoint (S6.5).
+    assert sn["setupStatus"]["S6.5"]["checkpoint"] == "SN-FLOWCONN-001"
+    assert sn["parameterSharing"] == "shared"
 
     with open(os.path.join(".local", "config.json"), encoding="utf-8") as f:
         root = json.load(f)

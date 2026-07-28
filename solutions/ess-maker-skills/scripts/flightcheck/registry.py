@@ -405,7 +405,9 @@ _SPECS: list[CheckpointSpec] = [
         priority=Priority.CRITICAL.value,
         roles=(Role.ENTRA_ADMIN.value,),
     ),
-    # ServiceNow flow invoker-connection binding (setup skill 6, S6.5). Emitted
+    # ServiceNow flow invoker-connection binding (setup skill 6). Underpins both
+    # S6.4 (connect) and S6.5 (share) — one connect_and_share.py run records both.
+    # Emitted
     # by checks/servicenow_flow_binding.run_servicenow_flow_binding_checks. It
     # verifies the Copilot Studio "Connections" Connected state (a per-flow
     # object distinct from the Dataverse connection reference). Needs the BAP
@@ -441,7 +443,7 @@ _SPECS: list[CheckpointSpec] = [
         priority=Priority.HIGH.value,
         roles=(Role.ESS_MAKER.value,),
     ),
-    # ServiceNow Portal Base URL (setup skill 6, S6.5). Emitted by
+    # ServiceNow Portal Base URL (setup skill 6, S6.6). Emitted by
     # checks/servicenow.run_servicenow_portal_checks — a self-contained wrapper
     # (no ServiceNow-flow gate) so it is independently runnable via --checkpoint.
     # Reads the per-product parent template-config record's msdyn_value JSON, so

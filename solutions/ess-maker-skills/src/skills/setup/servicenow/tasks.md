@@ -114,9 +114,10 @@ the two Entra sign-in methods are offered.
   <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
 - [ ] **Connect ServiceNow to your agent's flows** — Bind the ServiceNow flow invoker connection so Copilot Studio shows the connection as connected.
   <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOWCONN-001 | gate: prog | status: pending -->
+- [ ] **Share the ServiceNow connection parameters** — Share the connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
+  <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: connect_and_share.py share (verified live by SN-FLOWCONN-001) | gate: prog | status: pending -->
 - [ ] **Set the Portal Base URL** — Point each in-scope pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
-  <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
-
+  <!-- id: S6.6 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 ### 7. Validate and hand off
 
 - [ ] **Run an end-to-end validation** — Ask the agent a real ServiceNow question and confirm it returns your live data with working portal links.

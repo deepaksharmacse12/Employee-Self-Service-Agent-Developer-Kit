@@ -205,7 +205,7 @@ incomplete row.
 
 When it returns, go back to **Start** to resume at the next unverified row.
 
-### S6.1 through S6.5 — Install the ServiceNow extension pack and connect (skill-6)
+### S6.1 through S6.6 — Install the ServiceNow extension pack and connect (skill-6)
 
 Read `src/skills/setup/servicenow/install-servicenow-extension-pack.md` and follow
 it. That playbook role-gates (Environment Maker), guides the extension-pack install
@@ -213,11 +213,14 @@ for each in-scope product and verifies it (`SN-PKG-001`, **S6.1**), binds the
 ServiceNow and Dataverse connections with the selected auth type (`bind_connections.py`
 exit 0 + `SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
 **S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
-(`SN-FLOWCONN-001`, **S6.4**), and sets the Portal Base URL to `/sp` for each pack
-(`SN-BASEURL-001`, **S6.5**). At S6.1 the maker chooses an **automated** headless
+(`SN-FLOWCONN-001`, **S6.4**), shares the connection parameters onto the portal-owned
+reference (**S6.5**), and sets the Portal Base URL to `/sp` for each pack
+(`SN-BASEURL-001`, **S6.6**). Connect (S6.4) and share (S6.5) are separate checkpoints
+driven by one `connect_and_share.py` run, so a resume continues from whichever failed.
+At S6.1 the maker chooses an **automated** headless
 install or a **manual** Copilot Studio install; automated is the recommended default
 and makes S6.1 a programmatic gate, while a manual install keeps the manual gate. All
-later steps (S6.2–S6.5) are automated regardless of the install mode. The chain runs
+later steps (S6.2–S6.6) are automated regardless of the install mode. The chain runs
 install → bind → turn on flows → connect and share → portal, in that order, because a
 flow can only hold activation once its references are bound and the invoker binding
 must land on the activated flow. On resume it re-runs the role gate and the pack

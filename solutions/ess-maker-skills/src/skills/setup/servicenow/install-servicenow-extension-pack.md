@@ -2,7 +2,7 @@
 # Skill 6 — Install the ServiceNow Extension Pack
 Role: **Environment Maker**. This skill installs the ServiceNow extension pack(s),
 binds ServiceNow and Dataverse connections, sets the portal URL used by returned
-links, verifies the ServiceNow cloud flows, and records rows **S6.1 through S6.5**.
+links, verifies the ServiceNow cloud flows, and records rows **S6.1 through S6.6**.
 Depends on skills 1–5 as applicable: the environment, Dataverse, ESS base agent,
 ServiceNow connection basics, and the selected ServiceNow sign-in path must already
 exist. Read the selected path from `.local/connect/servicenow/config.json` as
@@ -34,7 +34,8 @@ password to any config file.
 | S6.2 | `SN-DV-CONN-001` — Dataverse connection reference active | prog |
 | S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
 | S6.4 | `SN-FLOWCONN-001` — ServiceNow flow invoker connection connected | prog |
-| S6.5 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
+| S6.5 | `connect_and_share.py` — connection parameters shared onto the portal-owned reference (verified live by `SN-FLOWCONN-001`) | prog |
+| S6.6 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
 Run any individually-registered checkpoint by itself:
 ```
 python scripts/flightcheck/cli.py --checkpoint <ID>
@@ -75,7 +76,8 @@ this order is deliberate — do not reorder it.
 `bind_connections.py`, `activate_flows.py`, `connect_and_share.py`) now self-record
 their confirmed outcome into `.local/connect/servicenow/config.json` on success —
 the factual `packs` / `connections` / `status` artifacts plus the `setupStatus`
-step they own (S6.1–S6.4), via `connect_state.py`. This keeps a headless or
+step(s) they own (S6.1–S6.5, where `connect_and_share.py` records **both** S6.4
+connect and S6.5 share independently), via `connect_state.py`. This keeps a headless or
 script-first drive resumable even if the row-recording Message steps below are
 skipped. The recorders are merge-only and never change a script's exit code, so
 the explicit config merges in each step remain the source of truth for gate
@@ -141,7 +143,7 @@ python scripts/flightcheck/cli.py --scope servicenow --no-open
 ```
 Read the `SN-PKG-001` row from the results before continuing (`SN-PKG-001` is emitted
 by the ServiceNow scope run, not a standalone `--checkpoint` ID). Later steps own the
-S6.2–S6.5 rows, so ignore those rows here.
+S6.2–S6.6 rows, so ignore those rows here.
 - `PASSED` → the expected pack content is present; go to **Record S6.1**.
 - `FAILED`, `NotConfigured`, or a manual install finding → choose an install mode
   (below), install each in-scope pack, then re-run the checkpoint.
@@ -215,13 +217,16 @@ Setting up ServiceNow {product}…
 [~] Install extension pack — installing… (0s; ~2–5 min)
 [ ] Bind connections (ServiceNow + Dataverse)
 [ ] Turn on the ServiceNow flows
-[ ] Connect & share the flow invoker connection (in Copilot Studio)
+[ ] Connect the flow invoker connection (in Copilot Studio)
+[ ] Share the connection parameters
 [ ] Set the Portal Base URL
 ```
 `{product}` is the in-scope product label (e.g. `HR`). Row icons: `[x]` done (with
 elapsed, e.g. `— done (2m10s)`), `[~]` in progress (short status + elapsed), `[ ]`
-pending. The five rows map 1:1 to P6.2→P6.6, and each later step updates **its own row
-in this same block** — never start a second block.
+pending. The six rows map to P6.2→P6.6 (the **connect** and **share** rows are both
+driven by P6.5's single `connect_and_share.py` run but track the two separate
+checkpoints S6.4 and S6.5), and each later step updates **its own row in this same
+block** — never start a second block.
 
 #### P6.2-A.2 — Fire the install and poll it (keeps the block moving)
 Fire the install and poll it yourself so the install row animates. **Do not** use the
@@ -587,15 +592,20 @@ this step:
 }
 ```
 ---
-## P6.5 — Connect and share the ServiceNow flow invoker connection (SN-FLOWCONN-001) *(completes S6.4)*
-If the live status block (P6.2-A.1) is active, flip the **Connect & share the flow
-invoker connection** row to `[~]` now, and to `[x]` when this step completes.
-Binding the connection *reference* (P6.3) and turning on the flows (P6.4) is
-necessary but not sufficient: Copilot Studio still shows the ServiceNow connection
-as **Not connected** until the agent's per-flow *invoker connection* is bound. This
-step performs that binding and shares the connection parameters onto the reference,
-then verifies it. Because it runs after the flows are on, the binding lands on the
-final, activated flow definition and will not go stale.
+## P6.5 — Connect and share the ServiceNow flow invoker connection (SN-FLOWCONN-001) *(completes S6.4 connect + S6.5 share)*
+If the live status block (P6.2-A.1) is active, flip the **Connect the flow invoker
+connection** row to `[~]` now. Binding the connection *reference* (P6.3) and turning
+on the flows (P6.4) is necessary but not sufficient: Copilot Studio still shows the
+ServiceNow connection as **Not connected** until the agent's per-flow *invoker
+connection* is bound. This step performs that binding (the **connect** stage, S6.4)
+and shares the connection parameters onto the portal-owned reference (the **share**
+stage, S6.5), then verifies it. Because it runs after the flows are on, the binding
+lands on the final, activated flow definition and will not go stale.
+
+A single `connect_and_share.py` run drives both stages, but they are **separate
+checkpoints** so a resume continues from whichever failed: if the connect succeeds
+but sharing fails the action exits `6`, S6.4 is still recorded, and re-running
+retries only the share (S6.5).
 **Message:**
 
 Now I'll connect the ServiceNow connection to your agent's flows so it shows as
@@ -610,7 +620,13 @@ python scripts/connect_and_share.py --connector servicenow
 ```
 Interpret the exit code:
 - **Exit 0** — the flow invoker connection is connected (or already was) and the
-  parameters are shared. Continue to the checkpoint below.
+  parameters are shared. Flip both the **Connect** and **Share** status rows to `[x]`
+  and continue to the checkpoint below.
+- **Exit 6** — the flow invoker connection **is** connected but sharing the
+  parameters failed (the message names the error). Flip the **Connect** row to `[x]`,
+  leave the **Share** row `[~]`, and re-run this same action to retry only the share
+  (it is idempotent — the connect is skipped as already-connected). If it keeps
+  failing, fall back to the manual message below.
 - **Exit 4** — the ServiceNow reference isn't bound to a connection yet, or the
   extension-pack flows don't reference the ServiceNow connector. Return to P6.3 to
   bind the reference, then re-run this step.
@@ -635,10 +651,16 @@ connection, and connect it. Then tell me and I'll re-check.
 If the checkpoint is `Skipped` because no Power Platform token is cached, re-run the
 `connect_and_share.py` action above (it establishes the token), then re-check. Loop
 until `SN-FLOWCONN-001` passes.
-### P6.5a — Write flow invoker state
-When `SN-FLOWCONN-001` passes, merge `.local/connect/servicenow/config.json` to
-record this step (the reference-level `servicenow`/`dataverse` state was already
-written in P6.3c; here we add the flow binding and overall status):
+### P6.5a — Write flow invoker state (S6.4 connect) and share state (S6.5)
+`connect_and_share.py` already self-records both stages on success (via
+`connect_state.py`): S6.4 whenever the flow binding is confirmed connected — **even
+if sharing then failed (exit 6)** — and S6.5 only when the parameters are confirmed
+shared. When you record the rows manually (or the action's self-record was skipped),
+mirror that split so a resume stays accurate.
+
+**S6.4 (connect).** When `SN-FLOWCONN-001` passes, merge
+`.local/connect/servicenow/config.json` (the reference-level `servicenow`/`dataverse`
+state was already written in P6.3c; here we add the flow binding and overall status):
 ```json
 {
   "connections": {
@@ -662,10 +684,20 @@ can discover the ServiceNow connection. Preserve every existing key:
   }
 }
 ```
-Update S6.4 only after `SN-FLOWCONN-001` passes. Use `GATE="prog"`. Persist
-immediately.
+Update S6.4 only after `SN-FLOWCONN-001` passes (the connect stage). Use
+`GATE="prog"`. Persist immediately.
+
+**S6.5 (share).** Only after the action reports sharing succeeded (`share` is
+`shared` / `created_shared_ref` / `already_shared`, i.e. the run exited `0`, not
+`6`), merge the share artifact and record the row:
+```json
+{ "parameterSharing": "shared" }
+```
+Update S6.5 with `GATE="prog"`. If the action exited `6`, leave S6.5 `in-progress`,
+keep S6.4 `done`, and re-run the action to retry the share before recording S6.5.
+Persist immediately.
 ---
-## P6.6 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.5)*
+## P6.6 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.6)*
 If the live status block (P6.2-A.1) is active, flip the **Set the Portal Base URL**
 row to `[~]` now, and to `[x]` when this step completes — the whole block is then done.
 Derive `{PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
@@ -701,7 +733,7 @@ python scripts/flightcheck/cli.py --scope servicenow --no-open
 Read the `SN-BASEURL-001` row from the results. It is emitted by the ServiceNow
 scope run and is also a registered checkpoint, so you can verify it directly with
 `python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001 --no-open`. `PASSED`
-updates S6.5 with `GATE="prog"`. `FAILED`,
+updates S6.6 with `GATE="prog"`. `FAILED`,
 `NotConfigured`, or partial coverage requires attestation after the rendered result:
 **Message:**
 
@@ -711,10 +743,10 @@ installed.
 
 **End message.**
 Use the question tool with options **Yes, it's set** and **Not yet**. On **Yes**,
-update S6.5 with attested evidence and `ACK=true`. On **Not yet**, leave S6.5
+update S6.6 with attested evidence and `ACK=true`. On **Not yet**, leave S6.6
 `in-progress`, return to the portal setting instructions, and re-check or re-attest
 after they finish.
-Always include this note after S6.5 is recorded:
+Always include this note after S6.6 is recorded:
 **Message:**
 
 Remember: the ServiceNow Portal Base URL can reset after an extension-pack update.
@@ -724,7 +756,7 @@ opening in the portal.
 **End message.**
 ---
 ## Done
-When S6.1, S6.2, every generated S6.3 flow row, S6.4, and S6.5 are `done`, return
+When S6.1, S6.2, every generated S6.3 flow row, S6.4, S6.5, and S6.6 are `done`, return
 control to the setup router (`SKILL.md`) to resume at validation and handoff. Do not
 run the end-to-end ServiceNow prompt test here; that belongs to the separate
 `validate-and-handoff.md` playbook.

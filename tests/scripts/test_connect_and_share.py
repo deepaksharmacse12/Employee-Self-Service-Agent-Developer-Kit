@@ -425,3 +425,89 @@ def test_run_no_flow_connector(patched, monkeypatch):
     result = _run(monkeypatch, [_ref()])
     assert result["action"] == "no_flow_connector"
     assert result["exit_code"] == 4
+
+
+def test_run_share_failure_keeps_connect_and_exits_6(patched, monkeypatch):
+    # Flow binding succeeds, then the share PATCH raises. The confirmed connect
+    # must be preserved (flow_binding == "bound"), the run must exit 6 (not 1),
+    # and the share stage is reported as "error" so a resume retries only S6.5.
+    _install_client(monkeypatch, _user_connections(None), _connection())
+
+    def _boom(*a, **k):
+        raise RuntimeError("Dataverse 500")
+
+    monkeypatch.setattr(cs.auth, "update_record", _boom)
+    result = _run(monkeypatch, [_ref(logicalname=SHARED_NAME, config=None)])
+    assert result["exit_code"] == 6
+    assert result["action"] == "share_failed"
+    assert result["flow_binding"] == "bound"          # connect still confirmed
+    assert result["share"] == "error"
+    assert "Dataverse 500" in result["share_error"]
+
+
+# ── persistence: connect (S6.4) and share (S6.5) recorded independently ──
+class _Args:
+    def __init__(self, dry_run):
+        self.dry_run = dry_run
+
+
+def _capture_connect_state(monkeypatch, cfg=None):
+    rec = {"steps": [], "connections": [], "status": [], "merges": [], "legacy": []}
+    st = cs.connect_state
+    monkeypatch.setattr(st, "load", lambda connector: dict(cfg or {}))
+    monkeypatch.setattr(
+        st, "record_connections", lambda c, conns: rec["connections"].append(conns)
+    )
+    monkeypatch.setattr(st, "record_status", lambda c, s: rec["status"].append(s))
+    monkeypatch.setattr(
+        st, "record_setup_step", lambda c, step, cp, **k: rec["steps"].append(step)
+    )
+    monkeypatch.setattr(st, "merge", lambda c, patch: rec["merges"].append(patch))
+    monkeypatch.setattr(
+        st, "record_legacy_servicenow_summary", lambda s: rec["legacy"].append(s)
+    )
+    monkeypatch.setattr(st, "today_iso", lambda: "2026-01-01")
+    return rec
+
+
+def test_persist_records_both_stages_on_full_success(monkeypatch):
+    rec = _capture_connect_state(monkeypatch, cfg={"authType": "entra_user"})
+    result = {"exit_code": 0, "action": "connected",
+              "flow_binding": "bound", "share": "shared"}
+    cs._persist_connect_state(_Args(dry_run=False), result)
+    assert "S6.4" in rec["steps"]
+    assert "S6.5" in rec["steps"]
+    assert rec["status"] == ["connected"]
+    # The share stage records its own factual artifact.
+    assert {"parameterSharing": "shared"} in rec["merges"]
+
+
+def test_persist_records_connect_only_when_share_failed(monkeypatch):
+    # Share failed (exit 6): S6.4 must still be recorded, S6.5 must NOT be — so a
+    # resume skips connect and retries only the share.
+    rec = _capture_connect_state(monkeypatch)
+    result = {"exit_code": 6, "action": "share_failed",
+              "flow_binding": "bound", "share": "error"}
+    cs._persist_connect_state(_Args(dry_run=False), result)
+    assert "S6.4" in rec["steps"]
+    assert "S6.5" not in rec["steps"]
+
+
+def test_persist_records_share_when_connect_already_done(monkeypatch):
+    # A resume where connect was already connected and the share now succeeds
+    # records S6.5 (and re-affirms S6.4).
+    rec = _capture_connect_state(monkeypatch)
+    result = {"exit_code": 0, "action": "connected",
+              "flow_binding": "already_connected", "share": "created_shared_ref"}
+    cs._persist_connect_state(_Args(dry_run=False), result)
+    assert "S6.4" in rec["steps"]
+    assert "S6.5" in rec["steps"]
+
+
+def test_persist_skips_on_dry_run(monkeypatch):
+    rec = _capture_connect_state(monkeypatch)
+    result = {"exit_code": 0, "action": "would_connect",
+              "flow_binding": "would_bind", "share": "would_share"}
+    cs._persist_connect_state(_Args(dry_run=True), result)
+    assert rec["steps"] == []
+    assert rec["merges"] == []
