@@ -146,13 +146,14 @@ _REF_SUFFIX_ROLES = {
 #     }
 #
 #   The ``ff0df`` connection is configured with Power Platform's
-#   "Microsoft Entra ID Integrated" authentication type (per
-#   src/skills/connect/workday/step3.md lines 155-166), not Basic
-#   auth. That auth type authenticates the signed-in employee against
-#   a federated Workday enterprise app in Entra (Application ID URI
-#   ``http://www.workday.com/{WD_TENANT}``), which is the same
-#   enterprise app the connect skill provisions in step2.md lines
-#   191-264. The X.509 signing certificate WD-CONN-102 inspects lives
+#   "Microsoft Entra ID Integrated" authentication type (per skill-5,
+#   src/skills/setup/workday/install-workday-extension-pack.md S5.3), not
+#   Basic auth. That auth type authenticates the signed-in employee
+#   against a federated Workday enterprise app in Entra (Application ID
+#   URI ``http://www.workday.com/{WD_TENANT}``), which is the same
+#   enterprise app the setup flow provisions in skill-3,
+#   src/skills/setup/workday/provision-workday-entra-app.md. The X.509
+#   signing certificate WD-CONN-102 inspects lives
 #   on that enterprise app as a keyCredential. It is the most visible
 #   expiry-driven health signal on the federation app that the
 #   user-context SOAP/REST runtime path depends on.
@@ -192,7 +193,7 @@ _REF_SUFFIX_ROLES = {
 #     SAML Identity Providers". This is NOT reachable via any public
 #     Workday API the kit talks to (the SOAP RaaS / Worker services
 #     don't expose tenant security configuration). Comparison of the
-#     two thumbprints is therefore an operator step.
+#     two certificates is therefore an operator step.
 #
 # WD-CONN-102 reads the Entra side automatically, surfaces the
 # current active-cert thumbprint and NotAfter date, and emits a
@@ -637,7 +638,19 @@ def run_workday_checks(runner) -> list[CheckResult]:
     # present, this tenant has no Workday integration. Skip the
     # downstream Workday-specific checks (preserves the pre-existing
     # behavior of returning early when there's no Workday signal).
-    if not wd_flows and flavor in (None, "none"):
+    #
+    # `"skipped"` is folded in alongside `None`/`"none"` because it means
+    # WD-PKG-001 had no Dataverse token to detect the install flavor — the
+    # case for a Graph-only single-checkpoint run (e.g.
+    # `--checkpoint WD-CONN-102` / `WD-CONN-010`, both of which run above
+    # this guard). Without Dataverse the deep block below can only SKIP, but
+    # `_check_workflows` / `_check_personal_data_write_permission` would first
+    # prompt interactively for a Test Employee ID and ISU username/password
+    # (`input()` / `getpass`) — raw stdin prompts that hang a headless,
+    # skill-launched run forever. Returning here keeps those Graph-only
+    # invocations non-interactive. Full-scope runs authenticate Dataverse, so
+    # `flavor` is never `"skipped"` there and this branch is a no-op for them.
+    if not wd_flows and flavor in (None, "none", "skipped"):
         return results
 
     print("\n  Running Workday deep validation...")
@@ -2710,7 +2723,8 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
         ``CERT_EXPIRY_WARN_DAYS`` days, OR its NotBefore is in the
         future (not yet valid).
       * MANUAL — active cert is healthy. The operator must compare
-        its thumbprint against the row in Workday's "Edit Tenant
+        its certificate (validity dates, or an externally-computed
+        SHA-1 thumbprint) against the row in Workday's "Edit Tenant
         Setup - Security -> SAML Identity Providers" because that
         is not reachable from any Workday API the kit talks to.
       * NOT_CONFIGURED — no federated Workday SAML enterprise app
@@ -2823,6 +2837,47 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
     # it raised ImportError as soon as any Workday SAML SP with certs
     # was returned, masking every cert-classification branch below.
     now = datetime.now(timezone.utc)
+
+    # Scope to the operator-selected Workday SSO app when one is configured
+    # or pinned for this run. Historically WD-CONN-102 validated *every*
+    # federated Workday SAML enterprise app in the tenant and coalesced them
+    # by status; a tenant with several (dev/test/prod, demos, Okta trials)
+    # therefore lumped unrelated apps into one verdict, so a broken sibling
+    # could fail a correctly-configured deployment. The standalone flightcheck
+    # lets the operator pin the app they are verifying (interactive picker /
+    # ``--workday-app-id`` / persisted ``entraAppId``); we resolve it through
+    # the SAME ``_workday_hints`` path AUTH-005 / WD-ASSIGN-001 already use so
+    # every Workday-SSO-app check agrees on the target. When the pin matches a
+    # discovered SAML SP we narrow to it; when it matches none (e.g. the
+    # operator pinned the OAuth Workday app, which is not a SAML app) we keep
+    # the full set and say so rather than silently validating an unrelated
+    # sibling. No pin ⇒ unchanged all-apps behavior (single-checkpoint mode
+    # never sets one).
+    from ._workday_app_assignment import _workday_hints
+
+    app_id_hint, _ = _workday_hints(getattr(runner, "config", None))
+    scope_note = ""
+    if app_id_hint:
+        _hint = app_id_hint.strip().lower()
+        _matched = [
+            sp for sp in workday_sps
+            if str(sp.get("appId", "")).strip().lower() == _hint
+        ]
+        if _matched:
+            workday_sps = _matched
+            scope_note = (
+                "\n\nScoped to the configured Workday SSO app "
+                f"(entraAppId={app_id_hint}); other Workday SAML enterprise "
+                "apps in this tenant were not evaluated."
+            )
+        else:
+            scope_note = (
+                "\n\nNote: the configured Workday app "
+                f"(entraAppId={app_id_hint}) is not among the Workday SAML "
+                "SSO enterprise apps in this tenant, so it could not be used "
+                "to narrow this check; all discovered Workday SAML apps are "
+                "shown."
+            )
 
     # Classify each SP into exactly one of these buckets. Each list
     # holds (sp_summary_string, remediation_hint) tuples so the
@@ -2953,7 +3008,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
     results: list[CheckResult] = []
 
     if failed_entries:
-        bodies = "\n".join(e["summary"] for e in failed_entries)
+        bodies = "\n".join(e["summary"] for e in failed_entries) + scope_note
         results.append(CheckResult(roles=[Role.ENTRA_ADMIN.value, Role.WORKDAY_ADMIN.value],
             checkpoint_id=cp_id, category=category,
             priority=Priority.HIGH.value, status=Status.FAILED.value,
@@ -3000,7 +3055,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
         ))
 
     if warning_entries:
-        bodies = "\n".join(e["summary"] for e in warning_entries)
+        bodies = "\n".join(e["summary"] for e in warning_entries) + scope_note
         # Hardening framing per AGENTS.md principle 9 — these aren't
         # functional blockers today, only operational risk.
         results.append(CheckResult(roles=[Role.ENTRA_ADMIN.value, Role.WORKDAY_ADMIN.value],
@@ -3045,7 +3100,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
         ))
 
     if manual_entries:
-        bodies = "\n".join(e["summary"] for e in manual_entries)
+        bodies = "\n".join(e["summary"] for e in manual_entries) + scope_note
         intro = (
             "1 federated Workday SAML app has a healthy active signing "
             "certificate in Entra"
@@ -3060,7 +3115,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
             priority=Priority.HIGH.value, status=Status.MANUAL.value,
             description=description,
             result=(
-                f"{intro}. Manual thumbprint comparison required "
+                f"{intro}. Manual certificate comparison required "
                 "against Workday — the Workday 'X509 Certificate' "
                 "field is not exposed via any Workday API the kit "
                 "talks to (the SOAP RaaS / Worker services don't "
@@ -3073,7 +3128,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
                 "Workday has on file for the same Service Provider ID. "
                 "ESS uses exactly one of the federated apps listed "
                 "above; identify it via Workday first, then verify "
-                "only that app's thumbprint.\n"
+                "only that app's certificate.\n"
                 "\n"
                 "Step 1 — Identify the active Entra app from inside "
                 "Workday:\n"
@@ -3091,15 +3146,28 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
                 "listed above — the matching row is the active "
                 "Entra app.\n"
                 "\n"
-                "Step 2 — Compare the thumbprints:\n"
-                "  a. In Workday, in that same row, open the 'X509 "
-                "Certificate' value and view its details — Workday "
-                "displays the SHA-1 thumbprint in colon-separated "
-                "uppercase hex (matches the format shown above).\n"
-                "  b. Compare it byte-for-byte against the active "
-                "thumbprint listed for that app above. They MUST "
-                "match exactly.\n"
-                "  c. If they differ, end-user browser-based SAML "
+                "Step 2 — Compare the certificate. Workday does NOT "
+                "display a thumbprint anywhere; its 'X509 Certificate' "
+                "object shows only Name, Valid From, Valid To, and the "
+                "Base64 certificate body. Verify parity one of two "
+                "ways:\n"
+                "  a. Quick check (no tooling) — open the 'X509 "
+                "Certificate' value on that row and confirm its "
+                "'Valid From' / 'Valid To' match the Entra cert's "
+                "NotBefore / NotAfter shown above.\n"
+                "  b. Definitive check — copy the Base64 certificate "
+                "body from Workday, wrap it between "
+                "'-----BEGIN CERTIFICATE-----' and "
+                "'-----END CERTIFICATE-----' markers, save it as a "
+                "PEM file (e.g. workday.cer), then compute its SHA-1 "
+                "thumbprint and confirm it equals the active Entra "
+                "thumbprint above (ignore ':' separators and case):\n"
+                "       PowerShell: [System.Security.Cryptography."
+                "X509Certificates.X509Certificate2]::"
+                "new(\"$PWD\\workday.cer\").Thumbprint\n"
+                "       openssl:    openssl x509 -in workday.cer "
+                "-noout -fingerprint -sha1\n"
+                "  If they differ, end-user browser-based SAML "
                 "SSO into Workday is broken. The OAuth-routed "
                 "``new_sharedworkdaysoap_ff0df`` connection used by "
                 "the ``ESS HR Workday`` and ``WorkdayRESTExecution`` "
@@ -4866,6 +4934,40 @@ def _check_custom_workflow_inventory(runner) -> list[CheckResult]:
 
 # ---- Credential Resolution ----
 
+# Directly-targetable checkpoint families whose checks consume the
+# interactively-resolved Workday runtime inputs (test employee ID + ISU
+# credentials). Only a --checkpoint run that overlaps one of these should be
+# allowed to block on those prompts. The workflow family (WD-WF-*) is the sole
+# such target: WD-SEC-003 also reads them but is emitted only in full/scope
+# runs, never as a standalone --checkpoint target.
+_WD_RUNTIME_INPUT_FAMILIES = ("WD-WF",)
+
+
+def _interactive_workday_prompts_allowed(runner) -> bool:
+    """Whether blocking on an interactive Workday runtime prompt (test
+    employee ID / ISU credentials) is appropriate for this run.
+
+    Full and scope runs (no single-checkpoint target matcher) keep the legacy
+    behavior and may prompt. In ``--checkpoint`` mode the entire Workday
+    category function is executed to hydrate shared state, but only the target
+    checkpoint's rows survive ``run()``'s post-filter — so a prompt fired by a
+    non-target check (e.g. the workflow / personal-data checks running only to
+    hydrate a ``WD-PKG-001`` request) would block the operator for a row that
+    is about to be discarded. Restrict the prompt to checkpoint runs whose
+    target actually overlaps a runtime-input-consuming family.
+    """
+    if getattr(runner, "_target_matcher", None) is None:
+        return True
+    scope = str(getattr(runner, "scope", "") or "")
+    prefix = "checkpoint:"
+    target = scope[len(prefix):] if scope.startswith(prefix) else ""
+    probe = target.rstrip("*").rstrip("-")
+    return any(
+        probe == fam or target.startswith(fam + "-")
+        for fam in _WD_RUNTIME_INPUT_FAMILIES
+    )
+
+
 def _resolve_workday_metadata(runner) -> tuple[str, str, str]:
     """Resolve non-sensitive Workday metadata: (base_url, tenant, test_employee_id).
 
@@ -4896,7 +4998,7 @@ def _resolve_workday_metadata(runner) -> tuple[str, str, str]:
         test_employee = config.get("workdayTestEmployeeId", "")
 
     # --- Source 5: Test employee ID (prompt + cache in config) ---
-    if not test_employee and sys.stdin.isatty():
+    if not test_employee and sys.stdin.isatty() and _interactive_workday_prompts_allowed(runner):
         test_employee = input("  Test Employee ID (e.g. 21508): ").strip()
         if test_employee:
             _cache_test_employee_id(test_employee)
@@ -4916,7 +5018,7 @@ def _resolve_workday_credentials(runner, tenant: str) -> tuple[str, str]:
     password = os.environ.get("WORKDAY_PASSWORD", "")
 
     # --- Source 4: Interactive prompt for secrets ---
-    if (not username or not password) and sys.stdin.isatty():
+    if (not username or not password) and sys.stdin.isatty() and _interactive_workday_prompts_allowed(runner):
         print("\n  Workday SOAP workflow tests need ISU credentials.")
         print("  (Credentials are used for this run only - never saved to disk)\n")
         if not username:
