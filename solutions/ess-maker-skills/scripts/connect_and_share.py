@@ -51,6 +51,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
+import connect_state  # noqa: E402
 from pp_env_client import (  # noqa: E402
     PPEnvClient,
     connector_is_connected,
@@ -383,6 +384,34 @@ def _config_equal(current, desired: dict) -> bool:
     return parsed == desired
 
 
+def _persist_connect_state(args, result: dict) -> None:
+    """On confirmed connect success, record the active ServiceNow connection,
+    ``status``, the legacy root summary, and ``S6.4`` (never raises)."""
+    try:
+        if args.dry_run or result.get("exit_code") != 0:
+            return
+        if result.get("action") != "connected":
+            return
+        cfg = connect_state.load("servicenow")
+        conn = {"state": "active", "flowBinding": "connected",
+                "verifiedBy": "programmatic"}
+        if cfg.get("authType"):
+            conn["authType"] = cfg["authType"]
+        connect_state.record_connections("servicenow", {"servicenow": conn})
+        connect_state.record_status("servicenow", "connected")
+        connect_state.record_setup_step("servicenow", "S6.4", "SN-FLOWCONN-001")
+        if cfg.get("instanceName"):
+            connect_state.record_legacy_servicenow_summary({
+                "instanceName": cfg.get("instanceName"),
+                "instanceUrl": cfg.get("instanceUrl"),
+                "usage": cfg.get("usage"),
+                "authType": cfg.get("authType"),
+                "connectedAt": connect_state.today_iso(),
+            })
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Connect the ServiceNow flow invoker connection and share "
@@ -424,6 +453,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001 — surface a clean message, no stack
         result = {"action": "error", "exit_code": 1,
                   "message": f"{type(e).__name__}: {e}"}
+
+    _persist_connect_state(args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))

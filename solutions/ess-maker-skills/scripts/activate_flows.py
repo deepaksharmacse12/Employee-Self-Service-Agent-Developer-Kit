@@ -47,6 +47,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
+import connect_state  # noqa: E402
 
 # ServiceNow cloud flows carry "ServiceNow" in their display name (e.g.
 # "ESS HR ServiceNow HRSD Common Orchestrator"). This mirrors
@@ -164,6 +165,19 @@ def run(env_url: str, *, environment_id: str | None, dry_run: bool) -> dict:
     }
 
 
+def _persist_activate_state(args, result: dict) -> None:
+    """On confirmed flow activation, record ``flows`` + ``S6.3`` (never raises)."""
+    try:
+        if args.dry_run or result.get("exit_code") != 0:
+            return
+        if result.get("action") not in ("activated", "already_on"):
+            return
+        connect_state.merge("servicenow", {"flows": {"state": "enabled"}})
+        connect_state.record_setup_step("servicenow", "S6.3", "SN-FLOW-000..004")
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Turn on the ServiceNow cloud flows an extension pack installed."
@@ -194,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001 — surface a clean message, no stack
         result = {"action": "error", "exit_code": 1,
                   "message": f"{type(e).__name__}: {e}"}
+
+    _persist_activate_state(args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))

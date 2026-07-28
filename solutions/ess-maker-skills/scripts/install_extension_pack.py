@@ -78,6 +78,7 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
+import connect_state  # noqa: E402
 from connect_and_share import bot_schema  # noqa: E402
 from pp_env_client import (  # noqa: E402
     PPEnvClient,
@@ -566,6 +567,28 @@ def run_status(
     }
 
 
+def _persist_install_state(config: dict, args, result: dict) -> None:
+    """On confirmed install success, record ``packs`` + ``S6.1`` (never raises).
+
+    Fires for a completed blocking run (``action == "install"``) or a
+    fire-and-poll poll that reached success (``action == "succeeded"``). Skips
+    dry-runs, the fire-only ``--start`` step, and a still-running poll.
+    """
+    try:
+        if result.get("exit_code") != 0 or args.dry_run or args.start:
+            return
+        if result.get("action") not in ("install", "succeeded"):
+            return
+        scope = config.get("scope") or {}
+        products = [p for p in ("hrsd", "itsm") if scope.get(p)]
+        if not products:
+            return
+        connect_state.record_packs("servicenow", products, "installed")
+        connect_state.record_setup_step("servicenow", "S6.1", "SN-001")
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Install an ESS extension pack (application package) "
@@ -658,6 +681,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001 — surface a clean message, no stack
         result = {"action": "error", "exit_code": 1,
                   "message": f"{type(e).__name__}: {e}"}
+
+    _persist_install_state(config, args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))

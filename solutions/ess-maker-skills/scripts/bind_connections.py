@@ -59,6 +59,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
+import connect_state  # noqa: E402
 
 # Per-connector matching keywords. A connection reference's ``connectorid`` and
 # a BAP connection's ``properties.apiId`` share the ``shared_<connector>`` suffix
@@ -367,6 +368,42 @@ def run(env_url: str, *, environment_id: str | None, dry_run: bool,
                           environment_id=environment_id, dry_run=dry_run)
 
 
+def _persist_bind_state(args, result: dict) -> None:
+    """On confirmed bind success, record connection state + ``S6.2`` (never raises).
+
+    Records a connector as ``bound`` only when its own result exited 0 (so a
+    tolerated ``no_reference`` (3) on one side of ``--connector all`` does not
+    falsely mark that connector bound). ``S6.2`` is recorded once the ServiceNow
+    reference is bound. Skips dry-runs.
+    """
+    try:
+        if args.dry_run:
+            return
+        conns: dict = {}
+
+        def _mark(r: dict) -> None:
+            connector = r.get("connector")
+            if r.get("exit_code") == 0 and connector in ("servicenow", "dataverse"):
+                conns[connector] = {"state": "bound", "verifiedBy": "programmatic"}
+
+        if result.get("action") == "multi":
+            for r in result.get("results", []):
+                _mark(r)
+        else:
+            _mark(result)
+        if not conns:
+            return
+        cfg = connect_state.load("servicenow")
+        if "servicenow" in conns and cfg.get("authType"):
+            conns["servicenow"]["authType"] = cfg["authType"]
+        connect_state.record_connections("servicenow", conns)
+        if "servicenow" in conns:
+            connect_state.record_setup_step(
+                "servicenow", "S6.2", "SN-CONN-001, SN-DV-CONN-001")
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Auto-bind extension-pack connection references."
@@ -396,6 +433,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001 — surface a clean message, no stack
         result = {"action": "error", "exit_code": 1,
                   "message": f"{type(e).__name__}: {e}"}
+
+    _persist_bind_state(args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))
