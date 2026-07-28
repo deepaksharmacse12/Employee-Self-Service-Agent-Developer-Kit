@@ -46,6 +46,7 @@ from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
 from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
 from flightcheck.checks.servicenow import (
+    run_servicenow_capture_checks,
     run_servicenow_dataverse_checks,
     run_servicenow_portal_checks,
 )
@@ -454,6 +455,45 @@ _SPECS: list[CheckpointSpec] = [
         clients=frozenset({DATAVERSE}),
         requires_config=True,
         requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value,),
+    ),
+    # ServiceNow capture gates (setup skill 3, S3.1/S3.2/S3.3). Emitted by
+    # checks/servicenow.run_servicenow_capture_checks — self-contained and
+    # CONFIG-ONLY (no clients, no Dataverse endpoint): they read
+    # .local/connect/servicenow/config.json before any pack is installed. The
+    # capture playbook and tasks.md drove these IDs, but they were never
+    # implemented, so a faithful resume into skill 3 hit "unknown checkpoint".
+    # Registered with exact keys so --checkpoint resolves them and the drift
+    # test sees them (they use non-owned prefixes SN-CONFIG/SN-PERM/SN-USER, so
+    # they are not force-required by OWNED_PREFIXES).
+    CheckpointSpec(
+        key="SN-CONFIG-001",
+        category_fn=run_servicenow_capture_checks,
+        category_label="ServiceNow",
+        clients=frozenset(),
+        requires_config=True,
+        requires_dataverse_endpoint=False,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value,),
+    ),
+    CheckpointSpec(
+        key="SN-PERM-001",
+        category_fn=run_servicenow_capture_checks,
+        category_label="ServiceNow",
+        clients=frozenset(),
+        requires_config=True,
+        requires_dataverse_endpoint=False,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value,),
+    ),
+    CheckpointSpec(
+        key="SN-USER-001",
+        category_fn=run_servicenow_capture_checks,
+        category_label="ServiceNow",
+        clients=frozenset(),
+        requires_config=True,
+        requires_dataverse_endpoint=False,
         priority=Priority.HIGH.value,
         roles=(Role.ESS_MAKER.value,),
     ),

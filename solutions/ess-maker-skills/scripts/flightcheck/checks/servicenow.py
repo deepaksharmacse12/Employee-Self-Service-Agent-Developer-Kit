@@ -487,6 +487,222 @@ def run_servicenow_portal_checks(runner) -> list[CheckResult]:
     return _check_portal_base_url(runner)
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Skill-3 capture gates (S3.1 / S3.2 / S3.3). These run BEFORE any pack is
+# installed, so they read only the local ServiceNow connect config
+# (.local/connect/servicenow/config.json) — no Dataverse, Graph, or live
+# ServiceNow tenant. They were specified by capture-servicenow-config.md and
+# tasks.md (checkpoints SN-CONFIG-001 / SN-PERM-001 / SN-USER-001) but never
+# implemented, so a faithful resume into skill-3 hit "unknown checkpoint" and
+# stalled. Emitted by run_servicenow_capture_checks (self-contained, ungated by
+# flow discovery) rather than run_servicenow_checks, which is the post-install,
+# flow-gated deep run.
+# ─────────────────────────────────────────────────────────────────────────
+
+_SN_CONFIG_DESC = "ServiceNow instance, product scope, connector, and sign-in method captured"
+_SN_PERM_DESC = "Maker has the Entra and ServiceNow permissions the rest of setup needs"
+_SN_USER_DESC = "Signed-in identity resolves to an active ServiceNow user record"
+
+# authType values the sign-in flow supports (capture-servicenow-config.md P3.3).
+_VALID_AUTH_TYPES = {"entra_user", "entra_certificate"}
+
+
+def _load_sn_connect_config():
+    """Read ``.local/connect/servicenow/config.json``.
+
+    Returns ``None`` when the file is absent (skill-3 hasn't started), or the
+    parsed dict (``{}`` when empty/corrupt) otherwise.
+    """
+    path = os.path.join(".local", "connect", "servicenow", "config.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _is_servicenow_instance(url: str) -> bool:
+    """True for an ``https://<instance>.service-now.com`` base URL."""
+    u = url.strip().lower()
+    return u.startswith("https://") and ".service-now.com" in u
+
+
+def _check_config_basics(runner) -> list[CheckResult]:
+    """SN-CONFIG-001 (S3.1, prog) — validate the captured ServiceNow basics.
+
+    Purely local: confirms the connect config records a valid instance URL, at
+    least one in-scope product (HRSD/ITSM), a connector type, and a supported
+    sign-in method. These are the inputs every later ServiceNow step depends on.
+    """
+    roles = [Role.ESS_MAKER.value]
+    cfg = _load_sn_connect_config()
+    if cfg is None:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-CONFIG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+            description=_SN_CONFIG_DESC,
+            result="No ServiceNow connection config has been captured yet.",
+            remediation="Run /setup servicenow (skill 3) to capture your instance, product scope, connector, and sign-in method.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    missing = []
+    instance = str(cfg.get("instanceUrl") or "").strip()
+    if not _is_servicenow_instance(instance):
+        missing.append("a valid ServiceNow instance URL (https://<instance>.service-now.com)")
+    scope = cfg.get("scope") if isinstance(cfg.get("scope"), dict) else {}
+    in_scope = [p.upper() for p in ("hrsd", "itsm") if scope.get(p)]
+    if not in_scope:
+        missing.append("at least one product in scope (HRSD or ITSM)")
+    connector = str(cfg.get("connectorType") or "").strip()
+    if not connector:
+        missing.append("the connector type")
+    auth_type = str(cfg.get("authType") or "").strip()
+    if auth_type not in _VALID_AUTH_TYPES:
+        missing.append("a supported sign-in method (Entra user sign-in or Entra certificate)")
+
+    if missing:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-CONFIG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.FAILED.value,
+            description=_SN_CONFIG_DESC,
+            result="ServiceNow basics are incomplete: missing " + "; ".join(missing) + ".",
+            remediation="Re-run the ServiceNow capture step (skill 3) and provide the missing values.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    return [CheckResult(roles=roles,
+        checkpoint_id="SN-CONFIG-001", category="ServiceNow",
+        priority=Priority.HIGH.value, status=Status.PASSED.value,
+        description=_SN_CONFIG_DESC,
+        result=(
+            f"Captured instance {instance}, scope {'+'.join(in_scope)}, "
+            f"connector {connector}, sign-in {auth_type}."
+        ),
+        doc_link=f"{DOC_BASE}/servicenow",
+    )]
+
+
+def _check_maker_permissions(runner) -> list[CheckResult]:
+    """SN-PERM-001 (S3.2, prog/manual) — validate the maker-permission summary.
+
+    Reads the ``makerPermissions`` summary skill-3 persists after its read-only
+    Graph role probe and the ServiceNow-admin availability question. A
+    ServiceNow admin is mandatory (only they can register the OIDC provider), so
+    its absence FAILS. Entra admin confirmed programmatically PASSES; anything
+    less (not held / probe unavailable) degrades to MANUAL — the Entra app and
+    admin-consent steps may need an escalation, which the operator attests to.
+    """
+    roles = [Role.ESS_MAKER.value]
+    cfg = _load_sn_connect_config()
+    perms = (cfg or {}).get("makerPermissions")
+    if cfg is None or not isinstance(perms, dict) or not perms:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-PERM-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+            description=_SN_PERM_DESC,
+            result="Maker permissions haven't been probed yet.",
+            remediation="Run /setup servicenow (skill 3) so it can probe your Entra role and confirm ServiceNow admin availability.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    sn_admin = perms.get("serviceNowAdmin")
+    entra_admin = perms.get("entraAdmin")
+    entra_evidence = str(perms.get("entraAdminEvidence") or "unconfirmed").strip()
+
+    if sn_admin is False:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-PERM-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.FAILED.value,
+            description=_SN_PERM_DESC,
+            result="No ServiceNow administrator is available. Registering the Entra OIDC provider in ServiceNow is a ServiceNow-admin-only action, so setup cannot complete without one.",
+            remediation="Arrange access to someone who can administer this ServiceNow instance (register an OIDC provider and elevate to security_admin), then re-run this step.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    if sn_admin is not True:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-PERM-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.MANUAL.value,
+            description=_SN_PERM_DESC,
+            result="ServiceNow admin availability hasn't been confirmed.",
+            remediation="Confirm a ServiceNow administrator is available for the OIDC-provider and user-mapping steps, then attest to continue.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    if entra_admin is True:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-PERM-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.PASSED.value,
+            description=_SN_PERM_DESC,
+            result="Entra admin capability confirmed programmatically and a ServiceNow admin is available.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    return [CheckResult(roles=roles,
+        checkpoint_id="SN-PERM-001", category="ServiceNow",
+        priority=Priority.HIGH.value, status=Status.MANUAL.value,
+        description=_SN_PERM_DESC,
+        result=(
+            "A ServiceNow admin is available, but Entra admin capability wasn't "
+            f"confirmed programmatically ({entra_evidence})."
+        ),
+        remediation="The Entra app-registration and admin-consent steps may need an account with an app/consent admin role. Confirm you can complete them (or have help), then attest to continue.",
+        doc_link=f"{DOC_BASE}/servicenow",
+    )]
+
+
+def _check_user_record(runner) -> list[CheckResult]:
+    """SN-USER-001 (S3.3, attest) — the mapped ServiceNow user record.
+
+    The kit holds no ServiceNow-tenant credentials on this path, so it cannot
+    programmatically prove the record exists; the row is an attestation. PASSES
+    only once the operator has confirmed it (persisted as
+    ``userRecord.activeUserConfirmed``); otherwise MANUAL with the check to run.
+    """
+    roles = [Role.ESS_MAKER.value]
+    cfg = _load_sn_connect_config()
+    user = (cfg or {}).get("userRecord")
+    user = user if isinstance(user, dict) else {}
+    if user.get("activeUserConfirmed") is True:
+        mapped = str(user.get("mappedField") or "the mapped identity field").strip()
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-USER-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.PASSED.value,
+            description=_SN_USER_DESC,
+            result=f"You confirmed the signed-in identity maps to an active ServiceNow user ({mapped}).",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )]
+
+    return [CheckResult(roles=roles,
+        checkpoint_id="SN-USER-001", category="ServiceNow",
+        priority=Priority.HIGH.value, status=Status.MANUAL.value,
+        description=_SN_USER_DESC,
+        result="The signed-in person's ServiceNow user record hasn't been confirmed.",
+        remediation="In ServiceNow, confirm the person who signs in exists as an ACTIVE user whose mapped field (e.g. email) matches their Microsoft identity — otherwise requests come back empty — then attest to continue.",
+        doc_link=f"{DOC_BASE}/servicenow",
+    )]
+
+
+def run_servicenow_capture_checks(runner) -> list[CheckResult]:
+    """Self-contained emitter for the skill-3 capture gates.
+
+    Emits SN-CONFIG-001, SN-PERM-001 and SN-USER-001 from the local ServiceNow
+    connect config only (no Dataverse/Graph), so each is independently runnable
+    via ``--checkpoint`` before any pack is installed. Deliberately NOT wired
+    into :func:`run_servicenow_checks` (the flow-gated post-install deep run),
+    which stays unchanged.
+    """
+    return (
+        _check_config_basics(runner)
+        + _check_maker_permissions(runner)
+        + _check_user_record(runner)
+    )
+
+
 def _check_flow_status(runner, sn_flows: list) -> list[CheckResult]:
     """Check whether ServiceNow flows are enabled, grouped by HRSD/ITSM."""
     results = []

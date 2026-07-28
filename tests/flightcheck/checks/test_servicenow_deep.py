@@ -385,3 +385,134 @@ def test_servicenow_portal_wrapper_self_contained(monkeypatch):
     r = _by_id(run_servicenow_portal_checks(_portal_runner()), "SN-BASEURL-001")
     assert r.status == "Passed"
 
+
+# --------------------------------------------------------------------------
+# Skill-3 capture gates — SN-CONFIG-001 / SN-PERM-001 / SN-USER-001.
+# Config-only: they read .local/connect/servicenow/config.json relative to cwd.
+# --------------------------------------------------------------------------
+import json as _json2
+
+
+def _write_sn_config(tmp_path, cfg):
+    cfg_path = tmp_path / ".local" / "connect" / "servicenow" / "config.json"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(_json2.dumps(cfg), encoding="utf-8")
+
+
+_FULL_BASICS = {
+    "instanceUrl": "https://dev184242.service-now.com",
+    "connectorType": "powerplatform",
+    "scope": {"hrsd": True, "itsm": False},
+    "authType": "entra_user",
+}
+
+
+def test_sn_config_basics_complete_passes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, dict(_FULL_BASICS))
+    from flightcheck.checks.servicenow import _check_config_basics
+    r = _by_id(_check_config_basics(None), "SN-CONFIG-001")
+    assert r.status == "Passed"
+    assert "dev184242" in r.result and "HRSD" in r.result
+
+
+def test_sn_config_basics_absent_not_configured(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from flightcheck.checks.servicenow import _check_config_basics
+    r = _by_id(_check_config_basics(None), "SN-CONFIG-001")
+    assert r.status == "NotConfigured"
+
+
+def test_sn_config_basics_missing_fields_fail(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, {
+        "instanceUrl": "https://example.com",   # not a service-now host
+        "scope": {"hrsd": False, "itsm": False},  # nothing in scope
+        "authType": "password",                  # unsupported
+    })
+    from flightcheck.checks.servicenow import _check_config_basics
+    r = _by_id(_check_config_basics(None), "SN-CONFIG-001")
+    assert r.status == "Failed"
+    assert "instance URL" in r.result
+    assert "HRSD or ITSM" in r.result
+    assert "sign-in method" in r.result
+    assert "connector" in r.result
+
+
+def test_sn_perm_entra_and_snadmin_pass(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, {"makerPermissions": {
+        "entraAdmin": True, "serviceNowAdmin": True,
+    }})
+    from flightcheck.checks.servicenow import _check_maker_permissions
+    r = _by_id(_check_maker_permissions(None), "SN-PERM-001")
+    assert r.status == "Passed"
+
+
+def test_sn_perm_no_snadmin_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, {"makerPermissions": {
+        "entraAdmin": True, "serviceNowAdmin": False,
+    }})
+    from flightcheck.checks.servicenow import _check_maker_permissions
+    r = _by_id(_check_maker_permissions(None), "SN-PERM-001")
+    assert r.status == "Failed"
+    assert "ServiceNow administrator" in r.result
+
+
+def test_sn_perm_entra_unconfirmed_manual(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, {"makerPermissions": {
+        "entraAdmin": False, "serviceNowAdmin": True,
+        "entraAdminEvidence": "probe unavailable",
+    }})
+    from flightcheck.checks.servicenow import _check_maker_permissions
+    r = _by_id(_check_maker_permissions(None), "SN-PERM-001")
+    assert r.status == "Manual"
+    assert "probe unavailable" in r.result
+
+
+def test_sn_perm_snadmin_unknown_manual(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, {"makerPermissions": {
+        "entraAdmin": None, "serviceNowAdmin": None,
+    }})
+    from flightcheck.checks.servicenow import _check_maker_permissions
+    r = _by_id(_check_maker_permissions(None), "SN-PERM-001")
+    assert r.status == "Manual"
+
+
+def test_sn_perm_not_probed_not_configured(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, dict(_FULL_BASICS))  # no makerPermissions
+    from flightcheck.checks.servicenow import _check_maker_permissions
+    r = _by_id(_check_maker_permissions(None), "SN-PERM-001")
+    assert r.status == "NotConfigured"
+
+
+def test_sn_user_confirmed_passes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, {"userRecord": {
+        "activeUserConfirmed": True, "mappedField": "email",
+    }})
+    from flightcheck.checks.servicenow import _check_user_record
+    r = _by_id(_check_user_record(None), "SN-USER-001")
+    assert r.status == "Passed"
+    assert "email" in r.result
+
+
+def test_sn_user_unconfirmed_manual(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, dict(_FULL_BASICS))  # no userRecord
+    from flightcheck.checks.servicenow import _check_user_record
+    r = _by_id(_check_user_record(None), "SN-USER-001")
+    assert r.status == "Manual"
+
+
+def test_capture_wrapper_emits_all_three(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_sn_config(tmp_path, dict(_FULL_BASICS))
+    from flightcheck.checks.servicenow import run_servicenow_capture_checks
+    ids = {r.checkpoint_id for r in run_servicenow_capture_checks(None)}
+    assert ids == {"SN-CONFIG-001", "SN-PERM-001", "SN-USER-001"}
+
