@@ -105,8 +105,102 @@ Entra app work, with:
   query errors for an unrelated reason (network, not signed in), follow the gate's
   retry-then-attest fallback — never assume pass.
 
-If `GATE_RESULT` is `"stop"`, **halt**. Otherwise carry `GATE_EVIDENCE` forward;
+If `GATE_RESULT` is `"stop"`:
+
+- If `GATE_REASON` is `"delegated"` (the maker can't hold the role but another
+  administrator will do the Entra work), **do not halt** — go to **P5.0a** and hand
+  that administrator the full certificate-app runbook, then resume on the
+  Application (client) IDs they return.
+- For any other `"stop"` reason, **halt**.
+
+Otherwise carry `GATE_EVIDENCE` forward;
 it is recorded when S5.1 and S5.2 are updated.
+
+---
+
+## P5.0a — Delegated administrator runbook (certificate apps)
+
+Reached only when the P5.0 gate returned `GATE_RESULT="stop"` with
+`GATE_REASON="delegated"`: the maker lacks the Entra role, so a consent-capable
+administrator registers the two certificate apps and uploads the signing
+certificate, then hands the maker back the resulting **Application (client) IDs**.
+
+The signing certificate's **private key** never leaves the maker's machine. Before
+handing off, make sure the public `.cer` exists to give the administrator — run
+**P5.2a** now if needed to generate/locate it (the maker keeps the `.pfx`; only the
+public `.cer` goes to the admin). Substitute the deterministic display names so
+P5.0b later rehydrates the same apps:
+
+- App A: `ESS Copilot - ServiceNow Certificate ({INSTANCE_NAME})`
+- App B: `ESS Copilot - ServiceNow Service Account ({INSTANCE_NAME})`
+
+**Message:**
+
+You don't need the admin role yourself — an administrator with **Application
+Administrator**, **Cloud Application Administrator**, **Privileged Role
+Administrator**, or **Global Administrator** can register the certificate apps
+once. Send them these steps (all in https://entra.microsoft.com), plus the public
+`.cer` signing-certificate file I prepared:
+
+**App A — the ServiceNow resource app**
+1. **App registrations → New registration.** Name it
+   `ESS Copilot - ServiceNow Certificate ({INSTANCE_NAME})`, **Accounts in this
+   organizational directory only**, register. Copy its **Application (client) ID**.
+2. **Expose an API** — set the Application ID URI to
+   `api://<App A Application client ID>`, then **Add a scope** named
+   `user_impersonation`.
+3. **Expose an API → Add a client application** — add the Power Platform
+   ServiceNow connector client ID `c26b24aa-7874-4e06-ad55-7d06b1f79b63` and
+   authorize it for `user_impersonation`.
+4. **Token configuration → Add optional claim → Access** — add **aud**, **email**,
+   and **upn**.
+
+**App B — the service-account app**
+5. **App registrations → New registration.** Name it
+   `ESS Copilot - ServiceNow Service Account ({INSTANCE_NAME})`, same account type,
+   register. Copy its **Application (client) ID**.
+6. **Certificates & secrets → Certificates → Upload certificate** — upload the
+   public `.cer` file I provided (no private key, no password).
+7. If any added permission needs it, **API permissions → Grant admin consent for
+   your tenant**.
+
+When both apps exist and the certificate is uploaded, paste the two **Application
+(client) IDs** here and I'll verify and continue.
+
+**End message.**
+
+Collect the two identifiers with the `vscode_askQuestions` tool:
+
+```json
+[
+  {
+    "header": "ServiceNow resource app (App A)",
+    "question": "Paste App A's Application (client) ID (the 'ESS Copilot - ServiceNow Certificate' app).",
+    "allowFreeformInput": true
+  },
+  {
+    "header": "Service-account app (App B)",
+    "question": "Paste App B's Application (client) ID (the 'ESS Copilot - ServiceNow Service Account' app).",
+    "allowFreeformInput": true
+  }
+]
+```
+
+- If either ID is missing (empty / "not yet"), stop here — the administrator hasn't
+  finished. The maker can resume later; on resume P5.0 runs again.
+- On GUID-shaped answers, **persist** to `.local/connect/servicenow/config.json`
+  (merge): `certificate.appAClientId` = App A's ID and `certificate.appBClientId` =
+  App B's ID. Record `GATE_EVIDENCE = { "verifiedBy": "attested", "note":
+  "certificate apps created by delegated admin; App A/App B client IDs supplied by
+  maker for S5.1/S5.2" }`.
+
+Then continue to **P5.0b**, which re-resolves each app's object ID, scope GUID, and
+App B's service-principal object ID (`certificate.appBSpObjectId`) from those client
+IDs and the display names, and run P5.1c's `SN-ENTRA-CERT-001` verification as
+usual. `SN-ENTRA-CERT-001` is a read-only Graph query the maker can run without the
+admin role; if it can't be read (`MANUAL` / permission error), fall back to the
+checklist-updater §U.2 attestation using this delegated-admin handoff as evidence —
+never silently mark the row `done`.
 
 ---
 

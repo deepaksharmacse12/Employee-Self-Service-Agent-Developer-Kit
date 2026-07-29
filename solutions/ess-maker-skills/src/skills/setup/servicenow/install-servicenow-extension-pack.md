@@ -2,7 +2,7 @@
 # Skill 6 — Install the ServiceNow Extension Pack
 Role: **Environment Maker**. This skill installs the ServiceNow extension pack(s),
 binds ServiceNow and Dataverse connections, sets the portal URL used by returned
-links, verifies the ServiceNow cloud flows, and records rows **S6.1 through S6.6**.
+links, verifies the ServiceNow cloud flows, and records rows **S6.0 through S6.6**.
 Depends on skills 1–5 as applicable: the environment, Dataverse, ESS base agent,
 ServiceNow connection basics, and the selected ServiceNow sign-in path must already
 exist. Read the selected path from `.local/connect/servicenow/config.json` as
@@ -29,6 +29,7 @@ password to any config file.
 **Checkpoints this skill drives (run each in isolation):**
 | Step | Checkpoint | Gate |
 |------|------------|------|
+| S6.0 | ServiceNow + Dataverse connections created by the maker (no pack needed; health confirmed at S6.2 bind / S6.4 flow invoker) | attest |
 | S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | prog (maker installs, checkpoint verifies) |
 | S6.2 | ServiceNow connection reference bound by the maker (connection health confirmed when the maker connects the flow invoker at S6.4) | prog; auth type may require attestation |
 | S6.2 | `SN-DV-CONN-001` — Dataverse connection reference active | prog |
@@ -60,24 +61,29 @@ attest to steps they have not been shown.
 `SN-FLOW-*` is a data-driven family. Expand S6.3 into one checkbox per emitted flow
 result, using the checkpoint description as the visible flow label, and update each
 generated row immediately. Do not batch the flow updates.
-**Build order and resume.** Always run P6.0 first, then run P6.2's pack lookup
-before the first incomplete row. Both are idempotent and rehydrate state used by the
-connection, flow, and portal URL checks. After that, skip any row whose
-`setupStatus` state is already `done` — **except P6.3's connection bind, which you
+**Build order and resume.** Always run P6.0 first, then P6.1 (restore state) and
+P6.1a (ensure the shared ServiceNow + Dataverse connections exist), then run P6.2's
+pack lookup before the first incomplete row. These are idempotent and rehydrate
+state used by the connection, flow, and portal URL checks. After that, skip any row
+whose `setupStatus` state is already `done` — **except P6.3's connection bind, which
+you
 always re-verify: a pack reinstall can silently unbind a reference, so never trust a
 recorded S6.2 without re-confirming the ServiceNow reference is bound to an active
 connection.**
-The connection/flow chain runs in this order: **install (P6.2) → bind connection
-references (P6.3) → turn on flows (P6.4) → connect and share (P6.5) → portal URL
-(P6.6)**. A cloud flow can only hold activation once its connection references are
-bound, and the flow invoker binding must land on the activated flow definition, so
-this order is deliberate — do not reorder it.
+The connection/flow chain runs in this order: **create connections (P6.1a) →
+install (P6.2) → bind connection references (P6.3) → turn on flows (P6.4) → connect
+and share (P6.5) → portal URL (P6.6)**. Connection *creation* needs only the sign-in
+method from skill 4/5, so it runs **before** install; but each pack's connection
+*references* and cloud flows ship **inside** the pack, so binding and activation
+stay after install. A cloud flow can only hold activation once its connection
+references are bound, and the flow invoker binding must land on the activated flow
+definition, so this order is deliberate — do not reorder it.
 
 **State persistence.** Each step records its confirmed outcome into
 `.local/connect/servicenow/config.json` via the shared
 [`../shared/checklist-updater.md`](../shared/checklist-updater.md) and the explicit
 config merges shown in each step — the factual `packs` / `connections` / `status`
-artifacts plus the `setupStatus` / `productStatus` step(s) it owns (S6.1–S6.5).
+artifacts plus the `setupStatus` / `productStatus` step(s) it owns (S6.0–S6.6).
 Persist each row immediately, before continuing to the next step, so a resume
 continues from the first incomplete step.
 ---
@@ -128,6 +134,87 @@ Read `.local/config.json` read-only for `dataverseEndpoint` and `agent` details.
 not write ServiceNow setup fields into that file except for the legacy connection
 summary in P6.3d.
 ---
+## P6.1a — Create the ServiceNow and Dataverse connections *(completes S6.0)*
+Create the shared Power Platform **ServiceNow** connection (using the sign-in method
+from skill 4/5) and the **Dataverse** connection **now, before installing any pack**.
+Creating the connections up front does not need the extension pack — the pack only
+adds the *connection references* that P6.3 later binds to these connections — and it
+means both the install dialog (P6.2) and the reference bind (P6.3) reuse an existing
+connection instead of prompting for credentials again.
+Skip creation for any connection that already exists: check
+[Power Automate → Connections](https://make.powerautomate.com/connections), or
+`connections.servicenow.state` / `connections.dataverse.state` already at `created`
+or `bound` in config. Re-create only if a connection is missing or unhealthy.
+**Message:**
+
+Before we install anything, let's create the two connections your agent will reuse —
+one for ServiceNow and one for Microsoft Dataverse — so nothing has to
+re-authenticate later.
+
+1. Open [Power Apps → Connections](https://make.powerapps.com/connections), and make
+   sure the environment selector shows the environment we're setting up.
+2. Select **New connection**, search for **ServiceNow**, and create it using the
+   details for your sign-in method that I'll give you next.
+3. Select **New connection** again, search for **Microsoft Dataverse**, and create
+   it by signing in with your maker account.
+
+**End message.**
+Then show the ServiceNow connection values for the selected auth type.
+For `authType == "entra_user"`, require `entra.appClientId` (route back to the user
+sign-in playbook if missing) and show:
+**Message:**
+
+For the **ServiceNow** connection, use:
+
+| Field | Value |
+|-------|-------|
+| **Authentication Type** | Microsoft Entra ID User Login |
+| **Resource URI** | `{APP_CLIENT_ID}` |
+| **Instance Name** | `{INSTANCE_NAME}` |
+
+Sign in with your Microsoft work account when prompted.
+
+**End message.**
+For `authType == "entra_certificate"`, require `certificate.tenantId`,
+`certificate.appAClientId`, `certificate.appBClientId`, and
+`certificate.certPfxPath` (route back to the certificate playbook if any are
+missing; confirm the PFX exists). Open the certificate for the maker
+(`explorer.exe /select,"{CERT_PFX_PATH}"`) and show:
+**Message:**
+
+For the **ServiceNow** connection, use:
+
+| Field | Value |
+|-------|-------|
+| **Authentication Type** | Microsoft Entra ID OAuth using Certificate |
+| **Instance Name** | `{INSTANCE_NAME}` |
+| **Tenant ID** | `{TENANT_ID}` |
+| **Client ID** | `{APP_B_CLIENT_ID}` |
+| **Resource URI** | `{APP_A_CLIENT_ID}` |
+| **Client Secret** | Upload the `.pfx` certificate file I opened for you |
+| **Certificate password** | Use the password shown when the certificate was generated |
+
+**End message.**
+Confirm the maker created both connections (ask with the question tool, options
+**Yes, both are created** / **Not yet**). Only an explicit **Yes** completes this
+row — connection creation is a prerequisite for the P6.3 bind, so if the maker
+hasn't done it, leave S6.0 `in-progress` and continue only once they confirm.
+On confirmation, merge `.local/connect/servicenow/config.json`:
+```json
+{
+  "connections": {
+    "servicenow": { "state": "created", "authType": "{authType}" },
+    "dataverse": { "state": "created" }
+  }
+}
+```
+Then update **S6.0** via [`../shared/checklist-updater.md`](../shared/checklist-updater.md)
+with `STEP_ID="S6.0"`, `GATE="attest"`, `CHECKPOINT_RESULT=null`, and `ACK` set from
+the maker's explicit **Yes**. Persist `GATE_EVIDENCE` from P6.0. The connections'
+health is not verified here — `SN-DV-CONN-001` confirms Dataverse at the P6.3 bind
+and the ServiceNow connection is confirmed when the flow invoker connects at P6.5.
+Persist immediately, then continue to P6.2.
+---
 ## P6.2 — Install the extension pack and verify it landed (SN-PKG-001) *(completes S6.1)*
 First check whether the ServiceNow pack content is already installed, so resume does
 not ask the maker to reinstall.
@@ -150,6 +237,11 @@ S6.2–S6.6 rows, so ignore those rows here.
 ### P6.2-M — Install the pack in Copilot Studio
 Guide the maker through installing each in-scope pack in Copilot Studio using the
 values for the selected auth type below.
+**The ServiceNow and Dataverse connections already exist** (created in P6.1a), so
+when the install dialog asks for a connection, have the maker **select the existing
+connection** rather than re-entering credentials. The value tables below are the
+same values used to create them — use them only as a fallback if the dialog forces
+an inline connection.
 #### P6.2a — User sign-in install values
 Use only when `authType == "entra_user"`. Require `entra.appClientId`; if missing,
 route back to the user sign-in playbook.
@@ -289,15 +381,15 @@ Now I'll check that the ServiceNow connection is bound and active.
 Binding is a manual step the maker performs in Copilot Studio: each extension pack
 ships a **connection reference** that must be wired to an active connection (a single
 Dataverse write per reference — no re-authentication when a connection already
-exists). If the maker created the ServiceNow (and Dataverse) connection during
-installation, they still need to confirm each reference points at it. Show:
+exists). The ServiceNow and Dataverse connections were already created in **P6.1a**,
+so binding just points each pack reference at those existing connections. Show:
 **Message:**
 
 The ServiceNow connection isn't confirmed bound yet. In Copilot Studio, open your
-agent's **Connections**, find the ServiceNow connection reference, and create, bind,
-or re-authenticate it using the sign-in method we selected for this setup. Do the
-same for the **Microsoft Dataverse** connection reference. Then tell me and I'll
-re-check.
+agent's **Connections**, find the ServiceNow connection reference, and point it at
+the **ServiceNow connection you created earlier** — select the existing connection,
+no need to re-authenticate. Do the same for the **Microsoft Dataverse** connection
+reference. Then tell me and I'll re-check.
 
 **End message.**
 Wait for the maker to confirm both references are bound before continuing.

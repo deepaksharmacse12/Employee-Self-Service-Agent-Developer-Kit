@@ -106,18 +106,34 @@ the two Entra sign-in methods are offered.
 
 ### 6. ServiceNow extension pack and connection
 
-This group has three **sub-blocks**. The **product** sub-blocks — *ServiceNow HR*
-(6a) and *ServiceNow IT* (6b) — are **variant groups**, each rendered **only when
-that product is in `scope`** (like the mutually-exclusive auth groups 4 and 5): if
-only ITSM is selected, the HR sub-block is omitted entirely, and vice-versa. Their
-rows carry a `product:` tag (`hrsd` / `itsm`) and mirror under
-`productStatus.<product>` in `.local/connect/servicenow/config.json`. The **shared
-connection** sub-block (6c) is always rendered — its steps act on the single
-ServiceNow connection every pack shares and mirror under the flat `setupStatus`
-block. Routing rule: a row **with** a `product:` tag → `productStatus.<product>`; a
-row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/checklist-updater.md)).
+This group has four **sub-blocks**, run in order. The **create-connections**
+sub-block (6a) is always rendered and comes **first**: the maker creates the Power
+Platform ServiceNow and Dataverse connection objects up front, using the sign-in
+method from group 4/5, so nothing needs re-authenticating later. The **product**
+sub-blocks — *ServiceNow HR* (6b) and *ServiceNow IT* (6c) — are **variant groups**,
+each rendered **only when that product is in `scope`** (like the mutually-exclusive
+auth groups 4 and 5): if only ITSM is selected, the HR sub-block is omitted
+entirely, and vice-versa. Their rows carry a `product:` tag (`hrsd` / `itsm`) and
+mirror under `productStatus.<product>` in `.local/connect/servicenow/config.json`.
+The **shared connection** sub-block (6d) is always rendered — its steps **bind** the
+pack's connection references to the connections created in 6a, turn on the flows,
+and share the invoker, and mirror under the flat `setupStatus` block. Routing rule:
+a row **with** a `product:` tag → `productStatus.<product>`; a row **without** one →
+`setupStatus` (see [`checklist-updater.md`](../shared/checklist-updater.md)).
 
-#### 6a. ServiceNow HR (HRSD)
+Connection *creation* (6a) needs only the sign-in method and does **not** depend on
+the pack, so it runs before install. Connection-*reference* binding and flow
+activation (6d) act on artifacts that ship **inside** the pack, so they stay after
+the installs (6b/6c).
+
+#### 6a. Create connections
+
+<!-- Always rendered — the ServiceNow and Dataverse connection objects every pack shares are created here, before install. -->
+
+- [ ] **Create the ServiceNow and Dataverse connections** — Create the Power Platform ServiceNow connection (using your chosen sign-in method) and the Dataverse connection now, so the extension pack's references bind to existing connections later without re-authenticating.
+  <!-- id: S6.0 | role: Environment Maker | skill: skill-6 | automatable: No (maker creates; confirmed once bound at S6.2) | checkpoints: maker-attested (SN-DV-CONN-001 confirms at bind) | gate: attest | status: pending -->
+
+#### 6b. ServiceNow HR (HRSD)
 
 <!-- variant: scope.hrsd — rendered only when HRSD is in scope; omitted otherwise -->
 
@@ -128,7 +144,7 @@ row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/ch
 - [ ] **Set the HR Portal Base URL** — Point the HR (HRSD) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
   <!-- id: S6.6 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 
-#### 6b. ServiceNow IT (ITSM)
+#### 6c. ServiceNow IT (ITSM)
 
 <!-- variant: scope.itsm — rendered only when ITSM is in scope; omitted otherwise -->
 
@@ -138,11 +154,11 @@ row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/ch
 - [ ] **Set the IT Portal Base URL** — Point the IT (ITSM) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
   <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 
-#### 6c. Shared connection
+#### 6d. Shared connection
 
 <!-- Always rendered — one ServiceNow connection is shared by every installed pack. -->
 
-- [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow connection (with your chosen sign-in method) and the Dataverse connection so the agent can talk to ServiceNow and read its configuration.
+- [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow and Dataverse connection references (shipped by the pack) to the connections you created in 6a, so the agent can talk to ServiceNow and read its configuration.
   <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: No (maker binds; checkpoint verifies) | checkpoints: SN-DV-CONN-001; SN connection health confirmed when maker connects the flow invoker at S6.4 | gate: prog; else attest for auth-type | status: pending -->
 - [ ] **Turn on the ServiceNow flows** — Switch on the background flows that carry requests between the agent and ServiceNow.
   <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: No (maker turns on; checkpoint verifies) | checkpoints: SN-FLOW-* | gate: prog | status: pending -->

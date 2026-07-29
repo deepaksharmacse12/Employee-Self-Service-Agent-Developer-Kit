@@ -109,6 +109,7 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    - {m} Register the ServiceNow OIDC provider and system user
 
    **6. ServiceNow extension pack and connection**
+   - {m} Create the ServiceNow and Dataverse connections
    - {m} Install the ServiceNow extension pack
    - {m} Connect ServiceNow and Dataverse
    - {m} Turn on the ServiceNow flows
@@ -212,13 +213,15 @@ incomplete row.
 
 When it returns, go back to **Start** to resume at the next unverified row.
 
-### S6.1 through S6.6 — Install the ServiceNow extension pack and connect (skill-6)
+### S6.0 through S6.6 — Install the ServiceNow extension pack and connect (skill-6)
 
 Read `src/skills/setup/servicenow/install-servicenow-extension-pack.md` and follow
-it. That playbook role-gates (Environment Maker), guides the extension-pack install
-for each in-scope product and verifies it (`SN-PKG-001`, **S6.1**), guides the maker to
-bind the ServiceNow and Dataverse connections with the selected auth type
-(`SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
+it. That playbook role-gates (Environment Maker), has the maker create the shared
+ServiceNow and Dataverse connections up front (maker-attested, **S6.0**), guides the
+extension-pack install for each in-scope product and verifies it (`SN-PKG-001`,
+**S6.1**), guides the maker to bind the ServiceNow and Dataverse connection
+references to those connections (`SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow
+cloud flows (`SN-FLOW-*`,
 **S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
 (maker-attested, **S6.4**), shares the connection parameters onto the portal-owned
 reference (**S6.5**), and sets the Portal Base URL to `/sp` for each pack
@@ -226,9 +229,11 @@ reference (**S6.5**), and sets the Portal Base URL to `/sp` for each pack
 are attested by the maker, so a resume continues from
 whichever is incomplete.
 Every step is performed by the maker by hand and verified by the read-only
-flightcheck checkpoint (share is maker-attested). The chain runs
-install → bind → turn on flows → connect and share → portal, in that order, because a
-flow can only hold activation once its references are bound and the invoker binding
+flightcheck checkpoint (create and share are maker-attested). The chain runs
+create connections → install → bind → turn on flows → connect and share → portal, in
+that order: connection *creation* needs only the sign-in method (no pack), but the
+connection *references* and flows ship inside the pack, so a flow can only hold
+activation once its references are bound and the invoker binding
 must land on the activated flow. On resume it re-runs the role gate and the pack
 lookup first.
 

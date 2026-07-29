@@ -75,6 +75,37 @@ Normalize answers:
 
 ---
 
+## P3.2b — HRSD prerequisite: confirm `sn_hr_core` plugin
+
+Run this gate only when `scope.hrsd == true`.
+
+Ask:
+
+```json
+[
+  { "header": "HRSD plugin", "question": "Is the ServiceNow HR Core plugin (sn_hr_core) installed and active in this instance?", "options": [{ "label": "Yes", "recommended": true }, { "label": "No" }, { "label": "Not sure" }], "allowFreeformInput": false }
+]
+```
+
+- If **Yes**: continue.
+- If **No** or **Not sure**: show this and stop.
+
+**Message:**
+
+Before we continue with HRSD setup, install the ServiceNow HR Core plugin
+(`sn_hr_core`) in your ServiceNow instance.
+
+Open:
+`https://{instanceName}.service-now.com/now/app-manager/home/plugin/id/com.sn_hr_core/details`
+
+After the plugin is installed and active, tell me and I'll continue.
+
+**End message.**
+
+Do not proceed to P3.3 until this prerequisite is confirmed.
+
+---
+
 ## P3.2a — Disambiguate "I'm not sure"
 
 Ask one follow-up only when the maker selected "I'm not sure":

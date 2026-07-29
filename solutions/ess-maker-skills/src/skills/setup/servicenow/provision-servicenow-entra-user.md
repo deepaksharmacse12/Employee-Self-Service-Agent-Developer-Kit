@@ -88,8 +88,87 @@ The role is held if the returned role names include **Application Administrator*
 query errors for an unrelated reason (network, not signed in), follow the gate's
 retry-then-attest fallback — never assume pass.
 
-If `GATE_RESULT` is `"stop"`, **halt**. Otherwise carry `GATE_EVIDENCE` forward and
+If `GATE_RESULT` is `"stop"`:
+
+- If `GATE_REASON` is `"delegated"` (the maker can't hold the role but another
+  administrator will do the Entra work), **do not halt** — go to **S4.0a** and hand
+  that administrator the full sign-in-app runbook, then resume on the Application
+  (client) ID they return.
+- For any other `"stop"` reason, **halt**.
+
+Otherwise carry `GATE_EVIDENCE` forward and
 persist it when S4.1/S4.2 rows are updated.
+
+---
+
+## S4.0a — Delegated administrator runbook (Entra sign-in app)
+
+Reached only when the S4.0 gate returned `GATE_RESULT="stop"` with
+`GATE_REASON="delegated"`: the maker lacks the Entra role, so a consent-capable
+administrator performs the app registration and admin consent, then hands the
+maker the resulting **Application (client) ID** to continue.
+
+Give the administrator the complete step list in one message. Substitute
+`{SN_APP_DISPLAY_NAME}` (`ESS Copilot - ServiceNow OIDC ({SN_INSTANCE_NAME})`) so
+they name the app the way S4.0b later rehydrates it.
+
+**Message:**
+
+You don't need the admin role yourself — an administrator with **Application
+Administrator**, **Cloud Application Administrator**, **Privileged Role
+Administrator**, or **Global Administrator** can do the ServiceNow sign-in setup
+once. Send them these steps, all in the Microsoft Entra admin center
+(https://entra.microsoft.com):
+
+1. **App registrations → New registration.** Name it
+   `{SN_APP_DISPLAY_NAME}`, set **Supported account types** to *Accounts in this
+   organizational directory only*, and register it. Copy the **Application
+   (client) ID** — you'll paste it back here.
+2. **Token configuration → Add optional claim → Access** — add **email** and
+   **upn**.
+3. **Expose an API** — set the Application ID URI to
+   `api://<Application client ID>`, then **Add a scope** named
+   `user_impersonation` (admin + user consent enabled).
+4. **Expose an API → Add a client application** — add the Power Platform
+   ServiceNow connector client ID `c26b24aa-7874-4e06-ad55-7d06b1f79b63` and
+   authorize it for `user_impersonation`.
+5. **API permissions → Add a permission → Microsoft Graph → Delegated
+   permissions** — add **openid**, **profile**, and **User.Read**.
+6. **API permissions → Grant admin consent for your tenant** — approve the
+   consent prompt.
+
+When the app exists, paste its **Application (client) ID** here and I'll verify
+the configuration and continue.
+
+**End message.**
+
+Ask for the identifier with the `vscode_askQuestions` tool:
+
+```json
+[
+  {
+    "header": "ServiceNow sign-in app",
+    "question": "Paste the Application (client) ID of the ServiceNow sign-in app the administrator created.",
+    "options": [],
+    "allowFreeformInput": true
+  }
+]
+```
+
+- If the user has no ID yet (empty / "not yet"), stop here — the administrator
+  hasn't finished. They can resume this step later; on resume S4.0 runs again.
+- On a GUID-shaped answer, **persist** it to `.local/connect/servicenow/config.json`
+  (merge): `entra.appId` and `entra.appClientId` = the pasted ID. Record the
+  handoff as `GATE_EVIDENCE = { "verifiedBy": "attested", "note": "Entra sign-in
+  app created by delegated admin; client ID supplied by maker for S4.1/S4.2" }`.
+
+Then continue to **S4.0b** (which re-resolves the object ID, App ID URI, and scope
+GUID from the supplied `entra.appId`) and run S4.1's verification checkpoint
+`SN-ENTRA-SCOPE-001` and S4.2's `SN-ENTRA-CONSENT-001` as usual. These checkpoints
+are read-only Graph queries the maker can run without the admin role. If a
+checkpoint can't be read (`MANUAL` / permission error), fall back to the
+checklist-updater §U.2 attestation using the delegated-admin handoff as evidence —
+never silently mark the row `done`.
 
 ---
 

@@ -18,7 +18,18 @@ not rephrase, add commentary, or tell the user what tools you are calling.
   caller holds the role (the calling file supplies it; examples below).
 
 **Outputs to the calling file:**
-- `GATE_RESULT` — `"pass"` or `"stop"`. On `"stop"`, the calling file must halt.
+- `GATE_RESULT` — `"pass"` or `"stop"`. On `"stop"`, the calling file must halt
+  **unless** it explicitly handles a specific `GATE_REASON` (see below).
+- `GATE_REASON` — *(set only when `GATE_RESULT = "stop"`)* why the gate stopped, so
+  a caller can tailor the follow-up:
+  - `"acquiring_role"` — the user will obtain the role themselves and re-run.
+  - `"delegated"` — another admin will perform this role-gated step.
+  - `"declined"` — no path forward (no role, no delegate, or attestation refused).
+
+  When `GATE_REASON = "delegated"`, a caller MAY, instead of halting, hand the
+  delegated administrator the full manual runbook for the step and resume once the
+  admin returns the resulting identifier (e.g. an Application (client) ID). A
+  caller that does not implement such a runbook simply halts on any `"stop"`.
 - `GATE_EVIDENCE` — an object recording how the gate was satisfied; the caller
   persists it under `setupStatus["{STEP_ID}"].verifiedBy` in
   `.local/connect/workday/config.json` (see `config-schema.md`):
@@ -123,7 +134,7 @@ Use the `vscode_askQuestions` tool:
 
   **End message.**
 
-  Set `GATE_RESULT = "stop"` and return.
+  Set `GATE_RESULT = "stop"`, `GATE_REASON = "acquiring_role"`, and return.
 
 - If **No**: continue to question 3.
 
@@ -152,7 +163,9 @@ Use the `vscode_askQuestions` tool:
 
   **End message.**
 
-  Set `GATE_RESULT = "stop"` and return.
+  Set `GATE_RESULT = "stop"`, `GATE_REASON = "delegated"`, and return. (A caller
+  that implements a delegated-admin runbook uses this reason to hand over the full
+  step list and resume on the returned identifier instead of halting.)
 
 - If **No**:
 
@@ -163,7 +176,7 @@ Use the `vscode_askQuestions` tool:
 
   **End message.**
 
-  Set `GATE_RESULT = "stop"` and return.
+  Set `GATE_RESULT = "stop"`, `GATE_REASON = "declined"`, and return.
 
 For non-Entra roles, keep the existing stop behavior:
 
@@ -175,7 +188,7 @@ this step again.
 
 **End message.**
 
-- Set `GATE_RESULT = "stop"`.
+- Set `GATE_RESULT = "stop"`, `GATE_REASON = "declined"`.
 - Return to the calling file. **The caller must halt — do not proceed.**
 
 **If the query itself fails** for an unrelated reason (network, not logged in):
@@ -232,7 +245,7 @@ that role to run it, then come back and continue.
 
 **End message.**
 
-- Set `GATE_RESULT = "stop"`.
+- Set `GATE_RESULT = "stop"`, `GATE_REASON = "declined"`.
 - Return to the calling file. **The caller must halt — do not proceed.**
 
 > An attested `"pass"` records that the role was **claimed**, not directory-proven.

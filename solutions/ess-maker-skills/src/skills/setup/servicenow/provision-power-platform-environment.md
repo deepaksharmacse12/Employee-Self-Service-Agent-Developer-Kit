@@ -11,6 +11,12 @@ Every **Message** block is the exact text to show the user. Copy it verbatim. Do
 not rephrase, add commentary, or tell the user what tools you are calling or what
 files you are reading.
 
+Use ServiceNow setup paths throughout: config `.local/connect/servicenow/config.json`
+and working checklist `.local/setup/servicenow/tasks.md`. Apply
+[`../shared/checklist-updater.md`](../shared/checklist-updater.md) with those paths —
+every S1.1 / S1.2 mirror write (including capacity results, pass or fail) lands in
+the ServiceNow config, not the Workday one.
+
 **Checkpoints this skill drives (run each in isolation):**
 
 - `ENV-001` — Power Platform environment exists *(reuse)*
@@ -170,7 +176,13 @@ Branch on the result:
   [`checklist-updater.md`](../shared/checklist-updater.md) with
   `STEP_ID="S1.2"`, `GATE="prog"`, `NEW_STATE="done"`,
   `CHECKPOINT_RESULT="PASSED"`. Go to **Done**.
-- **`FAILED` / `WARNING`** (no capacity, or a billing-risk warning):
+- **`FAILED` / `WARNING`** (no capacity, or a billing-risk warning): persist the
+  state **now**, before showing the message, so the config records that capacity
+  isn't ready even if setup stops here. Update **S1.2** via
+  [`checklist-updater.md`](../shared/checklist-updater.md) with `STEP_ID="S1.2"`,
+  `GATE="prog"`, and `CHECKPOINT_RESULT` set to the result — `FAILED` (the updater
+  records it as `blocked`) or `WARNING` (recorded as `in-progress`). This writes
+  the `setupStatus["S1.2"]` mirror into `.local/connect/servicenow/config.json`.
 
   **Message:**
 
@@ -182,8 +194,10 @@ Branch on the result:
   **End message.**
 
   After the user confirms, re-run `--checkpoint ENV-CAPACITY-001` (this is the
-  verification gate — never accept "done" without a re-check). When it passes,
-  update S1.2 as `done` (`GATE="prog"`, `CHECKPOINT_RESULT="PASSED"`).
+  verification gate — never accept "done" without a re-check). While it is not yet
+  passing, re-update S1.2 with the latest `CHECKPOINT_RESULT` (keeping the mirror
+  current). When it passes, update S1.2 as `done` (`GATE="prog"`,
+  `CHECKPOINT_RESULT="PASSED"`).
 - **`MANUAL`** (capacity could not be read programmatically — the licensing API
   was unavailable or your role can't read it). This row falls back to
   **attestation**:
