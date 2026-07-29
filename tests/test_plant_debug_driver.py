@@ -135,3 +135,127 @@ def test_saved_provenance_ends_with_newline(tmp_path):
                            specs=[PlantSpec("a", "n", "DBG x")])
     save_provenance(prov, path)
     assert path.read_text(encoding="utf-8").endswith("}\n")
+
+
+# --------------------------------------------------------------------------- #
+# AuthDataverseClient uses the real botcomponent field name (`data`, not
+# `content`) — a regression guard for the live-only field-name bug that the pure
+# FakeDataverse tests could not catch (the topic body lives in the `data`
+# column; get/patch against `content` silently read/wrote nothing).
+# --------------------------------------------------------------------------- #
+
+def test_get_topic_selects_and_reads_data_field(monkeypatch):
+    import auth as auth_mod
+    from plant_debug import AuthDataverseClient
+
+    captured = {}
+
+    def fake_query_all(env_url, token, entity_set, select, filter_expr=None):
+        captured["entity_set"] = entity_set
+        captured["select"] = select
+        captured["filter"] = filter_expr
+        return [{"botcomponentid": "rec-1", "data": "TOPIC_BODY"}]
+
+    monkeypatch.setattr(auth_mod, "query_all", fake_query_all)
+    client = AuthDataverseClient("https://x.crm.dynamics.com", "tok")
+    rec_id, body = client.get_topic("msdyn_x.topic.Foo")
+
+    assert rec_id == "rec-1"
+    assert body == "TOPIC_BODY"
+    assert captured["entity_set"] == "botcomponents"
+    # The topic body must be selected via the `data` column, never `content`.
+    assert "data" in captured["select"]
+    assert "content" not in captured["select"]
+
+
+def test_patch_topic_writes_data_field(monkeypatch):
+    import auth as auth_mod
+    from plant_debug import AuthDataverseClient
+
+    captured = {}
+
+    def fake_update_record(env_url, token, entity_set, record_id, data):
+        captured["entity_set"] = entity_set
+        captured["record_id"] = record_id
+        captured["payload"] = data
+
+    monkeypatch.setattr(auth_mod, "update_record", fake_update_record)
+    client = AuthDataverseClient("https://x.crm.dynamics.com", "tok")
+    client.patch_topic("rec-1", "NEW_BODY")
+
+    assert captured["entity_set"] == "botcomponents"
+    assert captured["record_id"] == "rec-1"
+    # The topic body must be PATCHed into the `data` column, never `content`.
+    assert captured["payload"] == {"data": "NEW_BODY"}
+    assert "content" not in captured["payload"]
+
+
+# --------------------------------------------------------------------------- #
+# resolve_topic_schema: accept a friendly filename/stem/display-name and map it
+# to the immutable botcomponent schemaname, so a maker does not have to hand-type
+# `msdyn_copilotforemployeeselfservicehr.topic.<Stem>`.
+# --------------------------------------------------------------------------- #
+
+_COMPONENT_MAP = {
+    "topics/servicenow-hrsd-get-cases-by-status.mcs.yml": {
+        "botcomponentid": "aaaa",
+        "schemaname": "msdyn_x.topic.ServiceNowHRSDGetCasesByStatus",
+        "name": "ServiceNow HRSD Get Cases By Status",
+    },
+    "topics/workday-get-passports.mcs.yml": {
+        "botcomponentid": "bbbb",
+        "schemaname": "msdyn_x.topic.WorkdayGetPassports",
+        "name": "Workday Get Passports",
+    },
+}
+
+
+def test_resolve_full_schemaname_passes_through():
+    from plant_debug import resolve_topic_schema
+    assert resolve_topic_schema("msdyn_x.topic.Foo", {}) == "msdyn_x.topic.Foo"
+
+
+def test_resolve_by_stem():
+    from plant_debug import resolve_topic_schema
+    assert resolve_topic_schema(
+        "servicenow-hrsd-get-cases-by-status", _COMPONENT_MAP
+    ) == "msdyn_x.topic.ServiceNowHRSDGetCasesByStatus"
+
+
+def test_resolve_by_filename_with_extension():
+    from plant_debug import resolve_topic_schema
+    assert resolve_topic_schema(
+        "servicenow-hrsd-get-cases-by-status.mcs.yml", _COMPONENT_MAP
+    ) == "msdyn_x.topic.ServiceNowHRSDGetCasesByStatus"
+
+
+def test_resolve_by_full_map_key():
+    from plant_debug import resolve_topic_schema
+    assert resolve_topic_schema(
+        "topics/servicenow-hrsd-get-cases-by-status.mcs.yml", _COMPONENT_MAP
+    ) == "msdyn_x.topic.ServiceNowHRSDGetCasesByStatus"
+
+
+def test_resolve_by_display_name_case_insensitive():
+    from plant_debug import resolve_topic_schema
+    assert resolve_topic_schema(
+        "workday get passports", _COMPONENT_MAP
+    ) == "msdyn_x.topic.WorkdayGetPassports"
+
+
+def test_resolve_not_found_raises_lookup_error():
+    from plant_debug import resolve_topic_schema
+    with pytest.raises(LookupError) as exc:
+        resolve_topic_schema("no-such-topic", _COMPONENT_MAP)
+    assert "no-such-topic" in str(exc.value)
+
+
+def test_resolve_ambiguous_raises_value_error():
+    from plant_debug import resolve_topic_schema
+    ambiguous = {
+        "topics/foo.mcs.yml": {"schemaname": "msdyn_x.topic.FooA", "name": "A"},
+        "variables/foo.mcs.yml": {"schemaname": "msdyn_x.component.FooB", "name": "B"},
+    }
+    with pytest.raises(ValueError) as exc:
+        resolve_topic_schema("foo", ambiguous)
+    assert "ambiguous" in str(exc.value).lower()

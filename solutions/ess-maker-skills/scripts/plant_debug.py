@@ -104,6 +104,75 @@ def load_provenance(path: Path = PROVENANCE_PATH):
     )
 
 
+def _map_stem(file_key: str) -> str:
+    """The bare stem of a component-map key: 'topics/foo.mcs.yml' -> 'foo'."""
+    base = file_key.rsplit("/", 1)[-1]
+    for suffix in (".mcs.yml", ".mcs.yaml", ".yml", ".yaml"):
+        if base.lower().endswith(suffix):
+            return base[: -len(suffix)]
+    return base
+
+
+def resolve_topic_schema(topic: str, component_map: dict) -> str:
+    """Resolve a user-supplied topic identifier to its immutable schemaname.
+
+    A maker knows a topic by its file (``servicenow-hrsd-get-cases-by-status``),
+    not by the immutable ``msdyn_...topic.<Stem>`` schemaname the Dataverse write
+    needs. This maps the friendly form to the schemaname via the agent's
+    ``.component-map.json``. Accepts, in order:
+
+      * a value already containing ``.topic.``/``.component.`` -> returned as-is
+        (already a schemaname; works without a map, so offline plants still run);
+      * a full map key (``topics/foo.mcs.yml``);
+      * a bare filename (``foo.mcs.yml``) or stem (``foo``);
+      * a display name (the map entry's ``name``), case-insensitive.
+
+    Raises ``LookupError`` when nothing matches and ``ValueError`` when a stem is
+    ambiguous (same basename under two folders) — both with an actionable message.
+    """
+    if ".topic." in topic or ".component." in topic:
+        return topic
+
+    needle = topic.strip()
+    low = needle.lower()
+    matches: list[str] = []
+    for file_key, entry in (component_map or {}).items():
+        schema = (entry or {}).get("schemaname")
+        if not schema:
+            continue
+        candidates = {
+            file_key.lower(),
+            file_key.rsplit("/", 1)[-1].lower(),
+            _map_stem(file_key).lower(),
+        }
+        name = (entry or {}).get("name")
+        if name:
+            candidates.add(name.lower())
+        if low in candidates:
+            matches.append(schema)
+
+    unique = sorted(set(matches))
+    if len(unique) == 1:
+        return unique[0]
+    if not unique:
+        raise LookupError(
+            f"no topic matching {topic!r} in .component-map.json. Pass the file "
+            "stem (e.g. 'servicenow-hrsd-get-cases-by-status'), the display name, "
+            "or the full schemaname.")
+    raise ValueError(
+        f"{topic!r} is ambiguous — it matches multiple components: "
+        f"{', '.join(unique)}. Pass the full schemaname to disambiguate.")
+
+
+def _load_active_component_map() -> dict:
+    """Load the active agent's ``.component-map.json`` (via .local/config.json)."""
+    from auth import load_config
+    cfg = load_config()
+    agent_dir = cfg["agent"]["folder"]
+    map_path = Path(agent_dir) / ".component-map.json"
+    return json.loads(map_path.read_text(encoding="utf-8"))
+
+
 class AuthDataverseClient:
     """DataverseClient backed by the maker kit's auth.py access layer.
 
@@ -123,18 +192,18 @@ class AuthDataverseClient:
         escaped = schemaname.replace("'", "''")
         rows = query_all(
             self._env_url, self._token, self._TOPIC_ENTITY_SET,
-            select="botcomponentid,content",
+            select="botcomponentid,data",
             filter_expr=f"schemaname eq '{escaped}'",
         )
         if not rows:
             raise LookupError(f"no botcomponent found with schemaname {schemaname!r}")
         row = rows[0]
-        return row["botcomponentid"], row.get("content") or ""
+        return row["botcomponentid"], row.get("data") or ""
 
     def patch_topic(self, record_id: str, content: str) -> None:
         from auth import update_record
         update_record(self._env_url, self._token, self._TOPIC_ENTITY_SET,
-                      record_id, {"content": content})
+                      record_id, {"data": content})
 
     def publish_bot(self, bot_id: str) -> None:
         from auth import publish_bot as _publish
@@ -145,7 +214,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Plant a DBG SendActivity node into a deployed topic and publish.")
     parser.add_argument("--topic", required=True,
-                        help="schemaname of the topic (botcomponent) to instrument")
+                        help="topic to instrument: the file stem "
+                             "(e.g. 'servicenow-hrsd-get-cases-by-status'), the "
+                             "display name, or the full schemaname")
     parser.add_argument("--after", required=True,
                         help="action id to plant the DBG node after")
     parser.add_argument("--activity", required=True,
@@ -163,6 +234,18 @@ def main(argv=None) -> int:
     bot_id = config["agent"]["botId"]
     node_id = args.node_id or f"sendActivity_DBG_{args.after}"
 
+    # Resolve a friendly topic identifier (file stem / display name) to the
+    # immutable schemaname the Dataverse write needs. A value that already looks
+    # like a schemaname passes straight through, so offline use is unaffected.
+    topic_schema = args.topic
+    if ".topic." not in args.topic and ".component." not in args.topic:
+        try:
+            topic_schema = resolve_topic_schema(args.topic, _load_active_component_map())
+            print(f"Resolved topic {args.topic!r} -> {topic_schema}")
+        except (LookupError, ValueError) as exc:
+            print(f"Could not resolve topic: {exc}")
+            return 1
+
     if PROVENANCE_PATH.exists():
         print(f"Provenance already exists at {PROVENANCE_PATH}. Run strip_debug.py "
               "first (an un-stripped plant is still live in your topic).")
@@ -171,7 +254,7 @@ def main(argv=None) -> int:
     if not args.yes:
         resp = input(
             f"Plant DBG node {node_id!r} after {args.after!r} in topic "
-            f"{args.topic!r} and publish? (yes/no): ").strip().lower()
+            f"{topic_schema!r} and publish? (yes/no): ").strip().lower()
         if resp not in ("yes", "y"):
             print("Plant cancelled.")
             return 0
@@ -180,7 +263,7 @@ def main(argv=None) -> int:
     client = AuthDataverseClient(env_url, token)
     spec = PlantSpec(after_action_id=args.after, node_id=node_id, activity=args.activity)
 
-    provenance = plant_debug_nodes_live(client, args.topic, [spec])
+    provenance = plant_debug_nodes_live(client, topic_schema, [spec])
     save_provenance(provenance)
     print(f"  Planted {node_id!r}; provenance saved to {PROVENANCE_PATH}.")
 
