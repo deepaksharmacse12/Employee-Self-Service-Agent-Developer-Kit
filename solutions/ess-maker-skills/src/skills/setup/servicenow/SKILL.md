@@ -58,13 +58,20 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    by copying the template `src/skills/setup/servicenow/tasks.md`, dropping the
    auth-path group that does not match `authType` (see **Auth path**; if `authType`
    is not set yet, keep both variant groups out of the rendered copy for now and add
-   the matching one once S3.1 runs). Do not hand-edit its status markers — the shared
+   the matching one once S3.1 runs), and dropping each **group 6 product sub-block**
+   (6a HR, 6b IT) whose product is not in `scope` — keep only the always-on **6c.
+   Shared connection** sub-block until `scope` is known, then add the in-scope
+   product sub-block(s). Do not hand-edit its status markers — the shared
    checklist-updater writes them.
 
-2. **Resume point.** Read `setupStatus` in `.local/connect/servicenow/config.json`
-   (the durable source of truth; the tasks file is only the view). If the file or the
-   `setupStatus` key is missing, treat every row as `pending`. A row counts as
-   complete only when `setupStatus["{Step}"].state` is `"done"`.
+2. **Resume point.** Read `setupStatus` **and** `productStatus` in
+   `.local/connect/servicenow/config.json` (the durable source of truth; the tasks
+   file is only the view). If the file or a key is missing, treat every row as
+   `pending`. A **shared** row counts as complete only when
+   `setupStatus["{Step}"].state` is `"done"`; a **per-product** row (the install
+   `S6.1` and portal `S6.6`, one per in-scope product) counts as complete only when
+   `productStatus["{product}"]["{Step}"].state` is `"done"`. A product is fully set
+   up only when the shared steps **and** that product's own steps are all `done`.
 
 3. **Show the checklist, then find where to resume.** Determine each item's state
    from `setupStatus`: ✅ = `done`, 🔄 = `in-progress`, ⛔ = `blocked`, ⬜ =

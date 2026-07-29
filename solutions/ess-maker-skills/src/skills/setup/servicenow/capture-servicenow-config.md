@@ -27,9 +27,11 @@ After every run, immediately render the result per [`../shared/checklist-updater
 
 Read `.local/connect/servicenow/config.json` if it exists; otherwise start with an empty object. Every write in this skill is a merge: preserve unknown fields and other skills' data.
 
-If `.local/setup/servicenow/tasks.md` does not exist, render it from the template: copy groups 1, 2, 3, 6, and 7; omit groups 4 and 5 until `authType` is known; preserve all hidden comments. Do not hand-edit row status markers — row updates go through the shared checklist-updater.
+If `.local/setup/servicenow/tasks.md` does not exist, render it from the template: copy groups 1, 2, 3, 6, and 7; omit groups 4 and 5 until `authType` is known, and within group 6 omit both product sub-blocks (6a HR, 6b IT) until `scope` is known — keep only the always-on **6c. Shared connection** sub-block for now; preserve all hidden comments. Do not hand-edit row status markers — row updates go through the shared checklist-updater.
 
-If the working checklist already exists, leave it alone except for the auth-path insertion in P3.4 and row updates through the updater.
+When rendering **group 6**, its two product sub-blocks — **6a. ServiceNow HR** and **6b. ServiceNow IT** — are variant groups, exactly like the mutually-exclusive auth groups 4/5: render **6a only when `scope.hrsd`** is true and **6b only when `scope.itsm`** is true; omit a product's sub-block entirely when it is out of scope. The **6c. Shared connection** sub-block is always rendered. Scope is captured in P3.2, so at the first render (P3.0, before scope is known) keep **both** product sub-blocks out — like the auth groups — and add the in-scope one(s) once P3.2 records `scope`. Never substitute or expand placeholders; the HR and IT rows are authored explicitly in the template.
+
+If the working checklist already exists, leave it alone except for the auth-path insertion (P3.4), the in-scope product sub-block insertion (P3.4), and row updates through the updater.
 
 ---
 
@@ -114,11 +116,12 @@ Merge these fields into `.local/connect/servicenow/config.json`:
   "packs": {},
   "connections": {},
   "setupStatus": {},
+  "productStatus": {},
   "stepStatus": {}
 }
 ```
 
-Set `packs.itsm = "pending"` and/or `packs.hrsd = "pending"` from scope unless a more advanced value already exists. Keep `setupStatus` as the setup source of truth and preserve `stepStatus` for legacy compatibility if already present.
+Set `packs.itsm = "pending"` and/or `packs.hrsd = "pending"` from scope unless a more advanced value already exists. Keep `setupStatus` (shared steps) and `productStatus` (per-product steps: install / portal, keyed by `hrsd` / `itsm`) as the setup source of truth and preserve `stepStatus` for legacy compatibility if already present.
 
 Run:
 
@@ -142,9 +145,16 @@ Once `authType` is set, update `.local/setup/servicenow/tasks.md` from the canon
 
 This makes the selected path durable even if a later row stops.
 
----
+Also render the in-scope **group 6 product sub-blocks** here (scope is known once P3.2 recorded it):
 
-## P3.5 — Record S3.1 (prog gate)
+- `scope.hrsd == true` → render sub-block **6a. ServiceNow HR** exactly; otherwise omit it.
+- `scope.itsm == true` → render sub-block **6b. ServiceNow IT** exactly; otherwise omit it.
+- Always keep **6c. Shared connection**. Render sub-blocks in template order (6a, 6b, 6c).
+- If a stale out-of-scope product sub-block exists, remove it. Preserve existing status markers and hidden comments for all rows that stay.
+
+This makes the in-scope products durable even if a later row stops.
+
+---
 
 When `SN-CONFIG-001` passed, show:
 

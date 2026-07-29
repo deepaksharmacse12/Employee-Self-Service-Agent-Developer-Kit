@@ -444,3 +444,75 @@ def test_main_start_and_status_mutually_exclusive(capsys):
 def test_main_start_rejects_dry_run(capsys):
     assert iep.main(["--start", "--dry-run"]) == 1
     assert "cannot be combined" in capsys.readouterr().out
+
+
+# ── _persist_install_state: per-product S6.1 into productStatus ───────
+import os as _os
+import types as _types
+
+
+def _persist_args(dry_run=False, start=False):
+    return _types.SimpleNamespace(dry_run=dry_run, start=start)
+
+
+def _read_sn_config():
+    import connect_state
+    return connect_state.load("servicenow")
+
+
+def test_persist_records_s61_per_in_scope_product(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    iep._persist_install_state(
+        {"scope": {"hrsd": True, "itsm": True}},
+        _persist_args(),
+        {"exit_code": 0, "action": "succeeded"})
+    cfg = _read_sn_config()
+    assert cfg["packs"] == {"hrsd": "installed", "itsm": "installed"}
+    ps = cfg["productStatus"]
+    assert ps["hrsd"]["S6.1"]["state"] == "done"
+    assert ps["itsm"]["S6.1"]["state"] == "done"
+    assert ps["hrsd"]["S6.1"]["checkpoint"] == "SN-001"
+    assert "HRSD" in ps["hrsd"]["S6.1"]["note"]
+    assert "ITSM" in ps["itsm"]["S6.1"]["note"]
+    # No flat S6.1 in the shared setupStatus block — install is per-product now.
+    assert "S6.1" not in cfg.get("setupStatus", {})
+
+
+def test_persist_records_only_in_scope_product(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    iep._persist_install_state(
+        {"scope": {"hrsd": False, "itsm": True}},
+        _persist_args(),
+        {"exit_code": 0, "action": "install"})
+    ps = _read_sn_config()["productStatus"]
+    assert set(ps) == {"itsm"}
+
+
+@pytest.mark.parametrize("result", [
+    {"exit_code": 1, "action": "succeeded"},   # non-zero exit
+    {"exit_code": 0, "action": "start"},        # fire-only, not a completed install
+])
+def test_persist_skips_when_not_a_confirmed_install(tmp_path, monkeypatch, result):
+    monkeypatch.chdir(tmp_path)
+    import connect_state
+    iep._persist_install_state({"scope": {"hrsd": True, "itsm": True}},
+                               _persist_args(), result)
+    assert not _os.path.exists(connect_state.config_path("servicenow"))
+
+
+def test_persist_skips_on_dry_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import connect_state
+    iep._persist_install_state({"scope": {"hrsd": True, "itsm": True}},
+                               _persist_args(dry_run=True),
+                               {"exit_code": 0, "action": "succeeded"})
+    assert not _os.path.exists(connect_state.config_path("servicenow"))
+
+
+def test_persist_skips_when_no_product_in_scope(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import connect_state
+    iep._persist_install_state({"scope": {"hrsd": False, "itsm": False}},
+                               _persist_args(),
+                               {"exit_code": 0, "action": "succeeded"})
+    assert not _os.path.exists(connect_state.config_path("servicenow"))

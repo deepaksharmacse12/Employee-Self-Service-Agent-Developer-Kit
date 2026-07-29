@@ -117,7 +117,8 @@ Restore:
 - `entra.appClientId` for `entra_user`.
 - `certificate.tenantId`, `certificate.appAClientId`, `certificate.appBClientId`,
   and `certificate.certPfxPath` for `entra_certificate`.
-- Existing `packs`, `connections`, `portalBaseUrl`, and `setupStatus`.
+- Existing `packs`, `connections`, `portalBaseUrl`, `setupStatus`, and
+  `productStatus` (per-product install / portal state, keyed by `hrsd` / `itsm`).
 If `authType` is missing or not supported, stop and route back to the selected
 sign-in setup skill. Do not offer legacy auth in this playbook.
 Build the in-scope pack list in this order: ITSM when `scope.itsm` is true, then
@@ -408,16 +409,23 @@ Then show:
 The ServiceNow extension pack content is installed for the products in scope.
 
 **End message.**
+`S6.1` is a **per-product** row: update it **once per in-scope product** (HRSD /
+ITSM), passing `PRODUCT` (`"hrsd"` / `"itsm"`) to
+[`../shared/checklist-updater.md`](../shared/checklist-updater.md) so each product's
+state mirrors under `productStatus.<product>.S6.1` (not the shared `setupStatus`).
 The gate depends on how the pack was installed:
 - **`installMode == "automated"`** — the kit performed and verified the install, so
-  this is a programmatic gate. Update S6.1 with `GATE="prog"` and the pack checkpoint
-  result; no separate maker acknowledgement is required.
+  this is a programmatic gate. Update S6.1 for each in-scope product with
+  `GATE="prog"` and the pack checkpoint result; no separate maker acknowledgement is
+  required.
 - **`installMode == "manual"`** — this is a manual gate. Even with a passing
   checkpoint, ask for the explicit acknowledgement required by
-  [`../shared/checklist-updater.md`](../shared/checklist-updater.md). Update S6.1 with
-  `GATE="manual"`, the pack checkpoint result, and `ACK=true` only when the maker
-  confirms.
-Persist immediately before continuing.
+  [`../shared/checklist-updater.md`](../shared/checklist-updater.md). Update S6.1 for
+  each in-scope product with `GATE="manual"`, the pack checkpoint result, and
+  `ACK=true` only when the maker confirms.
+Persist immediately before continuing. (The `install_extension_pack.py` recorder
+already writes `productStatus.<product>.S6.1` for a confirmed headless install; the
+merges here remain the source of truth for gate evidence.)
 ---
 ## P6.3 — Bind the ServiceNow and Dataverse connections (SN-DV-CONN-001) *(completes S6.2)*
 If the live status block (P6.2-A.1) is active, flip the **Bind connections** row to
@@ -732,9 +740,19 @@ python scripts/flightcheck/cli.py --scope servicenow --no-open
 ```
 Read the `SN-BASEURL-001` row from the results. It is emitted by the ServiceNow
 scope run and is also a registered checkpoint, so you can verify it directly with
-`python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001 --no-open`. `PASSED`
-updates S6.6 with `GATE="prog"`. `FAILED`,
-`NotConfigured`, or partial coverage requires attestation after the rendered result:
+`python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001 --no-open`.
+
+`S6.6` is a **per-product** row: update it **once per in-scope product** (HRSD /
+ITSM), passing `PRODUCT` (`"hrsd"` / `"itsm"`) to
+[`../shared/checklist-updater.md`](../shared/checklist-updater.md) so each product's
+state mirrors under `productStatus.<product>.S6.6`. The checkpoint verifies every
+in-scope product at once and its result lists each product it found `set` vs
+`empty`, so decompose it per product:
+- `PASSED` → the URL is set for every in-scope product; update S6.6 for each with
+  `GATE="prog"`.
+- `FAILED` / `NotConfigured` / partial coverage → update S6.6 to `done` (`GATE="prog"`)
+  for each product the result reports as **set**, and leave the products it reports as
+  **empty** `in-progress`; requires attestation after the rendered result:
 **Message:**
 
 I can only partially verify that portal setting from the kit. Please confirm you
@@ -743,9 +761,9 @@ installed.
 
 **End message.**
 Use the question tool with options **Yes, it's set** and **Not yet**. On **Yes**,
-update S6.6 with attested evidence and `ACK=true`. On **Not yet**, leave S6.6
-`in-progress`, return to the portal setting instructions, and re-check or re-attest
-after they finish.
+update S6.6 for the pending product(s) with attested evidence and `ACK=true`. On
+**Not yet**, leave those products' S6.6 `in-progress`, return to the portal setting
+instructions, and re-check or re-attest after they finish.
 Always include this note after S6.6 is recorded:
 **Message:**
 
@@ -756,7 +774,9 @@ opening in the portal.
 **End message.**
 ---
 ## Done
-When S6.1, S6.2, every generated S6.3 flow row, S6.4, S6.5, and S6.6 are `done`, return
+When S6.1 **and** S6.6 are `done` for **every in-scope product** (in
+`productStatus.<product>`), and the shared S6.2, every generated S6.3 flow row, S6.4,
+and S6.5 are `done` (in `setupStatus`), return
 control to the setup router (`SKILL.md`) to resume at validation and handoff. Do not
 run the end-to-end ServiceNow prompt test here; that belongs to the separate
 `validate-and-handoff.md` playbook.

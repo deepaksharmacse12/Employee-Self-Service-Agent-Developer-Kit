@@ -93,6 +93,38 @@ view of the same data.
   than storing an empty string; writers must merge it without clobbering an
   existing note with a blank value.
 
+### Per-product status fields (`productStatus`, ServiceNow multi-product)
+
+ServiceNow can install **both** products on one agent (HRSD **and** ITSM). A few
+setup steps are per-product rather than shared: the extension-pack install
+(`S6.1`), the Portal Base URL (`S6.6`), and future HR-only steps (e.g. the
+`sn_hr_core` plugin). Those mirror under a `productStatus` object keyed by the
+scope short name (`hrsd` / `itsm`), then by Step ID — same entry shape as
+`setupStatus`. The shared connection steps (`S6.2`–`S6.5`, one ServiceNow
+connection for all packs) stay in the flat `setupStatus` block.
+
+```json
+{
+  "productStatus": {
+    "hrsd": {
+      "S6.1": { "state": "done",    "checkpoint": "SN-001",        "gate": "prog", "verifiedBy": "programmatic", "note": "Install the ServiceNow HRSD extension pack into the agent." },
+      "S6.6": { "state": "pending", "checkpoint": "SN-BASEURL-001", "gate": "prog", "verifiedBy": null }
+    },
+    "itsm": {
+      "S6.1": { "state": "done",    "checkpoint": "SN-001",        "gate": "prog", "verifiedBy": "programmatic", "note": "Install the ServiceNow ITSM extension pack into the agent." }
+    }
+  }
+}
+```
+
+- Only in-scope products get a block; a row is complete for a product when its
+  `productStatus.<product>.<Step>.state` is `done`.
+- **Resume model:** a product is fully set up when the shared `setupStatus` steps
+  **and** that product's `productStatus.<product>` steps are all `done`.
+- Writers merge deeply — never drop the sibling product's block (round-trip
+  contract below). Connectors without a product dimension (Workday) never write
+  `productStatus`.
+
 ### Optional ready-made-topics state (owned by the OOTB-topics installer)
 
 The optional installer offered between skill-5 and skill-6

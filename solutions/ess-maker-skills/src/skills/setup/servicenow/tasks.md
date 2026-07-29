@@ -106,8 +106,42 @@ the two Entra sign-in methods are offered.
 
 ### 6. ServiceNow extension pack and connection
 
-- [x] **Install the ServiceNow extension pack** — Add the ServiceNow extension pack(s) for your in-scope products (HRSD / ITSM) to your agent. You choose automated (headless) or manual (Copilot Studio) install; either way the remaining steps are automated.
-  <!-- id: S6.1 | role: Environment Maker | skill: skill-6 | automatable: Yes (maker may choose manual install) | checkpoints: SN-PKG-001 | gate: prog when automated; manual when maker installs | status: done -->
+This group has three **sub-blocks**. The **product** sub-blocks — *ServiceNow HR*
+(6a) and *ServiceNow IT* (6b) — are **variant groups**, each rendered **only when
+that product is in `scope`** (like the mutually-exclusive auth groups 4 and 5): if
+only ITSM is selected, the HR sub-block is omitted entirely, and vice-versa. Their
+rows carry a `product:` tag (`hrsd` / `itsm`) and mirror under
+`productStatus.<product>` in `.local/connect/servicenow/config.json`. The **shared
+connection** sub-block (6c) is always rendered — its steps act on the single
+ServiceNow connection every pack shares and mirror under the flat `setupStatus`
+block. Routing rule: a row **with** a `product:` tag → `productStatus.<product>`; a
+row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/checklist-updater.md)).
+
+#### 6a. ServiceNow HR (HRSD)
+
+<!-- variant: scope.hrsd — rendered only when HRSD is in scope; omitted otherwise -->
+
+- [ ] **Install the ServiceNow HR extension pack** — Add the ServiceNow HR (HRSD) extension pack to your agent. You choose automated (headless) or manual (Copilot Studio) install; either way the remaining steps are automated.
+  <!-- id: S6.1 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes (maker may choose manual install) | checkpoints: SN-PKG-001 | gate: prog when automated; manual when maker installs | status: pending -->
+<!-- future: S6.7 | product: hrsd — Install the ServiceNow `sn_hr_core` plugin (HR only). Reserved; render + mint SN-HR-PLUGIN-001 when implemented. -->
+<!-- future: S6.8 | product: hrsd — Grant the required ServiceNow HR table access. Reserved; render when implemented. -->
+- [ ] **Set the HR Portal Base URL** — Point the HR (HRSD) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
+  <!-- id: S6.6 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
+
+#### 6b. ServiceNow IT (ITSM)
+
+<!-- variant: scope.itsm — rendered only when ITSM is in scope; omitted otherwise -->
+
+- [ ] **Install the ServiceNow IT extension pack** — Add the ServiceNow IT (ITSM) extension pack to your agent. You choose automated (headless) or manual (Copilot Studio) install; either way the remaining steps are automated.
+  <!-- id: S6.1 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes (maker may choose manual install) | checkpoints: SN-PKG-001 | gate: prog when automated; manual when maker installs | status: pending -->
+<!-- future: S6.8 | product: itsm — Grant the required ServiceNow IT table access. Reserved; render when implemented. -->
+- [ ] **Set the IT Portal Base URL** — Point the IT (ITSM) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
+  <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
+
+#### 6c. Shared connection
+
+<!-- Always rendered — one ServiceNow connection is shared by every installed pack. -->
+
 - [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow connection (with your chosen sign-in method) and the Dataverse connection so the agent can talk to ServiceNow and read its configuration.
   <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: bind_connections.py exit 0 (ServiceNow), SN-DV-CONN-001; SN health confirmed by SN-FLOWCONN-001 at S6.4 | gate: prog; else attest for auth-type | status: pending -->
 - [ ] **Turn on the ServiceNow flows** — Switch on the background flows that carry requests between the agent and ServiceNow.
@@ -116,8 +150,6 @@ the two Entra sign-in methods are offered.
   <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOWCONN-001 | gate: prog | status: pending -->
 - [ ] **Share the ServiceNow connection parameters** — Share the connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
   <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: connect_and_share.py share (verified live by SN-FLOWCONN-001) | gate: prog | status: pending -->
-- [ ] **Set the Portal Base URL** — Point each in-scope pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
-  <!-- id: S6.6 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 ### 7. Validate and hand off
 
 - [ ] **Run an end-to-end validation** — Ask the agent a real ServiceNow question and confirm it returns your live data with working portal links.

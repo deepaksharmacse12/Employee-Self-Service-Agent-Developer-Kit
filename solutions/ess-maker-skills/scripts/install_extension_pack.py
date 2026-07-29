@@ -584,10 +584,15 @@ def _persist_install_state(config: dict, args, result: dict) -> None:
         if not products:
             return
         connect_state.record_packs("servicenow", products, "installed")
-        connect_state.record_setup_step(
-            "servicenow", "S6.1", "SN-001",
-            note="Install the ServiceNow extension pack(s) for the in-scope "
-                 "products (HRSD / ITSM) into the agent.")
+        # S6.1 install is per-product: each pack (HRSD / ITSM) is its own unit of
+        # work, so mirror it under productStatus.<product> rather than the shared
+        # setupStatus block. Product-specific labels keep the resume view clear.
+        _PRODUCT_LABEL = {"hrsd": "HRSD", "itsm": "ITSM"}
+        for product in products:
+            connect_state.record_product_setup_step(
+                "servicenow", product, "S6.1", "SN-001",
+                note=f"Install the ServiceNow {_PRODUCT_LABEL.get(product, product.upper())} "
+                     "extension pack into the agent.")
     except Exception:  # noqa: BLE001 — persistence must never change exit code
         pass
 

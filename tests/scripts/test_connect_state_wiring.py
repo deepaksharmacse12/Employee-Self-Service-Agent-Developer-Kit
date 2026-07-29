@@ -41,7 +41,10 @@ def test_install_persists_packs_and_step_on_success(tmp_path, monkeypatch):
         {"exit_code": 0, "action": "install"})
     data = _sn()
     assert data["packs"] == {"hrsd": "installed"}
-    assert data["setupStatus"]["S6.1"]["checkpoint"] == "SN-001"
+    # Install is per-product now: S6.1 lands under productStatus.<product>,
+    # not the shared flat setupStatus block.
+    assert data["productStatus"]["hrsd"]["S6.1"]["checkpoint"] == "SN-001"
+    assert "S6.1" not in data.get("setupStatus", {})
 
 
 def test_install_status_succeeded_persists(tmp_path, monkeypatch):

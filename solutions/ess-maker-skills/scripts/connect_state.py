@@ -132,6 +132,44 @@ def record_setup_step(
     return merge(connector, {"setupStatus": {step_id: entry}})
 
 
+def record_product_setup_step(
+    connector: str,
+    product: str,
+    step_id: str,
+    checkpoint: str,
+    *,
+    gate: str = "prog",
+    verified_by: str = "programmatic",
+    state: str = "done",
+    note: str | None = None,
+) -> dict | None:
+    """Record a **per-product** ``setupStatus`` entry under ``productStatus``.
+
+    ServiceNow installs are per-product (HRSD / ITSM): the same master step (e.g.
+    ``S6.1`` install, ``S6.6`` portal URL, and future HR-only steps such as the
+    ``sn_hr_core`` plugin) can be at a different state for each product. Those
+    steps are mirrored under ``productStatus.<product>.<step_id>`` instead of the
+    shared, product-agnostic ``setupStatus`` block (bind / activate / connect /
+    share, which act on the single shared ServiceNow connection).
+
+    ``product`` is the short scope key (``"hrsd"`` / ``"itsm"``). The write is a
+    deep merge, so it never drops the other product's block or any sibling key.
+    ``note`` behaves exactly as in :func:`record_setup_step` (written only when
+    provided; an earlier note is preserved when omitted).
+    """
+    if not product or not step_id:
+        return None
+    entry = {
+        "state": state,
+        "checkpoint": checkpoint,
+        "gate": gate,
+        "verifiedBy": verified_by,
+    }
+    if note:
+        entry["note"] = note
+    return merge(connector, {"productStatus": {product: {step_id: entry}}})
+
+
 def record_legacy_servicenow_summary(summary: dict) -> dict:
     """Merge the legacy ServiceNow connection summary into the root ESS config.
 

@@ -110,6 +110,78 @@ def test_record_packs_empty_is_noop(tmp_path, monkeypatch):
     assert not os.path.exists(_sn_config())
 
 
+def test_record_product_setup_step_shape(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    connect_state.record_product_setup_step(
+        "servicenow", "hrsd", "S6.1", "SN-001",
+        note="Install the ServiceNow HRSD extension pack into the agent.")
+    ps = _read(_sn_config())["productStatus"]
+    assert ps["hrsd"]["S6.1"] == {
+        "state": "done",
+        "checkpoint": "SN-001",
+        "gate": "prog",
+        "verifiedBy": "programmatic",
+        "note": "Install the ServiceNow HRSD extension pack into the agent.",
+    }
+
+
+def test_record_product_setup_step_isolates_products(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    # Two products, each with their own S6.1 — one must never clobber the other.
+    connect_state.record_product_setup_step("servicenow", "hrsd", "S6.1", "SN-001")
+    connect_state.record_product_setup_step("servicenow", "itsm", "S6.1", "SN-001")
+    # A per-product step at a different state for the same Step ID.
+    connect_state.record_product_setup_step(
+        "servicenow", "itsm", "S6.6", "SN-BASEURL-001",
+        state="in-progress", verified_by=None)
+    ps = _read(_sn_config())["productStatus"]
+    assert set(ps) == {"hrsd", "itsm"}
+    assert ps["hrsd"]["S6.1"]["state"] == "done"
+    assert ps["itsm"]["S6.1"]["state"] == "done"
+    assert ps["itsm"]["S6.6"]["state"] == "in-progress"
+    assert ps["itsm"]["S6.6"]["verifiedBy"] is None
+    # HRSD block untouched by the ITSM S6.6 write.
+    assert "S6.6" not in ps["hrsd"]
+
+
+def test_record_product_setup_step_coexists_with_shared_setupstatus(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    # Shared connection steps live in the flat setupStatus block; per-product
+    # install/portal steps live in productStatus — both survive a deep merge.
+    connect_state.record_setup_step("servicenow", "S6.2", "SN-CONN-001")
+    connect_state.record_product_setup_step("servicenow", "hrsd", "S6.1", "SN-001")
+    data = _read(_sn_config())
+    assert data["setupStatus"]["S6.2"]["state"] == "done"
+    assert data["productStatus"]["hrsd"]["S6.1"]["state"] == "done"
+
+
+def test_record_product_setup_step_omits_blank_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    connect_state.record_product_setup_step("servicenow", "hrsd", "S6.1", "SN-001")
+    assert "note" not in _read(_sn_config())["productStatus"]["hrsd"]["S6.1"]
+    connect_state.record_product_setup_step(
+        "servicenow", "itsm", "S6.1", "SN-001", note="")
+    assert "note" not in _read(_sn_config())["productStatus"]["itsm"]["S6.1"]
+
+
+def test_record_product_setup_step_note_merge_preserves_existing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    connect_state.record_product_setup_step(
+        "servicenow", "hrsd", "S6.1", "SN-001", note="Install the HRSD pack.")
+    # A later state-only write must not wipe the earlier note.
+    connect_state.record_product_setup_step(
+        "servicenow", "hrsd", "S6.1", "SN-001", state="done")
+    step = _read(_sn_config())["productStatus"]["hrsd"]["S6.1"]
+    assert step["note"] == "Install the HRSD pack."
+
+
+def test_record_product_setup_step_missing_args_is_noop(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert connect_state.record_product_setup_step("servicenow", "", "S6.1", "SN-001") is None
+    assert connect_state.record_product_setup_step("servicenow", "hrsd", "", "SN-001") is None
+    assert not os.path.exists(_sn_config())
+
+
 def test_legacy_summary_writes_root_and_drops_none(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     os.makedirs(".local", exist_ok=True)
