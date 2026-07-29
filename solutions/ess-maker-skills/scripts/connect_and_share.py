@@ -77,6 +77,10 @@ from pp_env_client import (  # noqa: E402
     find_connector_flows,
     iter_flow_connectors,
 )
+# ``bot_schema`` now lives in ``pack_catalog`` (single source of persona/schema
+# resolution). Re-exported here so existing callers/tests keep working.
+from pack_catalog import bot_schema  # noqa: E402,F401
+import pack_catalog  # noqa: E402
 
 _SERVICENOW_CONNECTOR_KEYWORDS = ("service-now", "servicenow")
 _CONNECTOR_NAME = "shared_service-now"
@@ -206,27 +210,6 @@ def resolve_connection_id(
     if bound and bound.get("connectionid"):
         return bound["connectionid"], "bound reference"
     return None, None
-
-
-def bot_schema(config: dict | None) -> str | None:
-    """Resolve the active agent's Dataverse schema name from config.json."""
-    if not isinstance(config, dict):
-        return None
-    agents = config.get("agents") or []
-    active = config.get("activeAgent")
-    if active:
-        for agent in agents:
-            if agent.get("slug") == active and agent.get("schemaName"):
-                return agent["schemaName"]
-    if config.get("schemaName"):
-        return config["schemaName"]
-    agent = config.get("agent") or {}
-    if agent.get("schemaName"):
-        return agent["schemaName"]
-    for agent in agents:
-        if agent.get("schemaName"):
-            return agent["schemaName"]
-    return None
 
 
 def build_flow_bindings(
@@ -661,6 +644,53 @@ def _persist_connect_state(args, result: dict) -> None:
         pass
 
 
+def _product_has_flows(art: dict) -> bool:
+    """A product participates in connect/share when its pack owns at least one
+    modern (category 5) cloud flow. Connect and share are atomic across every
+    ServiceNow flow, so the per-product outcome mirrors the run's global gate."""
+    return any(w.get("category") == 5 for w in art.get("workflows", []))
+
+
+def _persist_product_connect_state(env_url, args, result: dict, *,
+                                   query=auth.query_all,
+                                   authenticate=auth.authenticate) -> None:
+    """Record per-product ``S6.4`` / ``S6.5`` into ``productStatus`` (never raises).
+
+    Complements :func:`_persist_connect_state` (the shared ``setupStatus.S6.4`` /
+    ``S6.5``). Connect and share are atomic across all ServiceNow flows, so each
+    stage is recorded for every in-scope product whose pack owns ≥1 cloud flow,
+    gated on that stage's global outcome. This keeps an incremental setup correct:
+    the first run records only the installed product(s); a later run records the
+    newly added one. Skips dry-runs.
+    """
+    try:
+        if args.dry_run:
+            return
+        connect_ok = result.get("flow_binding") in ("bound", "already_connected")
+        share_ok = result.get("share") in (
+            "shared", "created_shared_ref", "already_shared"
+        )
+        if not (connect_ok or share_ok):
+            return
+        persona, scope = pack_catalog.persona_and_scope("servicenow")
+        if connect_ok:
+            pack_catalog.record_product_steps(
+                env_url, persona, scope, "S6.4", "SN-FLOWCONN-001",
+                _product_has_flows,
+                lambda p: f"Connect the ServiceNow {p.upper()} flow-invoker "
+                          "connection so Copilot Studio shows it connected.",
+                query=query, authenticate=authenticate)
+        if share_ok:
+            pack_catalog.record_product_steps(
+                env_url, persona, scope, "S6.5", "SN-FLOWCONN-001",
+                _product_has_flows,
+                lambda p: f"Share the ServiceNow {p.upper()} connection parameters "
+                          "so end users inherit the maker's connection.",
+                query=query, authenticate=authenticate)
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Connect the ServiceNow flow invoker connection and share "
@@ -704,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
                   "message": f"{type(e).__name__}: {e}"}
 
     _persist_connect_state(args, result)
+    _persist_product_connect_state(env_url, args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))

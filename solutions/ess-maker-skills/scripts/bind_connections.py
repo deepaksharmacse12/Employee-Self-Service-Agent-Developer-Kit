@@ -60,6 +60,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
 import connect_state  # noqa: E402
+import pack_catalog  # noqa: E402
 
 # Per-connector matching keywords. A connection reference's ``connectorid`` and
 # a BAP connection's ``properties.apiId`` share the ``shared_<connector>`` suffix
@@ -406,6 +407,50 @@ def _persist_bind_state(args, result: dict) -> None:
         pass
 
 
+def _product_sn_refs_bound(art: dict) -> bool:
+    """A product's ServiceNow reference binding is complete when its pack owns at
+    least one ServiceNow connection reference and every one of them is bound to an
+    active connection. The shared Dataverse reference is *not* counted here — it is
+    recorded separately as the flat ``setupStatus.S6.2``."""
+    sn = [r for r in art.get("connectionRefs", [])
+          if _matches_servicenow(r.get("connectorid", ""))]
+    return bool(sn) and all(ref_is_bound(r) for r in sn)
+
+
+def _servicenow_bound(result: dict) -> bool:
+    """True when the run bound (or found already-bound) the ServiceNow connector."""
+    if result.get("action") == "multi":
+        return any(r.get("connector") == "servicenow" and r.get("exit_code") == 0
+                   for r in result.get("results", []))
+    return result.get("connector") == "servicenow" and result.get("exit_code") == 0
+
+
+def _persist_product_bind_state(env_url, args, result: dict, *,
+                                query=auth.query_all,
+                                authenticate=auth.authenticate) -> None:
+    """Record per-product ``S6.2`` (ServiceNow reference bound) into
+    ``productStatus`` (never raises).
+
+    Complements :func:`_persist_bind_state`, which records the shared,
+    connection-level ``setupStatus.S6.2``. For each in-scope product whose owned
+    ServiceNow reference(s) are all bound, writes ``productStatus.<product>.S6.2``
+    so an incremental setup (e.g. HR bound, IT added later) resumes per product.
+    Skips dry-runs and runs that did not bind the ServiceNow connector.
+    """
+    try:
+        if args.dry_run or not _servicenow_bound(result):
+            return
+        persona, scope = pack_catalog.persona_and_scope("servicenow")
+        pack_catalog.record_product_steps(
+            env_url, persona, scope, "S6.2", "SN-CONN-001",
+            _product_sn_refs_bound,
+            lambda p: f"Bind the ServiceNow {p.upper()} connection reference to "
+                      "the shared ServiceNow connection.",
+            query=query, authenticate=authenticate)
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Auto-bind extension-pack connection references."
@@ -437,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
                   "message": f"{type(e).__name__}: {e}"}
 
     _persist_bind_state(args, result)
+    _persist_product_bind_state(env_url, args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))

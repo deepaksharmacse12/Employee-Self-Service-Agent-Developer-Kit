@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import auth  # noqa: E402
 import connect_state  # noqa: E402
+import pack_catalog  # noqa: E402
 
 # ServiceNow cloud flows carry "ServiceNow" in their display name (e.g.
 # "ESS HR ServiceNow HRSD Common Orchestrator"). This mirrors
@@ -181,6 +182,40 @@ def _persist_activate_state(args, result: dict) -> None:
         pass
 
 
+def _product_flows_on(art: dict) -> bool:
+    """A product's flow activation is complete when its pack owns at least one
+    modern (category 5) cloud flow and every one of them is on
+    (``statecode == 1``)."""
+    flows = [w for w in art.get("workflows", []) if w.get("category") == 5]
+    return bool(flows) and all(w.get("statecode") == 1 for w in flows)
+
+
+def _persist_product_activate_state(env_url, args, result: dict, *,
+                                    query=auth.query_all,
+                                    authenticate=auth.authenticate) -> None:
+    """Record per-product ``S6.3`` (flows on) into ``productStatus`` (never raises).
+
+    Complements :func:`_persist_activate_state` (the shared ``setupStatus.S6.3``).
+    For each in-scope product whose owned cloud flows are all on, writes
+    ``productStatus.<product>.S6.3`` so an incremental setup resumes per product.
+    Skips dry-runs and runs that did not activate.
+    """
+    try:
+        if args.dry_run or result.get("exit_code") != 0:
+            return
+        if result.get("action") not in ("activated", "already_on"):
+            return
+        persona, scope = pack_catalog.persona_and_scope("servicenow")
+        pack_catalog.record_product_steps(
+            env_url, persona, scope, "S6.3", "SN-FLOW-000..004",
+            _product_flows_on,
+            lambda p: f"Turn on the ServiceNow {p.upper()} background cloud flows "
+                      "that carry requests between the agent and ServiceNow.",
+            query=query, authenticate=authenticate)
+    except Exception:  # noqa: BLE001 — persistence must never change exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Turn on the ServiceNow cloud flows an extension pack installed."
@@ -213,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
                   "message": f"{type(e).__name__}: {e}"}
 
     _persist_activate_state(args, result)
+    _persist_product_activate_state(env_url, args, result)
 
     if args.json:
         print(json.dumps(result, indent=2))

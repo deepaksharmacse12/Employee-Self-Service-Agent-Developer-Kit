@@ -88,24 +88,16 @@ from pp_env_client import (  # noqa: E402
     package_is_installed,
 )
 
-# Parent ESS solution each persona's extension packs depend on.
-PARENT_BY_PERSONA = {
-    "hr": "msdyn_CopilotForEmployeeSelfServiceHR",
-    "it": "msdyn_CopilotForEmployeeSelfServiceIT",
-}
-
-# ServiceNow extension pack unique names, keyed by persona then product.
-# (Future work: promote this to a data-driven catalog per parent solution.)
-SERVICENOW_PACK_CATALOG = {
-    "hr": {
-        "hrsd": "msdyn_EssHRServiceNowHRSD",
-        "itsm": "msdyn_EssHRServiceNowITSM",
-    },
-    "it": {
-        "hrsd": "msdyn_EssITServiceNowHRSD",
-        "itsm": "msdyn_EssITServiceNowITSM",
-    },
-}
+# The pack catalog + persona/scope helpers now live in ``pack_catalog`` (single
+# source of truth, shared with the connect action scripts). Re-exported here so
+# existing callers/tests that reference ``install_extension_pack`` keep working.
+from pack_catalog import (  # noqa: E402,F401
+    PARENT_BY_PERSONA,
+    SERVICENOW_PACK_CATALOG,
+    parent_package,
+    resolve_persona,
+    servicenow_packages,
+)
 
 _POLL_INTERVAL_SECONDS = 15
 
@@ -123,42 +115,8 @@ def _progress(msg: str) -> None:
 # ─────────────────────────────────────────────────────────────────────
 # Pure helpers (no I/O — unit-testable).
 # ─────────────────────────────────────────────────────────────────────
-def resolve_persona(schema: str | None) -> str | None:
-    """Derive the ESS persona ("hr"/"it") from the agent's Dataverse schema.
-
-    ``msdyn_copilotforemployeeselfservicehr`` -> ``hr``
-    ``msdyn_copilotforemployeeselfserviceit`` -> ``it``
-    """
-    low = (schema or "").lower()
-    if low.endswith("hr"):
-        return "hr"
-    if low.endswith("it"):
-        return "it"
-    return None
-
-
-def servicenow_packages(persona: str | None, scope: dict | None) -> list[str]:
-    """Resolve the ServiceNow extension pack unique names for a persona + scope.
-
-    ``scope`` is the config ``scope`` object (``{"hrsd": bool, "itsm": bool}``).
-    Only products explicitly selected (truthy) in ``scope`` are targeted. This
-    fails **closed**: if no product is selected (empty/all-false scope), NOTHING
-    is targeted — installing every pack when the maker picked none would silently
-    install products they never requested. Callers turn an empty result into a
-    ``no_targets`` stop.
-    """
-    catalog = SERVICENOW_PACK_CATALOG.get(persona or "", {})
-    scope = scope or {}
-    return [
-        unique_name
-        for product, unique_name in catalog.items()
-        if scope.get(product)
-    ]
-
-
-def parent_package(persona: str | None) -> str | None:
-    """Return the parent ESS solution unique name for a persona."""
-    return PARENT_BY_PERSONA.get(persona or "")
+# ``resolve_persona`` / ``servicenow_packages`` / ``parent_package`` now live in
+# ``pack_catalog`` and are re-exported at the top of this module.
 
 
 # ─────────────────────────────────────────────────────────────────────
