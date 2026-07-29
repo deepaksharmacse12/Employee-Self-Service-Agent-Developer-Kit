@@ -36,8 +36,15 @@ from drive_surface import Bubble, turn_complete
 from reply_signal import _CONSENT_MARKERS
 
 CDP_ENDPOINT = "http://localhost:9222"
+_DEFAULT_DEBUG_PORT = 9222
 
 _DEBUG = bool(os.environ.get("DRIVE_DEBUG"))
+
+# Common Edge install locations (x86 first — the usual layout on corp images).
+_EDGE_PATHS = (
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+)
 
 # Candidate selectors for the test-pane message input (first visible wins).
 INPUT_CANDIDATES = [
@@ -86,6 +93,76 @@ def _classify_article(raw_text: str) -> tuple[str, bool, str]:
         if t.startswith(prefix):
             return role, had_card, _strip_bubble_chrome(t[len(prefix):].strip())
     return "unknown", False, _strip_bubble_chrome(t)
+
+
+# --------------------------------------------------------------------------- #
+# Launch / attach helpers — bring up a signed-in-able browser to attach to.
+# --------------------------------------------------------------------------- #
+
+def build_launch_args(*, debug_port: int, user_data_dir: str, start_url: str,
+                      inprivate: bool = True) -> list[str]:
+    """Build the Edge argument list for a CDP-attachable browser (pure).
+
+    InPrivate + a DEDICATED user-data-dir + the debug port are all mandatory
+    together: InPrivate disables Windows SSO so a test account signs in cleanly
+    (not the corp account); a dedicated user-data-dir is required or a second
+    msedge invocation just opens a tab in the existing process and silently
+    ignores --remote-debugging-port. First-run/default-browser prompts are
+    suppressed.
+    """
+    args = [
+        f"--remote-debugging-port={debug_port}",
+        f"--user-data-dir={user_data_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if inprivate:
+        args.append("--inprivate")
+    args.append(start_url)
+    return args
+
+
+def _find_edge() -> str:
+    for p in _EDGE_PATHS:
+        if os.path.exists(p):
+            return p
+    raise RuntimeError(
+        "msedge.exe not found in the standard locations: " + ", ".join(_EDGE_PATHS))
+
+
+def is_cdp_up(cdp_endpoint: str = CDP_ENDPOINT) -> bool:
+    """True if a CDP endpoint is already answering (a browser to attach to)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{cdp_endpoint}/json/version", timeout=2) as r:  # noqa: S310 — localhost
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def launch_browser(*, start_url: str, debug_port: int = _DEFAULT_DEBUG_PORT,
+                   user_data_dir: str | None = None, wait_ready_s: float = 10.0):
+    """Launch Edge InPrivate with a fresh profile + the CDP debug port, pointed at
+    ``start_url``. Returns the Popen. The operator signs in ONCE in that window;
+    the driver then attaches. A fresh temp user-data-dir is created if none given.
+    """
+    import subprocess
+    import tempfile
+    import time
+
+    exe = _find_edge()
+    if user_data_dir is None:
+        user_data_dir = tempfile.mkdtemp(prefix="adk-drive-edge-")
+    args = build_launch_args(debug_port=debug_port, user_data_dir=user_data_dir,
+                             start_url=start_url)
+    proc = subprocess.Popen([exe, *args])  # noqa: S603 — trusted exe + fixed flags
+    endpoint = f"http://localhost:{debug_port}"
+    deadline = time.monotonic() + wait_ready_s
+    while time.monotonic() < deadline:
+        if is_cdp_up(endpoint):
+            break
+        time.sleep(0.5)
+    return proc
 
 
 # --------------------------------------------------------------------------- #

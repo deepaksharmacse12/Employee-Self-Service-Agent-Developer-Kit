@@ -50,3 +50,21 @@ def test_classify_strips_chrome_from_body():
     role, _had_card, body = _classify_article("Bot said: Here you go\nLike\nDislike")
     assert role == "bot"
     assert body == "Here you go"
+
+
+def test_build_launch_args_has_mandatory_flags():
+    from cdp_driver import build_launch_args
+    args = build_launch_args(debug_port=9222, user_data_dir="C:/tmp/x",
+                             start_url="https://example/pane")
+    assert "--remote-debugging-port=9222" in args
+    assert "--user-data-dir=C:/tmp/x" in args
+    assert "--inprivate" in args           # test-account isolation is mandatory
+    assert "--no-first-run" in args
+    assert args[-1] == "https://example/pane"  # url is last
+
+
+def test_build_launch_args_can_disable_inprivate():
+    from cdp_driver import build_launch_args
+    args = build_launch_args(debug_port=9222, user_data_dir="d", start_url="u",
+                             inprivate=False)
+    assert "--inprivate" not in args

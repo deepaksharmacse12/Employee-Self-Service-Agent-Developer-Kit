@@ -4,9 +4,10 @@ Guides a maker through debugging a topic they just created or updated — drivin
 
 **This is the self-serve step that gets a topic to meet its evals.** The topic's **evaluation cases** (authored via the `evaluations/create` skill, stored as `EvaluationData` under `{agent.folder}/evaluations/`) describe the customer-facing behavior the topic must exhibit — especially failure handling (backend down, record missing, connection unauthorized). This skill exercises the topic against those scenarios and debugs it until it behaves. Once it does, the topic is ready for the **completion gate** — the automated eval runner that grades the same `EvaluationData` cases to gate completion (see Step 5). If the topic has no evaluation cases yet, author them with `evaluations/create` first — they are the standard you are debugging toward.
 
-Driving a turn is still manual (you type in the Copilot Studio **Test** pane and read the reply); this skill adds three deterministic tools around that manual drive so you are not debugging on a phantom reply or guessing at hidden state:
+This skill **drives the topic automatically** — it launches (or attaches to) an InPrivate browser on the agent's test pane, sends the scenario, and captures the reply — then runs deterministic tools over that reply so you are not debugging on a phantom reply or guessing at hidden state:
 
-- **`scripts/reply_signal.py`** — classify a captured reply so you know it is a real answer, not a consent gate / timeout / empty non-reply.
+- **`scripts/drive_topic.py`** — drive a scenario against the test pane and classify the reply in one step. It attaches to an already-open CDP browser, or launches Edge InPrivate on the test pane and prompts a single sign-in, then drives. InPrivate is deliberate: it signs in as a *test* account, not the ambient corp account.
+- **`scripts/reply_signal.py`** — the classifier `drive_topic` uses (also runnable standalone on a pasted reply): real answer vs consent gate / timeout / empty.
 - **`scripts/flow_run_inspect.py`** — for flow-backed topics, read the flow's per-action run history (did the connector run, which action failed, why is the reply generic). Interpret it with `src/reference/ess-docs/operations/flow-run-inspection.md`.
 - **`scripts/plant_debug.py`** / **`scripts/strip_debug.py`** — for topic-internal silent-state bugs, plant a temporary DBG node that projects a topic variable into the transcript, re-drive, read it, then strip it.
 
@@ -14,7 +15,7 @@ Driving a turn is still manual (you type in the Copilot Studio **Test** pane and
 
 - **Always strip.** A DBG node planted with `plant_debug.py` is a live mutation of the deployed topic. It MUST be removed with `strip_debug.py` before you finish — never leave debug noise in a shipped topic. If you plant, you strip, even if the diagnosis fails.
 - **Classify before you trust a reply.** Do not diagnose topic logic on a reply until `reply_signal.py` says it is `ok`. A consent gate or empty reply will make any conclusion vacuous.
-- **Drive is manual.** You (or the maker) type the trigger phrase in the Test pane and copy the full reply — including every bubble (a card plus a separate DBG bubble is one reply). This skill does not drive the browser.
+- **Drive is automated, with a manual fallback.** `drive_topic.py` sends the turn and captures the full reply (all bubbles — a card plus a separate DBG bubble is one reply). If it cannot reach a signed-in test pane, it **warns and tells you how to fix it** (launch/sign-in) rather than failing silently; only then paste the reply into `reply_signal.py` by hand.
 - **Read-only where possible.** Flow inspection only reads run history. Only the DBG plant path mutates the topic, and it is byte-reversible.
 - **TRACK PROGRESS.** Use the todo list tool to track the steps below so the maker can see where you are.
 
@@ -30,17 +31,18 @@ Most real topics are both; work outward — confirm the drive (Step 2), then the
 ## Step 2: Drive and confirm the reply is real
 
 1. Pick a scenario to drive. Prefer the topic's **evaluation cases** (`{agent.folder}/evaluations/`) — each `EvaluationData` case's `input` is a scenario the topic must handle, and the failure-handling cases (backend error, missing record, unauthorized) are the highest-value ones to exercise here, since they are what the completion gate will grade. Absent evals, use a representative trigger phrase.
-2. Tell the maker to open the agent in Copilot Studio, switch to the **Test** pane, and send that scenario's input. Ask them to paste back the **full** reply (all bubbles).
-3. Classify it:
+2. Drive it and classify the reply in one step:
 
    ```
-   python scripts/reply_signal.py "<pasted reply text>"
+   python scripts/drive_topic.py --prompt "<scenario input>"
    ```
 
-   Add `--timed-out` if the turn never completed.
+   - **First run** (no browser attached yet): the tool launches Edge InPrivate on the agent's test pane and asks you to **sign in once with your test account**, then drives. Pass `--env <env-guid> --bot <bot-guid>` if they can't be read from the workspace config. Subsequent drives re-attach to that same browser automatically.
+   - It prints the `signal`, a one-line remediation, and the captured reply.
+   - **If it can't reach a signed-in test pane**, it warns and tells you exactly what to do (launch / sign in) — it does **not** fail silently. Fix that and re-run, or fall back to a manual drive: send the prompt in the Test pane, copy the full reply, and run `python scripts/reply_signal.py "<pasted reply>"`.
 
-4. Act on the signal:
-   - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Have the maker authorize the connection (inline consent card or the maker portal's connection manager), then re-drive. Do NOT diagnose logic on this reply.
+3. Act on the signal:
+   - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Authorize the connection in the test pane, then re-drive. Do NOT diagnose logic on this reply.
    - **`timeout`** — re-drive; a hibernating backend may need a warm-up call first.
    - **`empty`** — confirm the topic actually triggered (right trigger phrase, no conflicting topic), then re-drive.
    - **`ok`** — a real reply. Compare it against the eval case's `expectedOutput`: does the topic's failure handling match the standard? If yes, continue to the next scenario; if not, the divergence is your fault to localize (Steps 3–4).
@@ -77,7 +79,7 @@ When the reply looks plausible and the flow run shows nothing wrong, but a branc
 
    This PATCHes the topic, records provenance to `.local/.dbg_provenance.json`, and publishes (retrying transient publish throttling automatically). It refuses to double-plant.
 
-3. Have the maker **re-drive** the topic in the Test pane and paste back the reply. The DBG line renders as its own bubble; classify the reply with `reply_signal.py` if unsure it is real, then read the `DBG ...` values.
+3. **Re-drive** the topic (`python scripts/drive_topic.py --prompt "<same scenario>"`). The DBG line renders as its own bubble and is captured with the rest of the reply; read the `DBG ...` values from the output.
 4. Interpret: an empty value where you expected data, or a branch tag that does not match the path you thought fired, is your fault.
 5. **Strip — always:**
 
