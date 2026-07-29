@@ -255,7 +255,12 @@ Time to install the ServiceNow integration in Copilot Studio.
 2. Open your Employee Self-Service agent.
 3. Go to **Settings** → **Customize**.
 4. Find **{PACK_NAME}** and select **Install**.
-5. When it asks for connection details, enter:
+5. When it asks for connection details, it should **automatically pick up the
+   ServiceNow and Microsoft Dataverse connections you created in the last step** —
+   just select them and continue. You only need to create or change a connection if
+   the right one isn't offered.
+
+   If you do need to (re)create the ServiceNow connection, use these values:
 
    | Field | Value |
    |-------|-------|
@@ -263,9 +268,8 @@ Time to install the ServiceNow integration in Copilot Studio.
    | **Resource URI** | `{APP_CLIENT_ID}` |
    | **Instance Name** | `{INSTANCE_NAME}` |
 
-6. Sign in with your Microsoft work account when prompted.
-7. If it asks for a **Microsoft Dataverse** connection, sign in with the same maker
-   account you use for this environment.
+   Sign in with your Microsoft work account when prompted, and use the same maker
+   account for the **Microsoft Dataverse** connection if it's requested.
 
 If the sign-in button hangs after authenticating, open
 [Power Automate](https://make.powerautomate.com) → **Connections** and check whether
@@ -294,7 +298,12 @@ Time to install the ServiceNow HR integration in Copilot Studio.
 2. Open your Employee Self-Service agent.
 3. Go to **Settings** → **Customize**.
 4. Find **ServiceNow HR** and select **Install**.
-5. When it asks for connection details, enter:
+5. When it asks for connection details, it should **automatically pick up the
+   ServiceNow and Microsoft Dataverse connections you created in the last step** —
+   just select them and continue. You only need to create or change a connection if
+   the right one isn't offered.
+
+   If you do need to (re)create the ServiceNow connection, use these values:
 
    | Field | Value |
    |-------|-------|
@@ -306,8 +315,8 @@ Time to install the ServiceNow HR integration in Copilot Studio.
    | **Client Secret** | Upload the `.pfx` certificate file I opened for you |
    | **Certificate password** | Use the password shown when the certificate was generated |
 
-6. If it asks for a **Microsoft Dataverse** connection, sign in with the same maker
-   account you use for this environment.
+   Use the same maker account for the **Microsoft Dataverse** connection if it's
+   requested.
 
 Tell me when the install finishes, or say **help** if something went wrong.
 
@@ -321,7 +330,12 @@ Time to install the ServiceNow IT integration in Copilot Studio.
 2. Open your Employee Self-Service agent.
 3. Go to **Settings** → **Customize**.
 4. Find **ServiceNow IT** and select **Install**.
-5. When it asks for connection details, enter:
+5. When it asks for connection details, it should **automatically pick up the
+   ServiceNow and Microsoft Dataverse connections you created in the last step** —
+   just select them and continue. You only need to create or change a connection if
+   the right one isn't offered.
+
+   If you do need to (re)create the ServiceNow connection, use these values:
 
    | Field | Value |
    |-------|-------|
@@ -333,8 +347,8 @@ Time to install the ServiceNow IT integration in Copilot Studio.
    | **Client certificate secret** | Upload the `.pfx` certificate file I opened for you |
    | **Certificate password** | Use the password shown when the certificate was generated |
 
-6. If it asks for a **Microsoft Dataverse** connection, sign in with the same maker
-   account you use for this environment.
+   Use the same maker account for the **Microsoft Dataverse** connection if it's
+   requested.
 
 Tell me when the install finishes, or say **help** if something went wrong.
 
