@@ -118,3 +118,88 @@ def test_cli_no_run_found(capsys, monkeypatch):
     rc = flow_run_inspect.main(["--environment", "e" * 32, "--flow", "f" * 32])
     assert rc == 1
     assert "No run found" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# environment-id resolution: config.json carries only the Dataverse org URL, not
+# the Power Platform environment GUID the Flow API needs. match_environment_id
+# maps one to the other from a listed environments payload, so a maker need not
+# hand-find the GUID.
+# --------------------------------------------------------------------------- #
+
+_ENVIRONMENTS = [
+    {
+        "name": "11111111-1111-1111-1111-111111111111",
+        "properties": {"linkedEnvironmentMetadata": {
+            "instanceApiUrl": "https://orgOTHER.crm.dynamics.com",
+        }},
+    },
+    {
+        "name": "22222222-2222-2222-2222-222222222222",
+        "properties": {"linkedEnvironmentMetadata": {
+            "instanceApiUrl": "https://orgfa6bd26e.crm.dynamics.com",
+        }},
+    },
+]
+
+
+def test_match_environment_id_by_instance_api_url():
+    from flow_run_inspect import match_environment_id
+    env_id = match_environment_id(_ENVIRONMENTS, "https://orgfa6bd26e.crm.dynamics.com")
+    assert env_id == "22222222-2222-2222-2222-222222222222"
+
+
+def test_match_environment_id_ignores_scheme_and_trailing_slash():
+    from flow_run_inspect import match_environment_id
+    env_id = match_environment_id(_ENVIRONMENTS, "orgfa6bd26e.crm.dynamics.com/")
+    assert env_id == "22222222-2222-2222-2222-222222222222"
+
+
+def test_match_environment_id_via_instance_url_field():
+    from flow_run_inspect import match_environment_id
+    envs = [{"name": "33333333-3333-3333-3333-333333333333",
+             "properties": {"linkedEnvironmentMetadata": {
+                 "instanceUrl": "https://orgabc.crm.dynamics.com/"}}}]
+    assert match_environment_id(envs, "https://orgabc.crm.dynamics.com") == \
+        "33333333-3333-3333-3333-333333333333"
+
+
+def test_match_environment_id_no_match_returns_none():
+    from flow_run_inspect import match_environment_id
+    assert match_environment_id(_ENVIRONMENTS, "https://orgnope.crm.dynamics.com") is None
+
+
+def test_cli_resolves_environment_when_not_passed(capsys, monkeypatch):
+    import flow_run_inspect
+    monkeypatch.setenv("FLOW_API_TOKEN", "tok")
+    monkeypatch.setattr(flow_run_inspect, "load_config",
+                        lambda: {"dataverseEndpoint": "https://orgfa6bd26e.crm.dynamics.com"})
+    monkeypatch.setattr(flow_run_inspect, "list_environments",
+                        lambda token: _ENVIRONMENTS)
+    captured = {}
+
+    def fake_latest(env, flow, token):
+        captured["env"] = env
+        return {"name": "run-9"}
+
+    monkeypatch.setattr(flow_run_inspect, "get_latest_run", fake_latest)
+    monkeypatch.setattr(flow_run_inspect, "get_run_actions",
+                        lambda env, flow, run_id, token: [])
+    rc = flow_run_inspect.main(["--flow", "f" * 32])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert captured["env"] == "22222222-2222-2222-2222-222222222222"
+    assert "22222222" in out  # reports the resolved environment
+
+
+def test_cli_env_resolution_failure_is_actionable(capsys, monkeypatch):
+    import flow_run_inspect
+    monkeypatch.setenv("FLOW_API_TOKEN", "tok")
+    monkeypatch.setattr(flow_run_inspect, "load_config",
+                        lambda: {"dataverseEndpoint": "https://orgnope.crm.dynamics.com"})
+    monkeypatch.setattr(flow_run_inspect, "list_environments",
+                        lambda token: _ENVIRONMENTS)
+    rc = flow_run_inspect.main(["--flow", "f" * 32])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "--environment" in out  # tells the operator to pass it explicitly

@@ -38,6 +38,17 @@ from http_errors import raise_api_error
 
 logger = logging.getLogger(__name__)
 
+
+def load_config():
+    """Load the active agent's ``.local/config.json`` (lazy ``auth`` import).
+
+    Wrapped at module scope — rather than a top-level ``from auth import`` — so
+    tests can substitute it and so importing this read-only module never drags in
+    ``auth`` (and its MSAL dependency) or risks an import cycle.
+    """
+    from auth import load_config as _load_config
+    return _load_config()
+
 _FLOW_API_HOST = "https://api.flow.microsoft.com"
 API_TIMEOUT_SECONDS = 30
 _GUID_NODASH_RE = re.compile(r"^[0-9a-fA-F]{32}$")
@@ -150,6 +161,54 @@ def get_run_actions(environment: str, flow_id: str, run_id: str, token: str) -> 
     return actions
 
 
+def _norm_host(url: object) -> str:
+    """Reduce a URL to a comparable host: no scheme, no trailing slash, lowercase."""
+    if not isinstance(url, str):
+        return ""
+    host = url.strip().lower()
+    host = host.split("://", 1)[-1]  # drop scheme
+    return host.rstrip("/")
+
+
+def match_environment_id(environments: list[dict], dataverse_url: str) -> str | None:
+    """Return the Power Platform environment id whose linked Dataverse org matches.
+
+    ``config.json`` records only the Dataverse org URL (``dataverseEndpoint``),
+    but the Flow Management API is addressed by the environment GUID. Each listed
+    environment carries its linked Dataverse instance URL under
+    ``properties.linkedEnvironmentMetadata`` (``instanceApiUrl`` / ``instanceUrl``);
+    this matches on host (scheme- and trailing-slash-insensitive) and returns the
+    environment ``name`` (the GUID), or None when nothing matches.
+    """
+    target = _norm_host(dataverse_url)
+    if not target:
+        return None
+    for env in environments or []:
+        linked = ((env or {}).get("properties", {}) or {}).get(
+            "linkedEnvironmentMetadata", {}) or {}
+        for key in ("instanceApiUrl", "instanceUrl"):
+            if _norm_host(linked.get(key)) == target:
+                return env.get("name")
+    return None
+
+
+def list_environments(token: str) -> list[dict]:
+    """List the caller's Power Platform environments (Flow Management API)."""
+    url = (
+        f"{_FLOW_API_HOST}/providers/Microsoft.ProcessSimple/environments"
+        "?api-version=2016-11-01"
+    )
+    _validate_https_url(url)
+    resp = requests.get(url, headers=_auth_headers(token), timeout=API_TIMEOUT_SECONDS)
+    raise_api_error(resp, resource_name="environments", operation="read")
+    return resp.json().get("value", [])
+
+
+def resolve_environment_id(dataverse_url: str, token: str) -> str | None:
+    """Resolve the environment GUID for a Dataverse org URL via the Flow API."""
+    return match_environment_id(list_environments(token), dataverse_url)
+
+
 def _extract_status_code(outputs: object) -> int | None:
     """Pull the connector/HTTP ``statusCode`` out of an action's outputs, if any.
 
@@ -207,7 +266,7 @@ def _resolve_token(explicit_env_token: str) -> str | None:
     if explicit_env_token:
         return explicit_env_token
     try:
-        from auth import get_flow_token, load_config
+        from auth import get_flow_token
         env_url = load_config()["dataverseEndpoint"]
     except Exception as exc:  # noqa: BLE001 — surface a clean message, no token
         print(f"Could not load environment config for token acquisition: {exc}")
@@ -229,8 +288,9 @@ def main(argv=None) -> int:
 
     parser = argparse.ArgumentParser(
         description="Dump a cloud flow run's per-action cascade (read-only).")
-    parser.add_argument("--environment", required=True,
-                        help="environment id (GUID)")
+    parser.add_argument("--environment", default=None,
+                        help="environment id (GUID); resolved from the active "
+                             "agent's Dataverse org URL when omitted")
     parser.add_argument("--flow", required=True, help="flow id (GUID)")
     parser.add_argument("--run", default=None,
                         help="run id (default: the latest run)")
@@ -242,16 +302,31 @@ def main(argv=None) -> int:
               ".local/config.json is present so a token can be acquired.")
         return 2
 
+    environment = args.environment
+    if not environment:
+        try:
+            dataverse_url = load_config()["dataverseEndpoint"]
+        except Exception as exc:  # noqa: BLE001 — surface a clean message
+            print(f"Could not read dataverseEndpoint to resolve the environment: "
+                  f"{exc}. Pass --environment explicitly.")
+            return 2
+        environment = resolve_environment_id(dataverse_url, token)
+        if not environment:
+            print(f"Could not resolve an environment GUID for {dataverse_url!r}. "
+                  "Pass --environment explicitly.")
+            return 2
+        print(f"Resolved environment {environment} for {dataverse_url}")
+
     if args.run:
-        run = get_run_by_id(args.environment, args.flow, args.run, token)
+        run = get_run_by_id(environment, args.flow, args.run, token)
     else:
-        run = get_latest_run(args.environment, args.flow, token)
+        run = get_latest_run(environment, args.flow, token)
     if not run:
         print("No run found for that flow.")
         return 1
 
     run_id = run.get("name") or args.run
-    actions = get_run_actions(args.environment, args.flow, run_id, token)
+    actions = get_run_actions(environment, args.flow, run_id, token)
     print(f"Run {run_id}:")
     print(_render_cascade(summarize_actions(actions)))
     return 0
