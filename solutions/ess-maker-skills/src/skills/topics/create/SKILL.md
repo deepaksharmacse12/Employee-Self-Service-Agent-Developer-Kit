@@ -335,7 +335,9 @@ If the topic misbehaves at runtime — a generic error, a blank field, a branch 
 
 ## Step 7: Offer Next Steps
 
-After the topic is pushed and verified:
+After the topic is pushed and verified, guide the maker along the path to completion: **author evals (the standard) → self-serve debug to meet them → completion gate.**
+
+- "Want to define what 'correct' means for this topic? Run `evaluations/create` to author its evaluation cases — the customer-facing scenarios, including failure handling, that the completion gate will grade."
+- "Want to test or debug it? Run the `topics/test` skill to drive the topic through those eval scenarios and diagnose any runtime issue until it meets them."
 - "Would you like to create another topic?"
-- "Want to test or debug it? Type `/test` (or run the topics/test skill) to drive it and diagnose any runtime issue."
 - "Type `/menu` to see other options."

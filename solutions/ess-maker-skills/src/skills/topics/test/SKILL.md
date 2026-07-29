@@ -2,6 +2,8 @@
 
 Guides a maker through debugging a topic they just created or updated — driving it, confirming the reply is real, and localizing a fault to either the flow it calls or the topic's own internal state.
 
+**This is the self-serve step that gets a topic to meet its evals.** The topic's **evaluation cases** (authored via the `evaluations/create` skill, stored as `EvaluationData` under `{agent.folder}/evaluations/`) describe the customer-facing behavior the topic must exhibit — especially failure handling (backend down, record missing, connection unauthorized). This skill exercises the topic against those scenarios and debugs it until it behaves. Once it does, the topic is ready for the **completion gate** — the automated eval runner that grades the same `EvaluationData` cases to gate completion (see Step 5). If the topic has no evaluation cases yet, author them with `evaluations/create` first — they are the standard you are debugging toward.
+
 Driving a turn is still manual (you type in the Copilot Studio **Test** pane and read the reply); this skill adds three deterministic tools around that manual drive so you are not debugging on a phantom reply or guessing at hidden state:
 
 - **`scripts/reply_signal.py`** — classify a captured reply so you know it is a real answer, not a consent gate / timeout / empty non-reply.
@@ -27,8 +29,9 @@ Most real topics are both; work outward — confirm the drive (Step 2), then the
 
 ## Step 2: Drive and confirm the reply is real
 
-1. Tell the maker to open the agent in Copilot Studio, switch to the **Test** pane, and send a trigger phrase for the topic. Ask them to paste back the **full** reply (all bubbles).
-2. Classify it:
+1. Pick a scenario to drive. Prefer the topic's **evaluation cases** (`{agent.folder}/evaluations/`) — each `EvaluationData` case's `input` is a scenario the topic must handle, and the failure-handling cases (backend error, missing record, unauthorized) are the highest-value ones to exercise here, since they are what the completion gate will grade. Absent evals, use a representative trigger phrase.
+2. Tell the maker to open the agent in Copilot Studio, switch to the **Test** pane, and send that scenario's input. Ask them to paste back the **full** reply (all bubbles).
+3. Classify it:
 
    ```
    python scripts/reply_signal.py "<pasted reply text>"
@@ -36,11 +39,11 @@ Most real topics are both; work outward — confirm the drive (Step 2), then the
 
    Add `--timed-out` if the turn never completed.
 
-3. Act on the signal:
+4. Act on the signal:
    - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Have the maker authorize the connection (inline consent card or the maker portal's connection manager), then re-drive. Do NOT diagnose logic on this reply.
    - **`timeout`** — re-drive; a hibernating backend may need a warm-up call first.
    - **`empty`** — confirm the topic actually triggered (right trigger phrase, no conflicting topic), then re-drive.
-   - **`ok`** — a real reply. Continue.
+   - **`ok`** — a real reply. Compare it against the eval case's `expectedOutput`: does the topic's failure handling match the standard? If yes, continue to the next scenario; if not, the divergence is your fault to localize (Steps 3–4).
 
 Only proceed past this step on an `ok` reply.
 
@@ -94,3 +97,11 @@ Summarize for the maker:
 - The concrete fix and where it belongs (topic YAML, flow, template config).
 
 If you planted a DBG node at any point, confirm `strip_debug.py` ran and `.local/.dbg_provenance.json` is gone before you finish.
+
+## Step 6: Hand off to the completion gate
+
+Once the topic behaves correctly on its evaluation scenarios — the failure-handling cases included — it has met the standard this skill exists to reach. Hand off:
+
+- If the topic has evaluation cases, tell the maker it is ready for the **completion gate**: the automated eval runner grades the same `EvaluationData` cases to decide whether the topic can be marked complete. (That runner is a separate workstream; this skill's job ends at "the topic meets its evals.")
+- If the topic has **no** evaluation cases yet, point the maker at the `evaluations/create` skill to author them — the topic cannot be gated on a standard that does not exist, and the cases you just debugged against should be captured there so the gate can enforce them.
+- Optionally validate the eval set's quality first with `python scripts/evaluate_evals.py` (this grades whether the *eval cases themselves* are realistic and well-scoped — it does not drive the topic).
