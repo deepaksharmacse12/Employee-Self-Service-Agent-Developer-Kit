@@ -118,6 +118,13 @@ Read the agent snapshot at `workspace/agents/{agent.slug}/topics.md` to see if s
 - Tell the user: "I found a similar topic ({name}) that does {X}. I'll use its pattern as a reference."
 - Read the existing topic file to understand the action chain.
 
+**Intent overlap — deactivate the competing topic.** A structurally-similar topic is a useful reference, but a topic that **overlaps in intent** (competes for the same user utterances / trigger phrases as the one you're creating) is a routing hazard: with two topics claiming the same intent, the agent may route to the old one and your new topic never fires (this is a common cause of a later `empty`/wrong-topic result in `topics/test`). When you detect intent overlap:
+
+1. Tell the user plainly: "Your new topic overlaps in intent with the existing **{name}** topic. To avoid the agent routing to the old one, I'll deactivate {name} so the new topic owns this intent. Okay to proceed?"
+2. On confirmation, **deactivate the existing topic via the Dataverse MCP** (the `Dataverse` server in `.vscode/mcp.json`): `update` the existing `botcomponent` record, setting `statecode` to `1` (Inactive) — for topics/botcomponents `statecode 0` is Active and `statecode 1` is Inactive. Do NOT delete it; deactivation is reversible (re-activate by setting `statecode` back to `0`).
+3. Topic activation is **server-only state** — it lives in `botcomponent.statecode/statuscode`, not the YAML, so a checkpoint/local diff does **not** capture or restore it. Tell the user which topic you deactivated so they have a record, and note that re-enabling it later is a Dataverse update + republish.
+4. The deactivation takes effect on the next **publish** (Step 6.8), same as the new topic going live.
+
 If the topic calls a workflow, check `workspace/agents/{agent.slug}/workflows.md` to see if a suitable workflow already exists. If not, tell the user they'll also need a workflow and offer to create one after the topic.
 
 ## Step 5: Generate the Topic YAML
@@ -314,7 +321,7 @@ After a successful push, show the user what was created:
 - If template config was created: the scenario name
 - If workflow was created: the workflow file path
 
-A new **topic** only goes live once the agent is **published** (a new flow's `clientdata` is live immediately, but its registration still needs the push, which is done). Offer to publish for them:
+A new **topic** only goes live once the agent is **published** (a new flow's `clientdata` is live immediately, but its registration still needs the push, which is done). If you deactivated an intent-overlapping topic in Step 4, that change **also** goes live only on publish. Offer to publish for them:
 
 ```
 python scripts/publish.py
