@@ -73,6 +73,100 @@ Run the `ROLE_QUERY` the calling file supplied. Examples of what a caller passes
 `Insufficient privileges` / `Authorization_RequestDenied` error — mirror the
 existing pattern in `connect/azure/app-registration.md` section B.2):
 
+If `REQUIRED_ROLE` is an Entra app/admin role (for example
+`Application Administrator`, `Cloud Application Administrator`,
+`Privileged Role Administrator`, `Global Administrator`), run this triage
+sequence before deciding whether to stop:
+
+Use the `vscode_askQuestions` tool:
+
+```json
+[
+  {
+    "header": "Role check",
+    "question": "Do you have the {REQUIRED_ROLE} role?",
+    "options": [
+      { "label": "Yes, I have this role", "recommended": true },
+      { "label": "No" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+- If **Yes, I have this role**: set `GATE_RESULT = "pass"`; set
+  `GATE_EVIDENCE = { "verifiedBy": "attested", "note": "user attested {REQUIRED_ROLE} for {STEP_ID} after role query did not confirm" }`; return.
+- If **No**: continue to question 2.
+
+Use the `vscode_askQuestions` tool:
+
+```json
+[
+  {
+    "header": "Role acquisition",
+    "question": "Can you get the {REQUIRED_ROLE} role?",
+    "options": [
+      { "label": "Yes, I can get this role", "recommended": true },
+      { "label": "No" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+- If **Yes, I can get this role**:
+
+  **Message:**
+
+  Great — once your admin grants **{REQUIRED_ROLE}**, come back and run this
+  step again.
+
+  **End message.**
+
+  Set `GATE_RESULT = "stop"` and return.
+
+- If **No**: continue to question 3.
+
+Use the `vscode_askQuestions` tool:
+
+```json
+[
+  {
+    "header": "Delegation",
+    "question": "Will someone else with the {REQUIRED_ROLE} role do this step?",
+    "options": [
+      { "label": "Yes, someone else will do this", "recommended": true },
+      { "label": "No" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+- If **Yes, someone else will do this**:
+
+  **Message:**
+
+  Perfect — ask that administrator to complete this role-gated step, then tell me
+  when it's done and I'll verify and continue.
+
+  **End message.**
+
+  Set `GATE_RESULT = "stop"` and return.
+
+- If **No**:
+
+  **Message:**
+
+  This step requires the **{REQUIRED_ROLE}** role and can't continue without it.
+  Ask your administrator for access or have an administrator run this step.
+
+  **End message.**
+
+  Set `GATE_RESULT = "stop"` and return.
+
+For non-Entra roles, keep the existing stop behavior:
+
 **Message:**
 
 This step requires the **{REQUIRED_ROLE}** role, and your account doesn't
@@ -119,6 +213,10 @@ Use the `vscode_askQuestions` tool:
   }
 ]
 ```
+
+For Entra app/admin roles, use the same 3-question triage sequence from G.1
+(have role -> can get role -> someone else will do this) instead of a single
+yes/no attestation question.
 
 **If the user chose "Yes, I have this role":**
 - Set `GATE_RESULT = "pass"`.
