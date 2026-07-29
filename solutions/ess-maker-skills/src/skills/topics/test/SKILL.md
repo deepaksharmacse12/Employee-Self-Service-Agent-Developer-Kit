@@ -40,12 +40,14 @@ Most real topics are both; work outward — confirm the drive (Step 2), then the
    - **First run** (no browser attached yet): the tool launches Edge InPrivate on the agent's test pane and asks you to **sign in once with your test account**, then drives. Pass `--env <env-guid> --bot <bot-guid>` if they can't be read from the workspace config. Subsequent drives re-attach to that same browser automatically.
    - It prints the `signal`, a one-line remediation, and the captured reply.
    - **If it can't reach a signed-in test pane**, it warns and tells you exactly what to do (launch / sign in) — it does **not** fail silently. Fix that and re-run, or fall back to a manual drive: send the prompt in the Test pane, copy the full reply, and run `python scripts/reply_signal.py "<pasted reply>"`.
+   - **After a publish** (e.g. you just planted a DBG node or edited the topic), add `--new-session` so the drive starts a fresh test conversation — otherwise stale routing from the pre-publish session can answer the turn.
+   - **Grade deterministically** with `--expect "<text the reply must contain>"` and/or `--reject "<text it must not>"` (both repeatable). A failed assertion returns a non-zero exit — this is the axis that separates a real success from a `400`/runtime error, since **both are `ok` turns** (a real error reply is a real turn). Prefer wiring the eval case's `expectedOutput` substrings here.
 
 3. Act on the signal:
    - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Authorize the connection in the test pane, then re-drive. Do NOT diagnose logic on this reply.
    - **`timeout`** — re-drive; a hibernating backend may need a warm-up call first.
    - **`empty`** — confirm the topic actually triggered (right trigger phrase, no conflicting topic), then re-drive.
-   - **`ok`** — a real reply. Compare it against the eval case's `expectedOutput`: does the topic's failure handling match the standard? If yes, continue to the next scenario; if not, the divergence is your fault to localize (Steps 3–4).
+   - **`ok`** — a real reply. Note that a genuine backend error reply (e.g. `Error code: 400`) is also `ok` — it is a real turn, so the tool prints an **`advisory: reply is error-shaped`** line and you must assert on it, not assume success. Compare it against the eval case's `expectedOutput` (use `--expect`/`--reject` above to make this a pass/fail): does the topic's failure handling match the standard? If yes, continue to the next scenario; if not, the divergence is your fault to localize (Steps 3–4).
 
 Only proceed past this step on an `ok` reply.
 
@@ -53,14 +55,14 @@ Only proceed past this step on an `ok` reply.
 
 When the reply is a real answer but wrong (generic error, missing data), read the flow's run history — the decisive "why" surface.
 
-1. Get the **environment id** (GUID) and the **flow id** (GUID) of the flow the topic calls. The tool acquires a Flow-scoped token automatically via the kit's sign-in (set `FLOW_API_TOKEN` only to override with your own).
+1. Get the **flow id** (GUID) of the flow the topic calls. The **environment id** is resolved automatically from the active agent's Dataverse org URL — pass `--environment <env-guid>` only to override. The tool acquires a Flow-scoped token automatically via the kit's sign-in (set `FLOW_API_TOKEN` only to override with your own).
 2. Dump the latest run's action cascade:
 
    ```
-   python scripts/flow_run_inspect.py --environment <env-guid> --flow <flow-guid>
+   python scripts/flow_run_inspect.py --flow <flow-guid>
    ```
 
-   Add `--run <run-guid>` to inspect a specific run.
+   Add `--environment <env-guid>` to target a specific environment, or `--run <run-guid>` to inspect a specific run.
 
 3. Interpret the cascade using `src/reference/ess-docs/operations/flow-run-inspection.md`. The key trap: a `runAfter:[Failed]` handler that shows **Succeeded** does NOT mean the flow succeeded — the containing scope can still be **Failed** and a catch-all Response can discard its output, masking (say) a connector **400** as a generic **500**. The **first `Failed` action + its statusCode** is usually the real fault.
 
@@ -71,23 +73,23 @@ If the run history localizes the fault to the flow, fix the flow (see the workfl
 When the reply looks plausible and the flow run shows nothing wrong, but a branch fired wrong or a field came back blank, make the deciding topic state visible.
 
 1. Pick the **action id** to instrument (the action that *populates* the variable you doubt) and the variable(s) to print. The DBG node must land **after** the populating action, or it reads a not-yet-set value.
-2. Plant and publish:
+2. Plant and publish. You **own the consent decision in chat**: this mutates the deployed topic, so confirm with the user first, then pass `--yes` — the script otherwise prompts on `input()`, which a non-interactive subprocess cannot answer and which reads as a hang.
 
    ```
-   python scripts/plant_debug.py --topic <schemaname> --after <action-id> --activity "DBG branch={Topic.SomeVar} count={Topic.SomeCount}"
+   python scripts/plant_debug.py --topic <topic> --after <action-id> --activity "DBG branch={Topic.SomeVar} count={Topic.SomeCount}" --yes
    ```
 
-   This PATCHes the topic, records provenance to `.local/.dbg_provenance.json`, and publishes (retrying transient publish throttling automatically). It refuses to double-plant.
+   `--topic` accepts the friendly file stem (e.g. `servicenow-hrsd-get-cases-by-status`), the display name, or the full schemaname — it resolves to the immutable schemaname via `.component-map.json`. This PATCHes the topic, records provenance to `.local/.dbg_provenance.json`, and publishes (retrying transient publish throttling automatically). It refuses to double-plant.
 
-3. **Re-drive** the topic (`python scripts/drive_topic.py --prompt "<same scenario>"`). The DBG line renders as its own bubble and is captured with the rest of the reply; read the `DBG ...` values from the output.
+3. **Re-drive** the topic with a fresh session so the just-published change is what answers (`python scripts/drive_topic.py --prompt "<same scenario>" --new-session`). The DBG line renders as its own bubble and is captured with the rest of the reply; read the `DBG ...` values from the output.
 4. Interpret: an empty value where you expected data, or a branch tag that does not match the path you thought fired, is your fault.
 5. **Strip — always:**
 
    ```
-   python scripts/strip_debug.py
+   python scripts/strip_debug.py --yes
    ```
 
-   This restores the topic byte-identically, publishes, and clears the provenance. Run it even if the diagnosis was inconclusive.
+   This restores the topic byte-identically, publishes, and clears the provenance. Run it even if the diagnosis was inconclusive. (`--yes` because you already owned the plant/strip consent above; the bare command prompts and would hang as a subprocess.)
 
 ## Step 5: Report
 
