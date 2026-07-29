@@ -54,7 +54,7 @@ sign-in methods to continue.
 
 ---
 
-## P3.2 — Capture instance, products, connector, sign-in, and usage
+## P3.2 — Capture instance, products, sign-in, and usage
 
 Ask these non-secret questions together:
 
@@ -62,7 +62,6 @@ Ask these non-secret questions together:
 [
   { "header": "Instance URL", "question": "What's your ServiceNow instance URL? (e.g. https://yourcompany.service-now.com)" },
   { "header": "Products", "question": "Which ServiceNow products will this agent use?", "options": [{ "label": "ITSM", "description": "IT tickets, requests, incidents, and status" }, { "label": "HRSD", "description": "HR cases, case status, and HR services" }, { "label": "Both", "recommended": true }], "allowFreeformInput": false },
-  { "header": "Connector", "question": "How are you connecting ServiceNow to your agent?", "options": [{ "label": "Actions", "description": "Use the Power Platform ServiceNow connector for live actions", "recommended": true }], "allowFreeformInput": false },
   { "header": "Sign-in method", "question": "How should the agent sign in to ServiceNow?", "options": [{ "label": "Microsoft Entra user sign-in", "description": "Employees use their Microsoft work account", "recommended": true }, { "label": "Microsoft Entra certificate sign-in", "description": "Service-to-service sign-in with an Entra app certificate" }, { "label": "I'm not sure" }], "allowFreeformInput": false }
 ]
 ```
@@ -71,7 +70,7 @@ Normalize answers:
 
 - Instance accepts `https://dev347212.service-now.com`, `dev347212.service-now.com`, or `dev347212`; strip paths/trailing slashes; write canonical URL `https://{instanceName}.service-now.com`.
 - Products set `scope.itsm`, `scope.hrsd`, and `usage` (`itsm`, `hrsd`, or `both`).
-- Connector must map to `connectorType = "powerplatform"` for V2 setup.
+- Connector is fixed in V2 and must be stored as `connectorType = "powerplatform"`.
 - Sign-in maps to `authType = "entra_user"` or `"entra_certificate"`; "I'm not sure" triggers P3.2a.
 
 ---
@@ -160,7 +159,7 @@ When `SN-CONFIG-001` passed, show:
 
 **Message:**
 
-Your ServiceNow instance, product scope, connector, and sign-in method are saved.
+Your ServiceNow instance, product scope, and sign-in method are saved.
 I'll use that sign-in path for the remaining setup steps.
 
 **End message.**
