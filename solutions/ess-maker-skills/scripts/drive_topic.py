@@ -22,6 +22,7 @@ Usage:
     python scripts/drive_topic.py --prompt "Show me my open HR cases"
     python scripts/drive_topic.py --prompt "..." --env <env-guid> --bot <bot-guid>
     python scripts/drive_topic.py --prompt "..." --no-launch   # attach only
+    python scripts/drive_topic.py --prompt "..." --new-session # fresh test session
 """
 from __future__ import annotations
 
@@ -35,7 +36,12 @@ from cdp_driver import (
     launch_browser,
 )
 from drive_surface import DriveSurface
-from reply_signal import ReplySignal, classify_reply_signal
+from reply_signal import (
+    ReplySignal,
+    check_expectations,
+    classify_reply_signal,
+    looks_like_error,
+)
 
 _TEST_PANE_HOST = "https://copilotstudio.preview.microsoft.com"
 
@@ -109,6 +115,14 @@ def main(argv=None) -> int:
     parser.add_argument("--timeout", type=int, default=90, help="turn timeout seconds")
     parser.add_argument("--no-launch", action="store_true",
                         help="attach only; do not launch a browser")
+    parser.add_argument("--new-session", action="store_true",
+                        help="start a fresh test conversation before driving "
+                             "(clears stale routing after a publish)")
+    parser.add_argument("--expect", action="append", default=None, metavar="TEXT",
+                        help="assert the reply CONTAINS this text (repeatable); "
+                             "a failed assertion returns exit code 1")
+    parser.add_argument("--reject", action="append", default=None, metavar="TEXT",
+                        help="assert the reply does NOT contain this text (repeatable)")
     parser.add_argument("--cdp", default=CDP_ENDPOINT, help="CDP endpoint to attach")
     args = parser.parse_args(argv)
 
@@ -127,6 +141,12 @@ def main(argv=None) -> int:
         return 2
 
     try:
+        if args.new_session:
+            if surface.reset():
+                print("Started a fresh test session.")
+            else:
+                print("Could not start a fresh session (no reset control found); "
+                      "driving in the current session.")
         result = surface.drive(args.prompt, timeout_s=args.timeout)
     finally:
         surface.close()
@@ -136,8 +156,21 @@ def main(argv=None) -> int:
     print(f"remediation: {_REMEDIATION[signal]}")
     print(f"bubbles: {result.bubble_count} | had_card: {result.had_card} | "
           f"timed_out: {result.timed_out}")
+
+    if signal is ReplySignal.OK and looks_like_error(result.reply_text):
+        print("advisory: reply is error-shaped (a real turn, but it failed) — "
+              "inspect the flow run (flow_run_inspect.py) or re-drive.")
+
     print("--- reply ---")
     print(result.reply_text)
+
+    if args.expect or args.reject:
+        assertion = check_expectations(result.reply_text,
+                                       expect=args.expect, reject=args.reject)
+        print(f"assert: {'pass' if assertion.passed else 'fail'} "
+              f"({assertion.reason})")
+        if not assertion.passed:
+            return 1
     return 0
 
 

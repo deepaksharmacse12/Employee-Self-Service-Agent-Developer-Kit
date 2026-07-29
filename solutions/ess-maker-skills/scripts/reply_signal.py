@@ -15,6 +15,7 @@ recognizable text; this module pins the text-level contract.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 
 # Text markers of an unauthorized-connection gate. Two shapes seen in practice:
@@ -28,6 +29,20 @@ _CONSENT_MARKERS: tuple[str, ...] = (
     "open connection manager",
     "get you connected first",
     "verify your credentials",
+)
+
+# Text markers of an error-shaped reply. These do NOT change the ReplySignal (an
+# error reply is still a real turn — OK); they drive a separate advisory so a
+# 400/runtime failure that reads like a normal turn is flagged, not silently
+# passed. Kept tight to avoid false positives on ordinary content.
+_ERROR_MARKERS: tuple[str, ...] = (
+    "error code:",
+    "something went wrong",
+    "unexpected error",
+    "an error occurred",
+    "failed to complete",
+    "couldn't complete your request",
+    "could not complete your request",
 )
 
 
@@ -54,6 +69,43 @@ class ReplySignal(Enum):
 def _is_consent_text(reply: str) -> bool:
     low = reply.lower()
     return any(m in low for m in _CONSENT_MARKERS)
+
+
+def looks_like_error(reply: str | None) -> bool:
+    """True when the reply is error-shaped (a connector error code or a generic
+    runtime failure). Advisory only — this never changes the ReplySignal, since
+    an error reply is a real turn (OK). Use it to flag a 400/runtime failure that
+    would otherwise read as an ordinary reply, and to decide whether to re-drive
+    or dig into the flow run."""
+    low = (reply or "").lower()
+    return any(m in low for m in _ERROR_MARKERS)
+
+
+@dataclass(frozen=True)
+class AssertResult:
+    """Outcome of a deterministic expected/rejected-text check over a reply."""
+    passed: bool
+    reason: str
+
+
+def check_expectations(reply: str | None, *, expect=None, reject=None) -> AssertResult:
+    """Grade a reply against expected/rejected substrings (case-insensitive).
+
+    This is the deterministic axis on top of ``classify_reply_signal``: the
+    signal says the turn is real (OK), and this says whether the real reply is
+    the *right* reply. It is what distinguishes an error turn from a success turn
+    when both are OK — assert what the reply must contain (``expect``) and must
+    not contain (``reject``). With neither, it passes vacuously (nothing to grade).
+    """
+    text = reply or ""
+    low = text.lower()
+    for needle in (expect or ()):
+        if needle.lower() not in low:
+            return AssertResult(False, f"expected text not found: {needle!r}")
+    for needle in (reject or ()):
+        if needle.lower() in low:
+            return AssertResult(False, f"rejected text present: {needle!r}")
+    return AssertResult(True, "all expectations met")
 
 
 def classify_reply_signal(reply: str | None, *, timed_out: bool = False) -> ReplySignal:
@@ -93,8 +145,10 @@ _REMEDIATION = {
 def main(argv=None) -> int:
     """CLI: classify a captured reply so a driver knows whether to trust it.
 
-    Prints the signal (ok / consent_gate / timeout / empty) on the first line
-    and a one-line remediation on the second.
+    Prints the signal (ok / consent_gate / timeout / empty) and a one-line
+    remediation. When the reply is error-shaped, prints an advisory (the turn is
+    still real, but it failed). With ``--expect``/``--reject``, also grades the
+    reply deterministically and returns exit code 1 on a failed assertion.
     """
     import argparse
 
@@ -104,11 +158,25 @@ def main(argv=None) -> int:
                         help="the captured reply text (quote it)")
     parser.add_argument("--timed-out", action="store_true",
                         help="the drive reported a timeout (the turn did not complete)")
+    parser.add_argument("--expect", action="append", default=None, metavar="TEXT",
+                        help="assert the reply CONTAINS this text (repeatable)")
+    parser.add_argument("--reject", action="append", default=None, metavar="TEXT",
+                        help="assert the reply does NOT contain this text (repeatable)")
     args = parser.parse_args(argv)
 
     signal = classify_reply_signal(args.reply, timed_out=args.timed_out)
     print(signal.value)
     print(_REMEDIATION[signal])
+
+    if signal is ReplySignal.OK and looks_like_error(args.reply):
+        print("advisory: reply is error-shaped (a real turn, but it failed) — "
+              "inspect the flow run or re-drive.")
+
+    if args.expect or args.reject:
+        result = check_expectations(args.reply, expect=args.expect, reject=args.reject)
+        print(f"assert: {'pass' if result.passed else 'fail'} ({result.reason})")
+        if not result.passed:
+            return 1
     return 0
 
 

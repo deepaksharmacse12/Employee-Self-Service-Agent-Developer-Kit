@@ -98,3 +98,106 @@ def test_main_drives_and_classifies(monkeypatch, capsys):
     assert rc == 0
     assert f"signal: {ReplySignal.OK.value}" in out
     assert "You have 2 open HR cases." in out
+
+
+class _RecordingSurface:
+    """A stub surface that records whether reset() was called before drive()."""
+
+    def __init__(self):
+        from drive_surface import DriveResult
+        self.reset_calls = 0
+        self.reset_before_drive = None
+        self._result = DriveResult(reply_text="ok reply", timed_out=False,
+                                   bubble_count=1, had_card=False)
+
+    def reset(self):
+        self.reset_calls += 1
+        return True
+
+    def drive(self, prompt, timeout_s):
+        self.reset_before_drive = self.reset_calls
+        return self._result
+
+    def close(self):
+        pass
+
+
+def test_main_new_session_resets_before_driving(monkeypatch):
+    surface = _RecordingSurface()
+    monkeypatch.setattr(drive_topic, "_connect", lambda **kw: surface)
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(
+        ["--prompt", "show cases", "--env", "e", "--bot", "b", "--new-session"])
+    assert rc == 0
+    assert surface.reset_calls == 1
+    assert surface.reset_before_drive == 1  # reset happened before the turn
+
+
+def test_main_without_new_session_does_not_reset(monkeypatch):
+    surface = _RecordingSurface()
+    monkeypatch.setattr(drive_topic, "_connect", lambda **kw: surface)
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "show cases", "--env", "e", "--bot", "b"])
+    assert rc == 0
+    assert surface.reset_calls == 0
+
+
+class _ReplySurface:
+    """A stub surface that returns a fixed reply text."""
+
+    def __init__(self, reply):
+        from drive_surface import DriveResult
+        self._result = DriveResult(reply_text=reply, timed_out=False,
+                                   bubble_count=1, had_card=False)
+
+    def drive(self, prompt, timeout_s):
+        return self._result
+
+    def close(self):
+        pass
+
+
+def test_main_expect_pass_returns_0(monkeypatch, capsys):
+    monkeypatch.setattr(drive_topic, "_connect",
+                        lambda **kw: _ReplySurface("You have 2 open HR cases."))
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "show cases", "--env", "e", "--bot", "b",
+                           "--expect", "open HR cases"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "assert: pass" in out
+
+
+def test_main_expect_fail_returns_1(monkeypatch, capsys):
+    # An error turn is OK (real turn) but must FAIL the expected-text assertion —
+    # this is the axis that separates a 400 from a real success.
+    monkeypatch.setattr(drive_topic, "_connect",
+                        lambda **kw: _ReplySurface("Error code: 400 Bad Request"))
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "show cases", "--env", "e", "--bot", "b",
+                           "--expect", "open HR cases"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert f"signal: {ReplySignal.OK.value}" in out  # signal is still OK
+    assert "assert: fail" in out
+
+
+def test_main_reject_fail_returns_1(monkeypatch, capsys):
+    monkeypatch.setattr(drive_topic, "_connect",
+                        lambda **kw: _ReplySurface("Error code: 400 Bad Request"))
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "show cases", "--env", "e", "--bot", "b",
+                           "--reject", "Error code"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "assert: fail" in out
+
+
+def test_main_error_reply_advisory_without_assertions(monkeypatch, capsys):
+    monkeypatch.setattr(drive_topic, "_connect",
+                        lambda **kw: _ReplySurface("Sorry, something went wrong."))
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "show cases", "--env", "e", "--bot", "b"])
+    out = capsys.readouterr().out
+    assert rc == 0  # no assertions -> a real turn still "drove" successfully
+    assert "error-shaped" in out.lower()

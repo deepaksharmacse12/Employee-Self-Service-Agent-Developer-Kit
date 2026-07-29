@@ -98,3 +98,107 @@ def test_cli_ok_reply(capsys):
     out = capsys.readouterr().out.splitlines()
     assert rc == 0
     assert out[0] == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# error-reply advisory: a real turn (OK) can still be an error reply. This is a
+# separate axis from ReplySignal — it never downgrades OK, it flags that the
+# reply is error-shaped so the caller/agent notices a 400/runtime failure that
+# would otherwise read as a normal turn.
+# --------------------------------------------------------------------------- #
+
+def test_looks_like_error_detects_connector_error_code():
+    from reply_signal import looks_like_error
+    assert looks_like_error("Error code: 400 Error Message: Bad Request") is True
+
+
+def test_looks_like_error_detects_generic_runtime_failure():
+    from reply_signal import looks_like_error
+    assert looks_like_error("Sorry, something went wrong. Please try again.") is True
+    assert looks_like_error("An unexpected error occurred while processing.") is True
+
+
+def test_looks_like_error_false_for_normal_reply():
+    from reply_signal import looks_like_error
+    assert looks_like_error("You have 3 open HR cases.") is False
+    assert looks_like_error("") is False
+    assert looks_like_error(None) is False
+
+
+def test_error_reply_still_classifies_ok():
+    # The advisory does not change the signal — the turn is real, assert on it.
+    from reply_signal import classify_reply_signal, looks_like_error
+    reply = "Error code: 400 Error Message: Something went wrong."
+    assert classify_reply_signal(reply) is ReplySignal.OK
+    assert looks_like_error(reply) is True
+
+
+# --------------------------------------------------------------------------- #
+# expected/rejected-text assertions: the deterministic grade on top of the OK
+# signal. This is the axis that separates a 400 from a real success when both
+# are "OK" turns — you assert on what the reply must (not) contain.
+# --------------------------------------------------------------------------- #
+
+def test_check_expectations_all_met_passes():
+    from reply_signal import check_expectations
+    res = check_expectations("You have 2 open HR cases.",
+                             expect=["open HR cases"], reject=["Error code"])
+    assert res.passed is True
+
+
+def test_check_expectations_missing_expected_fails():
+    from reply_signal import check_expectations
+    res = check_expectations("Error code: 400", expect=["open HR cases"])
+    assert res.passed is False
+    assert "open HR cases" in res.reason
+
+
+def test_check_expectations_present_rejected_fails():
+    from reply_signal import check_expectations
+    res = check_expectations("Error code: 400 Bad Request", reject=["Error code"])
+    assert res.passed is False
+    assert "Error code" in res.reason
+
+
+def test_check_expectations_case_insensitive():
+    from reply_signal import check_expectations
+    res = check_expectations("You have TWO OPEN cases", expect=["two open"])
+    assert res.passed is True
+
+
+def test_check_expectations_no_criteria_passes_vacuously():
+    from reply_signal import check_expectations
+    res = check_expectations("anything", expect=None, reject=None)
+    assert res.passed is True
+
+
+def test_cli_expect_pass(capsys):
+    from reply_signal import main
+    rc = main(["You have 3 open HR cases.", "--expect", "open HR cases"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "assert: pass" in out
+
+
+def test_cli_expect_fail_returns_1(capsys):
+    from reply_signal import main
+    rc = main(["Error code: 400", "--expect", "open HR cases"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "assert: fail" in out
+
+
+def test_cli_reject_fail_returns_1(capsys):
+    from reply_signal import main
+    rc = main(["Error code: 400 Bad Request", "--reject", "Error code"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "assert: fail" in out
+
+
+def test_cli_surfaces_error_advisory(capsys):
+    from reply_signal import main
+    rc = main(["Error code: 400 Error Message: Bad Request"])
+    out = capsys.readouterr().out
+    assert rc == 0  # no assertions -> drive still "succeeded" as a real turn
+    assert "error-shaped" in out.lower()
