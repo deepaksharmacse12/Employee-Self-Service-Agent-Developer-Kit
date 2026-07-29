@@ -216,22 +216,21 @@ When it returns, go back to **Start** to resume at the next unverified row.
 
 Read `src/skills/setup/servicenow/install-servicenow-extension-pack.md` and follow
 it. That playbook role-gates (Environment Maker), guides the extension-pack install
-for each in-scope product and verifies it (`SN-PKG-001`, **S6.1**), binds the
-ServiceNow and Dataverse connections with the selected auth type (`bind_connections.py`
-exit 0 + `SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
+for each in-scope product and verifies it (`SN-PKG-001`, **S6.1**), guides the maker to
+bind the ServiceNow and Dataverse connections with the selected auth type
+(`SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow cloud flows (`SN-FLOW-*`,
 **S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
-(`SN-FLOWCONN-001`, **S6.4**), shares the connection parameters onto the portal-owned
+(maker-attested, **S6.4**), shares the connection parameters onto the portal-owned
 reference (**S6.5**), and sets the Portal Base URL to `/sp` for each pack
-(`SN-BASEURL-001`, **S6.6**). Connect (S6.4) and share (S6.5) are separate checkpoints
-driven by one `connect_and_share.py` run, so a resume continues from whichever failed.
-At S6.1 the maker chooses an **automated** headless
-install or a **manual** Copilot Studio install; automated is the recommended default
-and makes S6.1 a programmatic gate, while a manual install keeps the manual gate. All
-later steps (S6.2–S6.6) are automated regardless of the install mode. The chain runs
+(`SN-BASEURL-001`, **S6.6**). Connect (S6.4) and share (S6.5) have no checkpoint and
+are attested by the maker, so a resume continues from
+whichever is incomplete.
+Every step is performed by the maker by hand and verified by the read-only
+flightcheck checkpoint (share is maker-attested). The chain runs
 install → bind → turn on flows → connect and share → portal, in that order, because a
 flow can only hold activation once its references are bound and the invoker binding
 must land on the activated flow. On resume it re-runs the role gate and the pack
-lookup first, reusing the stored install mode without re-asking.
+lookup first.
 
 When it returns, go back to **Start** to resume at the next unverified row.
 

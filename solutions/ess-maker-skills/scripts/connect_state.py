@@ -8,15 +8,14 @@ The setup playbook (``install-servicenow-extension-pack.md``) requires that afte
 each major gate the connect config is merged with the new state and persisted
 immediately, so that a resume (and later skills like ``/create topic``) can see
 what already succeeded. Historically that merge lived only as prose instructions
-to the driving agent: the action scripts (``install_extension_pack.py``,
-``bind_connections.py``, ``activate_flows.py``, ``connect_and_share.py``) did the
-work but recorded nothing. A headless/script-first drive therefore left
+to the driving agent, which did the work but recorded nothing. A script-first
+drive therefore left
 ``.local/connect/<connector>/config.json`` with ``packs.<product> = "pending"``,
 ``connections = {}`` and no ``setupStatus`` for the S6.x steps even though the
 environment was fully wired.
 
-This module closes that gap: each action script calls the matching recorder on
-**confirmed** success (exit 0, non-dry-run), writing the factual artifact it just
+This module provides the recorder helpers that close that gap: a caller records
+on **confirmed** success, writing the factual artifact it just
 produced plus the ``setupStatus`` step it owns. Every write is a *merge* — it
 never drops keys written by earlier setup skills — and callers are expected to
 wrap invocations so a persistence hiccup can never change the script's exit code.

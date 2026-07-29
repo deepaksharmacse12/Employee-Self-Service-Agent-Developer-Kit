@@ -10,9 +10,9 @@ DISTINCT object from the Dataverse solution ``connectionreferences`` binding
 checked by ``SN-CONN-001`` / ``DV-CONN-001``:
 
   * ``connectionreferences`` (Dataverse) — the solution's connection reference
-    pointing at a connection id. ``bind_connections.py`` sets it; ``SN-CONN-001``
-    verifies it. A reference can be fully bound + the connection Connected while
-    the agent still cannot invoke the flow.
+    pointing at a connection id. The maker binds it in Copilot Studio;
+    ``SN-DV-CONN-001`` verifies the Dataverse side. A reference can be fully bound +
+    the connection Connected while the agent still cannot invoke the flow.
   * **flow invoker-connection binding** (this check) — a per-flow
     ``flowBindings[<flowId>].connectors[]`` record on the Power Platform
     environment API. When its ``connectionId`` is null / ``status`` is
@@ -21,7 +21,7 @@ checked by ``SN-CONN-001`` / ``DV-CONN-001``:
 
 The gap: nothing in the base setup writes the flow invoker binding, so an
 otherwise fully-bound ServiceNow reference can still surface as "Not connected".
-``scripts/connect_and_share.py`` establishes it; this checkpoint verifies it.
+The maker establishes it in Copilot Studio; this checkpoint verifies it.
 
 Design invariants (per ``scripts/flightcheck/AGENTS.md``):
   * **Never raise** — the single emitter is wrapped so any failure degrades to a
@@ -42,7 +42,7 @@ import sys
 from ..runner import CheckResult, Priority, Role, Status
 
 # scripts/ is on sys.path when FlightCheck runs (cli.py inserts it); the shared
-# Power Platform environment client lives there alongside bind_connections.py.
+# Power Platform environment client (pp_env_client.py) lives there.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from pp_env_client import (  # noqa: E402
@@ -60,8 +60,7 @@ _DESCRIPTION = (
 _MAKER_ROLES = [Role.ESS_MAKER.value]
 _CONNECTOR_NAME = "shared_service-now"
 _REMEDIATION = (
-    "Bind the ServiceNow flow invoker connection: run "
-    "`python scripts/connect_and_share.py --connector servicenow`, or open "
+    "Connect the ServiceNow flow invoker connection in "
     "Copilot Studio > your agent > Settings > Connections and connect the "
     "ServiceNow connection."
 )
@@ -163,9 +162,11 @@ def _check_flow_binding(runner) -> list[CheckResult]:
             "No cached Power Platform API token is available. This checkpoint "
             "does not open a browser from within a check.",
             remediation=(
-                "Establish a token by running "
-                "`python scripts/connect_and_share.py --connector servicenow` "
-                "(it signs in and caches the token), then re-run FlightCheck."
+                "This check needs a cached Power Platform API token. Sign in to "
+                "the Power Platform (e.g. via the Azure CLI or Copilot Studio) so "
+                "a token is available, then re-run FlightCheck. The connection can "
+                "also be confirmed manually in Copilot Studio > Settings > "
+                "Connections."
             ),
         )
 
@@ -186,9 +187,9 @@ def _check_flow_binding(runner) -> list[CheckResult]:
                     "installed, or they reference a different connector."
                 ),
                 remediation=(
-                    "Install the ServiceNow extension pack (S6.1), then bind the "
-                    "connection with "
-                    "`python scripts/connect_and_share.py --connector servicenow`."
+                    "Install the ServiceNow extension pack (S6.1), then connect "
+                    "the ServiceNow connection in Copilot Studio > your agent > "
+                    "Settings > Connections."
                 ),
                 roles=_MAKER_ROLES,
             )

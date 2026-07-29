@@ -11,7 +11,7 @@ Provides authenticated access to the per-environment Power Platform API host
 * ``.../powervirtualagents/bots/{schema}/channels/pva-studio/user-connections``
   — the agent's *flow invoker-connection binding* (what the Copilot Studio UI
   shows as Connected / NotConnected). This is DISTINCT from the Dataverse
-  ``connectionreferences`` solution binding handled by ``bind_connections.py``.
+  ``connectionreferences`` solution binding the maker sets in Copilot Studio.
 * ``.../connectivity/connectors/{connector}/connections/{id}`` — the live
   connection object (used to read ``connectionParametersSet`` for sharing).
 

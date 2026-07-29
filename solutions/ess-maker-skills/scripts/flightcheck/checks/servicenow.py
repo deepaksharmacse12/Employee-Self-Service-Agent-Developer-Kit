@@ -277,8 +277,8 @@ def _check_dataverse_connection(runner) -> list[CheckResult]:
             ),
             remediation=(
                 "Install the ServiceNow extension pack so its Dataverse "
-                "connection reference is created, then run "
-                "`python scripts/bind_connections.py --connector all` to bind it."
+                "connection reference is created, then bind it in Copilot Studio "
+                "> your agent > Connections."
             ),
             doc_link=f"{DOC_BASE}/servicenow",
         )]
@@ -294,9 +294,8 @@ def _check_dataverse_connection(runner) -> list[CheckResult]:
                 f"reference(s) are unbound (connectionid=null): {_names(unbound)}."
             ),
             remediation=(
-                "Run `python scripts/bind_connections.py --connector all` to bind "
-                "the Dataverse reference to an active connection you own (or bind "
-                "it in Copilot Studio > your agent > Connections)."
+                "Bind the Dataverse reference to an active connection you own in "
+                "Copilot Studio > your agent > Connections."
             ),
             doc_link=f"{DOC_BASE}/servicenow",
         )]

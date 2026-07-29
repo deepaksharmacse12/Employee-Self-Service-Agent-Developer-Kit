@@ -121,8 +121,8 @@ row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/ch
 
 <!-- variant: scope.hrsd — rendered only when HRSD is in scope; omitted otherwise -->
 
-- [ ] **Install the ServiceNow HR extension pack** — Add the ServiceNow HR (HRSD) extension pack to your agent. You choose automated (headless) or manual (Copilot Studio) install; either way the remaining steps are automated.
-  <!-- id: S6.1 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes (maker may choose manual install) | checkpoints: SN-PKG-001 | gate: prog when automated; manual when maker installs | status: pending -->
+- [ ] **Install the ServiceNow HR extension pack** — Add the ServiceNow HR (HRSD) extension pack to your agent in Copilot Studio.
+  <!-- id: S6.1 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: No (maker installs; checkpoint verifies) | checkpoints: SN-PKG-001 | gate: prog (maker installs, checkpoint verifies) | status: pending -->
 <!-- future: S6.7 | product: hrsd — Install the ServiceNow `sn_hr_core` plugin (HR only). Reserved; render + mint SN-HR-PLUGIN-001 when implemented. -->
 <!-- future: S6.8 | product: hrsd — Grant the required ServiceNow HR table access. Reserved; render when implemented. -->
 - [ ] **Set the HR Portal Base URL** — Point the HR (HRSD) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
@@ -132,8 +132,8 @@ row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/ch
 
 <!-- variant: scope.itsm — rendered only when ITSM is in scope; omitted otherwise -->
 
-- [ ] **Install the ServiceNow IT extension pack** — Add the ServiceNow IT (ITSM) extension pack to your agent. You choose automated (headless) or manual (Copilot Studio) install; either way the remaining steps are automated.
-  <!-- id: S6.1 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes (maker may choose manual install) | checkpoints: SN-PKG-001 | gate: prog when automated; manual when maker installs | status: pending -->
+- [ ] **Install the ServiceNow IT extension pack** — Add the ServiceNow IT (ITSM) extension pack to your agent in Copilot Studio.
+  <!-- id: S6.1 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: No (maker installs; checkpoint verifies) | checkpoints: SN-PKG-001 | gate: prog (maker installs, checkpoint verifies) | status: pending -->
 <!-- future: S6.8 | product: itsm — Grant the required ServiceNow IT table access. Reserved; render when implemented. -->
 - [ ] **Set the IT Portal Base URL** — Point the IT (ITSM) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
   <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
@@ -143,13 +143,13 @@ row **without** one → `setupStatus` (see [`checklist-updater.md`](../shared/ch
 <!-- Always rendered — one ServiceNow connection is shared by every installed pack. -->
 
 - [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow connection (with your chosen sign-in method) and the Dataverse connection so the agent can talk to ServiceNow and read its configuration.
-  <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: bind_connections.py exit 0 (ServiceNow), SN-DV-CONN-001; SN health confirmed by SN-FLOWCONN-001 at S6.4 | gate: prog; else attest for auth-type | status: pending -->
+  <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: No (maker binds; checkpoint verifies) | checkpoints: SN-DV-CONN-001; SN connection health confirmed when maker connects the flow invoker at S6.4 | gate: prog; else attest for auth-type | status: pending -->
 - [ ] **Turn on the ServiceNow flows** — Switch on the background flows that carry requests between the agent and ServiceNow.
-  <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
+  <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: No (maker turns on; checkpoint verifies) | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
 - [ ] **Connect ServiceNow to your agent's flows** — Bind the ServiceNow flow invoker connection so Copilot Studio shows the connection as connected.
-  <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-FLOWCONN-001 | gate: prog | status: pending -->
+  <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: No (maker connects; attested) | checkpoints: maker-attested | gate: attest | status: pending -->
 - [ ] **Share the ServiceNow connection parameters** — Share the connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
-  <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: connect_and_share.py share (verified live by SN-FLOWCONN-001) | gate: prog | status: pending -->
+  <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: No (maker shares; attested) | checkpoints: maker-attested (SN-FLOWCONN-001 confirms connection health) | gate: attest | status: pending -->
 ### 7. Validate and hand off
 
 - [ ] **Run an end-to-end validation** — Ask the agent a real ServiceNow question and confirm it returns your live data with working portal links.

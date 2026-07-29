@@ -85,7 +85,7 @@ def test_failed_when_not_connected(monkeypatch):
     _install(monkeypatch, _FakeClient(user_connections=_uc(None, "NotConnected")))
     r = _only(sfb.run_servicenow_flow_binding_checks(_Runner()))
     assert r.status == Status.FAILED.value
-    assert "connect_and_share" in r.remediation
+    assert "Copilot Studio" in r.remediation
     assert FLOW_ID in r.result
 
 
@@ -100,7 +100,7 @@ def test_skipped_when_no_token(monkeypatch):
     _install(monkeypatch, _FakeClient(token=None))
     r = _only(sfb.run_servicenow_flow_binding_checks(_Runner()))
     assert r.status == Status.SKIPPED.value
-    assert "connect_and_share" in r.remediation
+    assert "Power Platform" in r.remediation
 
 
 def test_skipped_when_no_env_id(monkeypatch):
