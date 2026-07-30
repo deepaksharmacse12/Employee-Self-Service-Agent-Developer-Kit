@@ -257,6 +257,13 @@ class TestDefinitionAbsent:
             assert "not found" in res.result.lower()
             assert "extension pack" in res.remediation
 
+        # With no PortalBaseURI definitions found, the check must NOT issue the
+        # environmentvariablevalues query — there are no definition ids to
+        # filter on. (Ignore unrelated telemetry calls.)
+        urls = [c.request.url for c in responses.calls]
+        assert not any("environmentvariablevalues" in u for u in urls)
+        assert any("environmentvariabledefinitions" in u for u in urls)
+
 
 class TestSkip:
     """No Dataverse token — both checks skip rather than error."""

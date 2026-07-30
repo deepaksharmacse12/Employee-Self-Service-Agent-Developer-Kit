@@ -686,13 +686,25 @@ def _check_base_url(runner) -> list[CheckResult]:
             "displayname,schemaname,environmentvariabledefinitionid",
             filter_expr="contains(schemaname,'PortalBaseURI')",
         )
-        vals = query_all(
-            env_url, dv_token,
-            "environmentvariablevalues",
-            "value,schemaname,_environmentvariabledefinitionid_value",
-        )
-
         def_map = {d["environmentvariabledefinitionid"]: d for d in defs}
+
+        # Narrow the values query to just the PortalBaseURI definitions found
+        # above, rather than pulling every environment variable value in the
+        # environment and filtering client-side. When no definitions matched,
+        # skip the query entirely — every pack resolves to NotConfigured.
+        vals = []
+        if def_map:
+            id_filter = " or ".join(
+                f"_environmentvariabledefinitionid_value eq {def_id}"
+                for def_id in def_map
+            )
+            vals = query_all(
+                env_url, dv_token,
+                "environmentvariablevalues",
+                "value,schemaname,_environmentvariabledefinitionid_value",
+                filter_expr=id_filter,
+            )
+
         val_map = {}
         for v in vals:
             def_id = v.get("_environmentvariabledefinitionid_value")
