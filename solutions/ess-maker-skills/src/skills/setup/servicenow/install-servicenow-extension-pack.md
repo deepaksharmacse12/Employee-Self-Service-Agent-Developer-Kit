@@ -750,10 +750,12 @@ opening in the portal.
 ---
 ## Done
 When S6.1 **and** S6.6 are `done` for **every in-scope product** (in
-`productStatus.<product>`), and the shared S6.2, every generated S6.3 flow row, S6.4,
-and S6.5 are `done` (in `setupStatus`), return
-control to the setup router (`SKILL.md`) to resume at validation and handoff. Do not
-run the end-to-end ServiceNow prompt test here; that belongs to the separate
+`productStatus.<product>`), the shared S6.0 and S6.2 are `done` (in `setupStatus`),
+and every generated S6.3 flow row, S6.4, and S6.5 is `done` for **every in-scope
+product** (in `productStatus.<product>` — these carry a `product:` tag, so they are
+per-product per [`../shared/checklist-updater.md`](../shared/checklist-updater.md)),
+return control to the setup router (`SKILL.md`) to resume at validation and handoff.
+Do not run the end-to-end ServiceNow prompt test here; that belongs to the separate
 `validate-and-handoff.md` playbook.
 **Message:**
 

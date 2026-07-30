@@ -76,8 +76,10 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    up only when the shared steps **and** that product's own steps are all `done`.
 
 3. **Show the checklist, then find where to resume.** Determine each item's state
-   from `setupStatus`: ✅ = `done`, 🔄 = `in-progress`, ⛔ = `blocked`, ⬜ =
-   `pending` or unset. Show the checklist **grouped exactly as in the template** —
+   using the **same routing as step 2**: a shared row from `setupStatus["{Step}"]`,
+   and a per-product row from `productStatus["{product}"]["{Step}"]` (never from
+   `setupStatus`). In both cases: ✅ = `done`, 🔄 = `in-progress`, ⛔ = `blocked`,
+   ⬜ = `pending` or unset. Show the checklist **grouped exactly as in the template** —
    the group headings and item titles below are verbatim from
    `src/skills/setup/servicenow/tasks.md`; render every group and every item that
    applies to the selected `authType`, replacing each `{m}` with that item's marker.
@@ -144,8 +146,10 @@ are treated as not-applicable: they are neither shown nor counted toward complet
 
 **Persist each row the moment its checkpoint passes.** Every skill calls
 [`shared/checklist-updater.md`](../shared/checklist-updater.md) per row, inline —
-updating both the working checklist and the durable `setupStatus` mirror
-immediately — and **must not** batch those writes to the end of its run. This keeps
+updating both the working checklist and the durable state mirror (shared rows in
+`setupStatus`, per-product rows in `productStatus.<product>`, per
+[`shared/checklist-updater.md`](../shared/checklist-updater.md)) immediately — and
+**must not** batch those writes to the end of its run. This keeps
 progress crash-safe: if a skill errors midway, the rows already verified stay
 complete and this router resumes at the first row that isn't.
 
