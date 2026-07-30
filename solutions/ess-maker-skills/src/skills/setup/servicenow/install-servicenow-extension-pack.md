@@ -36,7 +36,7 @@ password to any config file.
 | S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled *(per-product: `productStatus.<product>`)* | prog |
 | S6.4 | ServiceNow flow invoker connection connected by the maker *(per-product: `productStatus.<product>`)* | attest |
 | S6.5 | Connection parameters shared by the maker onto the portal-owned reference *(per-product: `productStatus.<product>`)* | attest |
-| S6.6 | `SN-BASEURL-001` — portal base URL present *(per-product: `productStatus.<product>`)* | prog; else attest |
+| S6.6 | `SN-BASEURL-001` — portal base URL matches the confirmed value *(per-product: `productStatus.<product>`)* | prog; attest only if unverifiable (`Skipped`/`Warning`), never on `Failed` |
 Run any individually-registered checkpoint by itself:
 ```
 python scripts/flightcheck/cli.py --checkpoint <ID>
@@ -728,24 +728,47 @@ against the confirmed `portalBaseUrl` you merged into
 `.local/connect/servicenow/config.json` (host compared case-insensitively; path,
 e.g. `/sp`, compared exactly), so a stale or wrong-but-absolute URL cannot pass. Its
 result lists each product it found `set` (matching), `empty`, or mismatched
-(reporting expected-vs-actual), so decompose it per product:
+(reporting expected-vs-actual). Decide **strictly by the checkpoint status** — a
+`Failed` gate must stay blocked; attestation may **never** override a value Dataverse
+explicitly read:
+
 - `PASSED` → the confirmed URL is set for every in-scope product; update S6.6 for
-  each with `GATE="prog"`.
-- `FAILED` / `NotConfigured` / partial coverage → update S6.6 to `done` (`GATE="prog"`)
-  for each product the result reports as **set** (matching the confirmed URL), and
-  leave the products it reports as **empty** or **mismatched** `in-progress`; for a
-  mismatch, show the maker the expected-vs-actual values so they can correct the
-  wrong pack. Requires attestation after the rendered result:
+  each in-scope product with `GATE="prog"` and the checkpoint result. Done.
+- `FAILED` (Dataverse read an `empty`, malformed, or mismatched value for at least
+  one product) → **do not attest, do not mark those rows done.** Keep every product
+  the result reports as `empty` or `mismatched` at S6.6 `in-progress`. Show the maker
+  the failing per-product detail (for a mismatch, the expected-vs-actual values so
+  they fix the wrong pack), return to the portal-setting instructions above, then
+  **re-run the checkpoint and loop until it PASSES**:
+  ```
+  python scripts/flightcheck/cli.py --checkpoint SN-BASEURL-001 --no-open
+  ```
+  Only a product the result explicitly lists as `set` (matching the confirmed URL)
+  may be recorded `done` (`GATE="prog"`) now; the rest stay blocked until re-run
+  passes. **Message:**
+
+  I can see the Portal Base URL isn't right yet for the product(s) above — case and
+  ticket links won't resolve until it matches. Please set it to the value shown and
+  tell me when it's done so I can re-check.
+
+  **End message.**
+  Use the question tool with options **I've set it, re-check** and **I need help**.
+  On **re-check**, re-run the checkpoint and repeat this decision. Never accept an
+  attestation in place of a passing re-run for a `Failed` value.
+- `NotConfigured` (no product config record — the pack isn't installed) → S6.1 is
+  not actually complete; return to **P6.2** for that product. Do not attest S6.6.
+- `SKIPPED` or `WARNING` (verification genuinely **unavailable** — no Dataverse token,
+  or the kit could not read the template configs) → and only then, fall back to
+  attestation after the rendered result:
 **Message:**
 
-I can only partially verify that portal setting from the kit. Please confirm you
-set the ServiceNow Portal Base URL shown above for every ServiceNow pack you
-installed.
+I can't verify the portal setting from the kit right now. Please confirm you set the
+ServiceNow Portal Base URL shown above for every ServiceNow pack you installed.
 
 **End message.**
 Use the question tool with options **Yes, it's set** and **Not yet**. On **Yes**,
-update S6.6 for the pending product(s) with attested evidence and `ACK=true`. On
-**Not yet**, leave those products' S6.6 `in-progress`, return to the portal setting
+update S6.6 for the pending in-scope product(s) with attested evidence and `ACK=true`.
+On **Not yet**, leave those products' S6.6 `in-progress`, return to the portal setting
 instructions, and re-check or re-attest after they finish.
 Always include this note after S6.6 is recorded:
 **Message:**

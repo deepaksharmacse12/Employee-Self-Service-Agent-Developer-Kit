@@ -166,7 +166,7 @@ bound.
 - [ ] **Share the ServiceNow HR connection parameters** — Share the HR (HRSD) connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
   <!-- id: S6.5 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: No (maker shares; attested) | checkpoints: maker-attested (SN-FLOWCONN-001 confirms connection health) | gate: attest | status: pending -->
 - [ ] **Set the HR Portal Base URL** — Point the HR (HRSD) pack at your confirmed ServiceNow Service Portal URL so the links the agent returns open the right pages.
-  <!-- id: S6.6 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
+  <!-- id: S6.6 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; attest only if unverifiable (Skipped/Warning), never on Failed | status: pending -->
 <!-- future: S6.7 | product: hrsd — Install the ServiceNow `sn_hr_core` plugin (HR only). Reserved; render + mint SN-HR-PLUGIN-001 when implemented. -->
 <!-- future: S6.8 | product: hrsd — Grant the required ServiceNow HR table access. Reserved; render when implemented. -->
 - [ ] **Turn on the ServiceNow IT flows** — Switch on the IT (ITSM) background flows that carry requests between the agent and ServiceNow.
@@ -176,7 +176,7 @@ bound.
 - [ ] **Share the ServiceNow IT connection parameters** — Share the IT (ITSM) connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
   <!-- id: S6.5 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: No (maker shares; attested) | checkpoints: maker-attested (SN-FLOWCONN-001 confirms connection health) | gate: attest | status: pending -->
 - [ ] **Set the IT Portal Base URL** — Point the IT (ITSM) pack at your confirmed ServiceNow Service Portal URL so the links the agent returns open the right pages.
-  <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
+  <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; attest only if unverifiable (Skipped/Warning), never on Failed | status: pending -->
 <!-- future: S6.8 | product: itsm — Grant the required ServiceNow IT table access. Reserved; render when implemented. -->
 ### 7. Validate and hand off
 
