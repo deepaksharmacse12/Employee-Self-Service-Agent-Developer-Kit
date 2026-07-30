@@ -167,9 +167,11 @@ def test_local_topics_none_found_not_configured(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# _check_dataverse_connection — SN-DV-CONN-001 (connector-generic Dataverse
-# reference binding; sibling of the Workday DV-CONN-001 but matched by
-# connector instead of the ..._92b66 logical-name suffix).
+# _check_dataverse_connection — SN-DV-CONN-001 (scoped to the ServiceNow pack's
+# OWN Dataverse reference, matched by the 'sharedcommondataserviceforapps'
+# logical-name marker). Deliberately EXCLUDES the base-agent 'msdyn_Dataverse'
+# reference and other system Dataverse references, which are out of scope for
+# the ServiceNow S6.2 step and routinely ship unbound in a healthy setup.
 # --------------------------------------------------------------------------
 
 _DV_CONNECTOR = (
@@ -197,7 +199,9 @@ def _dv_runner():
 def test_dataverse_connection_all_bound_active(monkeypatch):
     import auth
     monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
-        _dv_ref("msdyn_Dataverse"),
+        # Base-agent system reference — UNBOUND, but out of scope for the
+        # ServiceNow gate, so it must NOT fail this check.
+        _dv_ref("msdyn_Dataverse", connectionid=None),
         _dv_ref("new_sharedcommondataserviceforapps_41c83"),
         # A non-Dataverse ref that must be ignored.
         _dv_ref("msdyn_service_now",
@@ -206,19 +210,24 @@ def test_dataverse_connection_all_bound_active(monkeypatch):
     from flightcheck.checks.servicenow import _check_dataverse_connection
     r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
     assert r.status == "Passed"
-    assert "All 2 Dataverse connection reference(s)" in r.result
+    assert "All 1 Dataverse connection reference(s)" in r.result
 
 
 def test_dataverse_connection_none_found_not_configured(monkeypatch):
     import auth
     monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        # Base-agent Dataverse reference is present but is NOT the pack's own
+        # reference — the gate is scoped to the pack reference, so the pack's
+        # reference being absent is NotConfigured even though msdyn_Dataverse
+        # exists on the same connector.
+        _dv_ref("msdyn_Dataverse"),
         _dv_ref("msdyn_service_now",
                 connector="/providers/x/apis/shared_service-now"),
     ])
     from flightcheck.checks.servicenow import _check_dataverse_connection
     r = _by_id(_check_dataverse_connection(_dv_runner()), "SN-DV-CONN-001")
     assert r.status == "NotConfigured"
-    assert "shared_commondataserviceforapps" in r.result
+    assert "sharedcommondataserviceforapps" in r.result
     assert "extension pack" in r.remediation
 
 
