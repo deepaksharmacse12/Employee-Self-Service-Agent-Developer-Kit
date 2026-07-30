@@ -80,34 +80,20 @@ Run the `ROLE_QUERY` the calling file supplied. Examples of what a caller passes
 - Set `GATE_EVIDENCE = { "verifiedBy": "programmatic", "note": "<matched role/query result>" }`.
 - Return to the calling file.
 
-**If the query proves the role is NOT held** (or returns an
-`Insufficient privileges` / `Authorization_RequestDenied` error — mirror the
-existing pattern in `connect/azure/app-registration.md` section B.2):
+**If the query proves the role is NOT held** — the role query **ran successfully**
+and returned the caller's roles, but none of them grants `REQUIRED_ROLE`:
+
+This is **proven absence**, not missing evidence. An attestation must **never**
+override it — do **not** ask "do you have this role?", because the directory already
+answered. The gate can only end in `"stop"` here; the caller re-runs the step (and
+this gate re-runs the programmatic query) once the role is actually assigned, so only
+a *proving* query — never a claim — yields `"pass"`.
 
 If `REQUIRED_ROLE` is an Entra app/admin role (for example
 `Application Administrator`, `Cloud Application Administrator`,
-`Privileged Role Administrator`, `Global Administrator`), run this triage
-sequence before deciding whether to stop:
-
-Use the `vscode_askQuestions` tool:
-
-```json
-[
-  {
-    "header": "Role check",
-    "question": "Do you have the {REQUIRED_ROLE} role?",
-    "options": [
-      { "label": "Yes, I have this role", "recommended": true },
-      { "label": "No" }
-    ],
-    "allowFreeformInput": false
-  }
-]
-```
-
-- If **Yes, I have this role**: set `GATE_RESULT = "pass"`; set
-  `GATE_EVIDENCE = { "verifiedBy": "attested", "note": "user attested {REQUIRED_ROLE} for {STEP_ID} after role query did not confirm" }`; return.
-- If **No**: continue to question 2.
+`Privileged Role Administrator`, `Global Administrator`), run the
+acquisition/delegation triage below. **There is no "Yes, I already have it" option —
+absence is proven**, so the only paths are acquire, delegate, or stop.
 
 Use the `vscode_askQuestions` tool:
 
@@ -115,7 +101,7 @@ Use the `vscode_askQuestions` tool:
 [
   {
     "header": "Role acquisition",
-    "question": "Can you get the {REQUIRED_ROLE} role?",
+    "question": "Can you get (or, if it's PIM-eligible, activate) the {REQUIRED_ROLE} role?",
     "options": [
       { "label": "Yes, I can get this role", "recommended": true },
       { "label": "No" }
@@ -129,14 +115,16 @@ Use the `vscode_askQuestions` tool:
 
   **Message:**
 
-  Great — once your admin grants **{REQUIRED_ROLE}**, come back and run this
-  step again.
+  Great — once your admin grants **{REQUIRED_ROLE}** (or you activate it in PIM),
+  come back and run this step again and I'll re-check.
 
   **End message.**
 
-  Set `GATE_RESULT = "stop"`, `GATE_REASON = "acquiring_role"`, and return.
+  Set `GATE_RESULT = "stop"`, `GATE_REASON = "acquiring_role"`, and return. (After the
+  role is assigned/activated and the caller re-runs, this gate re-runs the query and
+  only a proving query passes.)
 
-- If **No**: continue to question 3.
+- If **No**: continue to the delegation question.
 
 Use the `vscode_askQuestions` tool:
 
@@ -165,7 +153,8 @@ Use the `vscode_askQuestions` tool:
 
   Set `GATE_RESULT = "stop"`, `GATE_REASON = "delegated"`, and return. (A caller
   that implements a delegated-admin runbook uses this reason to hand over the full
-  step list and resume on the returned identifier instead of halting.)
+  step list and resume on the returned identifier instead of halting. The re-run
+  still re-verifies programmatically.)
 
 - If **No**:
 
@@ -178,7 +167,7 @@ Use the `vscode_askQuestions` tool:
 
   Set `GATE_RESULT = "stop"`, `GATE_REASON = "declined"`, and return.
 
-For non-Entra roles, keep the existing stop behavior:
+For non-Entra programmatic roles, keep the existing stop behavior:
 
 **Message:**
 
@@ -189,12 +178,18 @@ this step again.
 **End message.**
 
 - Set `GATE_RESULT = "stop"`, `GATE_REASON = "declined"`.
-- Return to the calling file. **The caller must halt — do not proceed.**
+- Return to the calling file. **The caller must halt — do not proceed.** Attestation
+  cannot substitute for a proven-absent programmatic role.
 
-**If the query itself fails** for an unrelated reason (network, not logged in):
-retry once. If it still fails, **do not** assume pass — fall back to the
-attestation gate in G.2 (so a check error never silently grants access),
-recording `note` = the query error.
+**If the query could NOT determine the role (evidence unavailable)** — a network
+error, not being signed in, or an `Insufficient privileges` /
+`Authorization_RequestDenied` error that means the caller lacks rights to **read**
+the directory, so absence is **not** proven (mirror the existing pattern in
+`connect/azure/app-registration.md` section B.2): retry once. If it still cannot
+determine, fall back to the attestation gate in G.2 (so a check error never silently
+grants *or* denies access), recording `note` = the query error. **Attestation to
+`"pass"` is permitted only on this unavailable-evidence path — never when a
+successful query proved the role absent.**
 
 ---
 
@@ -227,9 +222,14 @@ Use the `vscode_askQuestions` tool:
 ]
 ```
 
-For Entra app/admin roles, use the same 3-question triage sequence from G.1
-(have role -> can get role -> someone else will do this) instead of a single
-yes/no attestation question.
+For Entra app/admin roles reaching G.2 as the **unavailable-evidence fallback**
+(the query errored or couldn't read the directory), use a 3-question sequence
+instead of a single yes/no: *have role* → *can get role* → *someone else will do
+this*. Here — and only here, because the directory could not be read — a "Yes, I
+have this role" answer legitimately attests to `"pass"`; it does not contradict any
+proven-absent result. If the user answers **No** to "have role", fall through to the
+*can get role* / *someone else* questions exactly as in G.1's acquisition/delegation
+triage (both end in `"stop"`).
 
 **If the user chose "Yes, I have this role":**
 - Set `GATE_RESULT = "pass"`.
