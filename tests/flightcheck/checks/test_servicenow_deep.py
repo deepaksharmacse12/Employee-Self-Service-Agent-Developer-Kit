@@ -82,6 +82,57 @@ def test_flow_status_one_disabled_warns_and_fails_row():
     assert "Enable" in disabled.remediation
 
 
+def test_flow_status_labels_each_row_by_product():
+    """Each SN-FLOW row must carry the correct [HRSD]/[ITSM] product label."""
+    from flightcheck.checks.servicenow import _check_flow_status
+    flows = [
+        pp.flow(display_name="ServiceNow HRSD Create Case", state="Started"),
+        pp.flow(display_name="ServiceNow ITSM Create Ticket", state="Started"),
+    ]
+    results = _check_flow_status(SimpleNamespace(), flows)
+    assert "[HRSD]" in _by_id(results, "SN-FLOW-001").description
+    assert "[ITSM]" in _by_id(results, "SN-FLOW-002").description
+
+
+def test_flow_status_itsm_not_misclassified_by_host_prefix():
+    """An ``ESS HR ServiceNow ITSM ...`` name must classify as ITSM, not HRSD.
+
+    Regression: the old classifier checked the ``HR Service`` substring first,
+    so the ``HR ServiceNow`` host-agent prefix pulled real ITSM flows into HRSD.
+    """
+    from flightcheck.checks.servicenow import _check_flow_status
+    flows = [
+        pp.flow(display_name="ESS HR ServiceNow ITSM Common Orchestrator",
+                state="Started"),
+        pp.flow(display_name="ESS HR ServiceNow HRSD Case Orchestrator",
+                state="Started"),
+    ]
+    results = _check_flow_status(SimpleNamespace(), flows)
+    assert "[ITSM]" in _by_id(results, "SN-FLOW-001").description
+    assert "[HRSD]" in _by_id(results, "SN-FLOW-002").description
+
+    summary = _by_id(results, "SN-FLOW-000")
+    assert "1 HRSD" in summary.result
+    assert "1 ITSM" in summary.result
+
+
+def test_categorize_servicenow_flows_by_explicit_token():
+    """Direct coverage of the shared categorizer: token wins over host prefix."""
+    from flightcheck.checks.external_systems import _categorize_servicenow_flows
+    flows = [
+        pp.flow(display_name="ESS HR ServiceNow ITSM Common Orchestrator"),
+        pp.flow(display_name="servicenow hrsd create case"),  # case-insensitive
+        pp.flow(display_name="ServiceNow Generic Helper"),     # neither token
+    ]
+    hrsd, itsm, other = _categorize_servicenow_flows(flows)
+    assert [f["properties"]["displayName"] for f in itsm] == [
+        "ESS HR ServiceNow ITSM Common Orchestrator"]
+    assert [f["properties"]["displayName"] for f in hrsd] == [
+        "servicenow hrsd create case"]
+    assert [f["properties"]["displayName"] for f in other] == [
+        "ServiceNow Generic Helper"]
+
+
 # --------------------------------------------------------------------------
 # _check_template_configs — SN-CFG-001 + per-pack SN-CFG-010 / SN-CFG-020
 # --------------------------------------------------------------------------
