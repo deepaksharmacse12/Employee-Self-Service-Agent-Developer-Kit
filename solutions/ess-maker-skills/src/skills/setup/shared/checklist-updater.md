@@ -32,7 +32,8 @@ not narrate tool calls.
 - The mirror record in `.local/connect/workday/config.json` is updated (see
   `config-schema.md`): `setupStatus["{STEP_ID}"]` for a shared row, or
   `productStatus["{PRODUCT}"]["{STEP_ID}"]` for a per-product row (one carrying a
-  hidden `product:` tag, e.g. the ServiceNow `S6.1` install / `S6.6` portal rows).
+  hidden `product:` tag, e.g. the ServiceNow `S6.1` install, `S6.3` turn-on-flows,
+  `S6.4` connect-invoker, `S6.5` share, and `S6.6` portal rows).
 
 ---
 

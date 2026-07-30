@@ -58,10 +58,11 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    by copying the template `src/skills/setup/servicenow/tasks.md`, dropping the
    auth-path group that does not match `authType` (see **Auth path**; if `authType`
    is not set yet, keep both variant groups out of the rendered copy for now and add
-   the matching one once S3.1 runs), and dropping each **group 6 product sub-block**
-   (6a HR, 6b IT) whose product is not in `scope` — keep only the always-on **6c.
-   Shared connection** sub-block until `scope` is known, then add the in-scope
-   product sub-block(s). Do not hand-edit its status markers — the shared
+   the matching one once S3.1 runs), and dropping the **group-6 per-product rows**
+   (the install sub-block **6b** and the flows-and-finish sub-block **6d**) for any
+   product not in `scope` — keep only the always-on **6a. Create connections** and
+   **6c. Shared connection** sub-blocks until `scope` is known, then add the in-scope
+   product's **6b**/**6d** rows. Do not hand-edit its status markers — the shared
    checklist-updater writes them.
 
 2. **Resume point.** Read `setupStatus` **and** `productStatus` in
@@ -69,7 +70,8 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    file is only the view). If the file or a key is missing, treat every row as
    `pending`. A **shared** row counts as complete only when
    `setupStatus["{Step}"].state` is `"done"`; a **per-product** row (the install
-   `S6.1` and portal `S6.6`, one per in-scope product) counts as complete only when
+   `S6.1`, turn-on-flows `S6.3`, connect-invoker `S6.4`, share `S6.5`, and portal
+   `S6.6`, one set per in-scope product) counts as complete only when
    `productStatus["{product}"]["{Step}"].state` is `"done"`. A product is fully set
    up only when the shared steps **and** that product's own steps are all `done`.
 
@@ -224,10 +226,14 @@ references to those connections (`SN-DV-CONN-001`, **S6.2**), turns on the Servi
 cloud flows (`SN-FLOW-*`,
 **S6.3**), connects the ServiceNow flow invoker connection to the agent's flows
 (maker-attested, **S6.4**), shares the connection parameters onto the portal-owned
-reference (**S6.5**), and sets the Portal Base URL to `/sp` for each pack
+   reference (**S6.5**), and sets the confirmed Portal Base URL for each pack
 (`SN-BASEURL-001`, **S6.6**). Connect (S6.4) and share (S6.5) have no checkpoint and
 are attested by the maker, so a resume continues from
-whichever is incomplete.
+whichever is incomplete. The pack install (**S6.1**), turn-on-flows (**S6.3**),
+connect-invoker (**S6.4**), share (**S6.5**), and portal (**S6.6**) rows are
+recorded **per product** under `productStatus.<product>`; only the shared bind
+(**S6.2**) and the up-front connection creation (**S6.0**) mirror under the flat
+`setupStatus`.
 Every step is performed by the maker by hand and verified by the read-only
 flightcheck checkpoint (create and share are maker-attested). The chain runs
 create connections → install → bind → turn on flows → connect and share → portal, in

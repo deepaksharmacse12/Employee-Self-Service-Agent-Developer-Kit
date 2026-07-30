@@ -33,10 +33,10 @@ password to any config file.
 | S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | prog (maker installs, checkpoint verifies) |
 | S6.2 | ServiceNow connection reference bound by the maker (connection health confirmed when the maker connects the flow invoker at S6.4) | prog; auth type may require attestation |
 | S6.2 | `SN-DV-CONN-001` — Dataverse connection reference active | prog |
-| S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled | prog |
-| S6.4 | ServiceNow flow invoker connection connected by the maker | attest |
-| S6.5 | Connection parameters shared by the maker onto the portal-owned reference | attest |
-| S6.6 | `SN-BASEURL-001` — portal base URL present | prog; else attest |
+| S6.3 | `SN-FLOW-*` — ServiceNow cloud flows enabled *(per-product: `productStatus.<product>`)* | prog |
+| S6.4 | ServiceNow flow invoker connection connected by the maker *(per-product: `productStatus.<product>`)* | attest |
+| S6.5 | Connection parameters shared by the maker onto the portal-owned reference *(per-product: `productStatus.<product>`)* | attest |
+| S6.6 | `SN-BASEURL-001` — portal base URL present *(per-product: `productStatus.<product>`)* | prog; else attest |
 Run any individually-registered checkpoint by itself:
 ```
 python scripts/flightcheck/cli.py --checkpoint <ID>
@@ -60,7 +60,11 @@ in-chat render is the only place the user sees manual steps; never ask a user to
 attest to steps they have not been shown.
 `SN-FLOW-*` is a data-driven family. Expand S6.3 into one checkbox per emitted flow
 result, using the checkpoint description as the visible flow label, and update each
-generated row immediately. Do not batch the flow updates.
+generated row immediately. Do not batch the flow updates. **S6.3 is per-product:**
+each `SN-FLOW-*` row is labelled `HRSD` or `ITSM`, so route each flow update to that
+product's row (`PRODUCT="hrsd"` / `"itsm"` → `productStatus.<product>`). A product's
+S6.3 is complete only when **all** of that product's flow rows pass; complete each
+product independently.
 **Build order and resume.** Always run P6.0 first, then P6.1 (restore state) and
 P6.1a (ensure the shared ServiceNow + Dataverse connections exist), then run P6.2's
 pack lookup before the first incomplete row. These are idempotent and rehydrate
@@ -449,18 +453,30 @@ Now I'll check that the Dataverse connection is bound to an active connection.
 python scripts/flightcheck/cli.py --checkpoint SN-DV-CONN-001
 ```
 Render the result. This checkpoint matches
-the Dataverse connection reference by its connector
-(`shared_commondataserviceforapps`), so it validates the ServiceNow pack's own
-Dataverse reference (e.g. `new_sharedcommondataserviceforapps_…`) — not the
-Workday pack's `DV-CONN-001`, which keys on a Workday-specific reference suffix
-and would report `NotConfigured` in a ServiceNow-only environment. On `FAILED` /
-`NotConfigured`, show:
+**every** Dataverse connection reference by its connector
+(`shared_commondataserviceforapps`), so it validates *both* the ServiceNow pack's
+own reference (e.g. `new_sharedcommondataserviceforapps_…`) **and** the base
+Employee Self-Service agent's reference (`msdyn_Dataverse`, installed back in the
+base-agent step). One unbound reference fails the whole step even when the others
+are bound — so the failure is often the base agent's `msdyn_Dataverse`, not the
+ServiceNow pack. (It is not the Workday pack's `DV-CONN-001`, which keys on a
+Workday-specific suffix and reports `NotConfigured` in a ServiceNow-only
+environment.)
+
+On `FAILED` / `NotConfigured`, **read the checkpoint's `result` line to see which
+reference(s) are unbound** (it lists them by logical name, e.g.
+`msdyn_Dataverse`) and name them in the message so the maker binds the right one.
+Show:
 **Message:**
 
-The Dataverse connection for the ServiceNow pack isn't bound to an active
-connection yet. In Copilot Studio, open your agent's **Connections**, find the
-Microsoft Dataverse connection, and bind or re-authenticate it with your maker
-account. Then tell me and I'll re-check.
+One or more Microsoft Dataverse connection references still need binding:
+**{unbound_reference_names}** (from the checkpoint result). Note this often
+includes **`msdyn_Dataverse`** — the base Employee Self-Service agent's own
+Dataverse reference — not the ServiceNow pack's, so it's easy to miss even after
+you've bound the ServiceNow one. In Copilot Studio, open your agent's
+**Connections** (or Power Apps > your solution > **Connection references**), find
+each reference listed above, and point it at an active Dataverse connection you
+own. Then tell me and I'll re-check.
 
 **End message.**
 Re-run until it passes. If the result is `Skipped` because a Dataverse token is
@@ -510,8 +526,9 @@ python scripts/flightcheck/cli.py --scope servicenow --no-open
 ```
 Read the `SN-FLOW-*` rows from the results (they are emitted by the ServiceNow scope
 run, not standalone `--checkpoint` IDs; ignore rows owned by other steps here). If every emitted flow row passes, expand/update S6.3 as one
-checkbox per flow result with `GATE="prog"`, persisting each generated row
-immediately. If any flow row fails, show:
+checkbox per flow result with `GATE="prog"`, routing each to its pack's product
+(`PRODUCT` = the flow's `HRSD`/`ITSM` label → `productStatus.<product>`) and
+persisting each generated row immediately. If any flow row fails, show:
 **Message:**
 
 One or more ServiceNow cloud flows are turned off. In Power Platform, open the
@@ -524,7 +541,10 @@ row `in-progress` or `blocked` according to the checkpoint result; do not comple
 the family until every emitted flow row passes. Do not invent flow names — use the
 checkpoint descriptions.
 When every flow row passes, merge `.local/connect/servicenow/config.json` to record
-this step:
+this step. Per-product completion is written by the checklist-updater under
+`productStatus.<product>.S6.3` (routed by each flow's pack label, above); the flat
+`flows` summary below is an aggregate indicator — set `state` to `on` only once
+every **in-scope** product's flows are on:
 ```json
 {
   "flows": { "state": "on", "verifiedBy": "programmatic" }
@@ -542,7 +562,11 @@ on, the binding lands on the final, activated flow definition and will not go st
 
 Neither stage has a programmatic checkpoint, so both are **attested by the maker**:
 they are separate rows so a resume continues from whichever the maker has not yet
-confirmed.
+confirmed. **Both S6.4 and S6.5 are per-product rows** (`productStatus.<product>`):
+the maker binds and shares each installed pack's flow invoker, so record S6.4 and
+S6.5 **once per in-scope product** (`PRODUCT="hrsd"` / `"itsm"`). When a single
+maker action covers every installed pack at once, confirm once and mark each in-scope
+product's row from that confirmation.
 **Message:**
 
 Now let's connect the ServiceNow connection to your agent's flows so it shows as
@@ -612,7 +636,10 @@ can discover the ServiceNow connection. Preserve every existing key:
 }
 ```
 Connecting has no checkpoint, so this is an attested gate: update S6.4 with
-`GATE="attest"` and `ACK=true` only when the maker confirms. Persist immediately.
+`GATE="attest"` and `ACK=true` only when the maker confirms, passing
+`PRODUCT="hrsd"` / `"itsm"` for each in-scope product so the row mirrors under
+`productStatus.<product>.S6.4`. The `connections.servicenow` / `status` state above
+is connection-level and stays shared in the top-level config. Persist immediately.
 
 **S6.5 (share).** Only after the maker confirms they shared the connection, merge the
 share artifact and record the row:
@@ -620,14 +647,39 @@ share artifact and record the row:
 { "parameterSharing": "shared" }
 ```
 Sharing has no checkpoint, so this is an attested gate: update S6.5 with
-`GATE="attest"` and `ACK=true` only when the maker confirms. If the maker has not yet
-confirmed sharing, leave S6.5 `in-progress`, keep S6.4 `done`, and re-prompt for the
-share confirmation before recording S6.5. Persist immediately.
+`GATE="attest"` and `ACK=true` only when the maker confirms, passing `PRODUCT` for
+each in-scope product so the row mirrors under `productStatus.<product>.S6.5`. If the
+maker has not yet confirmed sharing, leave S6.5 `in-progress`, keep S6.4 `done`, and
+re-prompt for the share confirmation before recording S6.5. Persist immediately.
 ---
 ## P6.6 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.6)*
-Derive `{PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
-`https://contoso.service-now.com/sp`. Merge it into
-`.local/connect/servicenow/config.json` as `portalBaseUrl` before verification.
+Derive `{SUGGESTED_PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
+`https://contoso.service-now.com/sp`. This is only a suggestion: a customer's
+ServiceNow portal may use a different path. Do not save or use the suggested URL
+until the maker confirms it.
+
+**Message:**
+
+We need your ServiceNow service portal URL. Is this your ServiceNow service portal
+URL: **{SUGGESTED_PORTAL_BASE_URL}**?
+
+**End message.**
+
+Use the question tool with options **Yes, that's correct** and **No**.
+
+- On **Yes, that's correct**, set `{PORTAL_BASE_URL}` to
+  `{SUGGESTED_PORTAL_BASE_URL}`.
+- On **No**, ask for the correct value with the question tool:
+  - Header: **Service portal URL**
+  - Question: **What is your correct ServiceNow service portal URL?**
+  - Allow free-form input and do not offer a default value.
+  - Require a complete `https://` URL. If the answer is missing the scheme or is
+    not a valid absolute URL, ask again. Do not append `/sp` or any other path.
+  - Set `{PORTAL_BASE_URL}` to the URL the maker provides.
+
+Only after `{PORTAL_BASE_URL}` has been confirmed or provided, merge it into
+`.local/connect/servicenow/config.json` as `portalBaseUrl`. Use this confirmed URL
+in every instruction and value below.
 **Message:**
 
 One important setting the packs don't fill in for you: the **ServiceNow Portal

@@ -109,22 +109,28 @@ the two Entra sign-in methods are offered.
 This group has four **sub-blocks**, run in order. The **create-connections**
 sub-block (6a) is always rendered and comes **first**: the maker creates the Power
 Platform ServiceNow and Dataverse connection objects up front, using the sign-in
-method from group 4/5, so nothing needs re-authenticating later. The **product**
-sub-blocks — *ServiceNow HR* (6b) and *ServiceNow IT* (6c) — are **variant groups**,
-each rendered **only when that product is in `scope`** (like the mutually-exclusive
-auth groups 4 and 5): if only ITSM is selected, the HR sub-block is omitted
-entirely, and vice-versa. Their rows carry a `product:` tag (`hrsd` / `itsm`) and
-mirror under `productStatus.<product>` in `.local/connect/servicenow/config.json`.
-The **shared connection** sub-block (6d) is always rendered — its steps **bind** the
-pack's connection references to the connections created in 6a, turn on the flows,
-and share the invoker, and mirror under the flat `setupStatus` block. Routing rule:
-a row **with** a `product:` tag → `productStatus.<product>`; a row **without** one →
-`setupStatus` (see [`checklist-updater.md`](../shared/checklist-updater.md)).
+method from group 4/5, so nothing needs re-authenticating later. The **install**
+sub-block (6b) and the **flows-and-finish** sub-block (6d) are **variant groups** —
+*ServiceNow HR* and *ServiceNow IT* — each rendered **only when that product is in
+`scope`** (like the mutually-exclusive auth groups 4 and 5): if only ITSM is
+selected, the HR rows are omitted entirely, and vice-versa. Their rows carry a
+`product:` tag (`hrsd` / `itsm`) and mirror under `productStatus.<product>` in
+`.local/connect/servicenow/config.json`, because the extension pack, its cloud
+flows, its flow-invoker binding, and its portal URL are all installed **per
+product**. The **shared connection** sub-block (6c) is always rendered — its single
+step binds the pack's connection references to the connections created in 6a (one
+ServiceNow connection is shared by every installed pack) and mirrors under the flat
+`setupStatus` block. Routing rule: a row **with** a `product:` tag →
+`productStatus.<product>`; a row **without** one → `setupStatus` (see
+[`checklist-updater.md`](../shared/checklist-updater.md)).
 
 Connection *creation* (6a) needs only the sign-in method and does **not** depend on
-the pack, so it runs before install. Connection-*reference* binding and flow
-activation (6d) act on artifacts that ship **inside** the pack, so they stay after
-the installs (6b/6c).
+the pack, so it runs before install. The pack install (6b), connection-*reference*
+binding (6c), and flow activation / invoker / share / portal (6d) act on artifacts
+that ship **inside** the pack, so they stay after the installs. The shared bind (6c)
+sits between install (6b) and the per-product flow steps (6d): the references it
+binds ship in the pack, and the flows in 6d can only run once those references are
+bound.
 
 #### 6a. Create connections
 
@@ -133,39 +139,45 @@ the installs (6b/6c).
 - [ ] **Create the ServiceNow and Dataverse connections** — Create the Power Platform ServiceNow connection (using your chosen sign-in method) and the Dataverse connection now, so the extension pack's references bind to existing connections later without re-authenticating.
   <!-- id: S6.0 | role: Environment Maker | skill: skill-6 | automatable: No (maker creates; confirmed once bound at S6.2) | checkpoints: maker-attested (SN-DV-CONN-001 confirms at bind) | gate: attest | status: pending -->
 
-#### 6b. ServiceNow HR (HRSD)
+#### 6b. Install the extension pack
 
-<!-- variant: scope.hrsd — rendered only when HRSD is in scope; omitted otherwise -->
+<!-- variant: scope.hrsd / scope.itsm — one install row per in-scope product; a product's row is omitted when that product is out of scope. -->
 
 - [ ] **Install the ServiceNow HR extension pack** — Add the ServiceNow HR (HRSD) extension pack to your agent in Copilot Studio.
   <!-- id: S6.1 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: No (maker installs; checkpoint verifies) | checkpoints: SN-PKG-001 | gate: prog (maker installs, checkpoint verifies) | status: pending -->
-<!-- future: S6.7 | product: hrsd — Install the ServiceNow `sn_hr_core` plugin (HR only). Reserved; render + mint SN-HR-PLUGIN-001 when implemented. -->
-<!-- future: S6.8 | product: hrsd — Grant the required ServiceNow HR table access. Reserved; render when implemented. -->
-- [ ] **Set the HR Portal Base URL** — Point the HR (HRSD) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
-  <!-- id: S6.6 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
-
-#### 6c. ServiceNow IT (ITSM)
-
-<!-- variant: scope.itsm — rendered only when ITSM is in scope; omitted otherwise -->
-
 - [ ] **Install the ServiceNow IT extension pack** — Add the ServiceNow IT (ITSM) extension pack to your agent in Copilot Studio.
   <!-- id: S6.1 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: No (maker installs; checkpoint verifies) | checkpoints: SN-PKG-001 | gate: prog (maker installs, checkpoint verifies) | status: pending -->
-<!-- future: S6.8 | product: itsm — Grant the required ServiceNow IT table access. Reserved; render when implemented. -->
-- [ ] **Set the IT Portal Base URL** — Point the IT (ITSM) pack at your ServiceNow Service Portal (`/sp`) so the links the agent returns open the right pages.
-  <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
 
-#### 6d. Shared connection
+#### 6c. Shared connection
 
 <!-- Always rendered — one ServiceNow connection is shared by every installed pack. -->
 
 - [ ] **Connect ServiceNow and Dataverse** — Bind the ServiceNow and Dataverse connection references (shipped by the pack) to the connections you created in 6a, so the agent can talk to ServiceNow and read its configuration.
   <!-- id: S6.2 | role: Environment Maker | skill: skill-6 | automatable: No (maker binds; checkpoint verifies) | checkpoints: SN-DV-CONN-001; SN connection health confirmed when maker connects the flow invoker at S6.4 | gate: prog; else attest for auth-type | status: pending -->
-- [ ] **Turn on the ServiceNow flows** — Switch on the background flows that carry requests between the agent and ServiceNow.
-  <!-- id: S6.3 | role: Environment Maker | skill: skill-6 | automatable: No (maker turns on; checkpoint verifies) | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
-- [ ] **Connect ServiceNow to your agent's flows** — Bind the ServiceNow flow invoker connection so Copilot Studio shows the connection as connected.
-  <!-- id: S6.4 | role: Environment Maker | skill: skill-6 | automatable: No (maker connects; attested) | checkpoints: maker-attested | gate: attest | status: pending -->
-- [ ] **Share the ServiceNow connection parameters** — Share the connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
-  <!-- id: S6.5 | role: Environment Maker | skill: skill-6 | automatable: No (maker shares; attested) | checkpoints: maker-attested (SN-FLOWCONN-001 confirms connection health) | gate: attest | status: pending -->
+
+#### 6d. Turn on flows and finish (per product)
+
+<!-- variant: scope.hrsd / scope.itsm — each product's cloud flows, flow-invoker binding, connection share, and portal URL are installed per pack; a product's rows are omitted when that product is out of scope. -->
+
+- [ ] **Turn on the ServiceNow HR flows** — Switch on the HR (HRSD) background flows that carry requests between the agent and ServiceNow.
+  <!-- id: S6.3 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: No (maker turns on; checkpoint verifies) | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
+- [ ] **Connect ServiceNow HR to your agent's flows** — Bind the ServiceNow flow invoker connection for HR (HRSD) so Copilot Studio shows the connection as connected.
+  <!-- id: S6.4 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: No (maker connects; attested) | checkpoints: maker-attested | gate: attest | status: pending -->
+- [ ] **Share the ServiceNow HR connection parameters** — Share the HR (HRSD) connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
+  <!-- id: S6.5 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: No (maker shares; attested) | checkpoints: maker-attested (SN-FLOWCONN-001 confirms connection health) | gate: attest | status: pending -->
+- [ ] **Set the HR Portal Base URL** — Point the HR (HRSD) pack at your confirmed ServiceNow Service Portal URL so the links the agent returns open the right pages.
+  <!-- id: S6.6 | product: hrsd | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
+<!-- future: S6.7 | product: hrsd — Install the ServiceNow `sn_hr_core` plugin (HR only). Reserved; render + mint SN-HR-PLUGIN-001 when implemented. -->
+<!-- future: S6.8 | product: hrsd — Grant the required ServiceNow HR table access. Reserved; render when implemented. -->
+- [ ] **Turn on the ServiceNow IT flows** — Switch on the IT (ITSM) background flows that carry requests between the agent and ServiceNow.
+  <!-- id: S6.3 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: No (maker turns on; checkpoint verifies) | checkpoints: SN-FLOW-* | gate: prog | status: pending -->
+- [ ] **Connect ServiceNow IT to your agent's flows** — Bind the ServiceNow flow invoker connection for IT (ITSM) so Copilot Studio shows the connection as connected.
+  <!-- id: S6.4 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: No (maker connects; attested) | checkpoints: maker-attested | gate: attest | status: pending -->
+- [ ] **Share the ServiceNow IT connection parameters** — Share the IT (ITSM) connection parameters onto the portal-owned reference so end users inherit your connection instead of being prompted to create their own.
+  <!-- id: S6.5 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: No (maker shares; attested) | checkpoints: maker-attested (SN-FLOWCONN-001 confirms connection health) | gate: attest | status: pending -->
+- [ ] **Set the IT Portal Base URL** — Point the IT (ITSM) pack at your confirmed ServiceNow Service Portal URL so the links the agent returns open the right pages.
+  <!-- id: S6.6 | product: itsm | role: Environment Maker | skill: skill-6 | automatable: Yes | checkpoints: SN-BASEURL-001 | gate: prog; else attest | status: pending -->
+<!-- future: S6.8 | product: itsm — Grant the required ServiceNow IT table access. Reserved; render when implemented. -->
 ### 7. Validate and hand off
 
 - [ ] **Run an end-to-end validation** — Ask the agent a real ServiceNow question and confirm it returns your live data with working portal links.

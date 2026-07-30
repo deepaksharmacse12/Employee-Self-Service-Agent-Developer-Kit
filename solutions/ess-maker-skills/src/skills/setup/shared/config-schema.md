@@ -95,23 +95,29 @@ view of the same data.
 
 ### Per-product status fields (`productStatus`, ServiceNow multi-product)
 
-ServiceNow can install **both** products on one agent (HRSD **and** ITSM). A few
-setup steps are per-product rather than shared: the extension-pack install
-(`S6.1`), the Portal Base URL (`S6.6`), and future HR-only steps (e.g. the
-`sn_hr_core` plugin). Those mirror under a `productStatus` object keyed by the
-scope short name (`hrsd` / `itsm`), then by Step ID — same entry shape as
-`setupStatus`. The shared connection steps (`S6.2`–`S6.5`, one ServiceNow
-connection for all packs) stay in the flat `setupStatus` block.
+ServiceNow can install **both** products on one agent (HRSD **and** ITSM). Most
+group-6 setup steps are per-product rather than shared: the extension-pack install
+(`S6.1`), turning on the pack's cloud flows (`S6.3`), binding the flow invoker
+(`S6.4`), sharing the connection parameters (`S6.5`), the Portal Base URL (`S6.6`),
+and future HR-only steps (e.g. the `sn_hr_core` plugin) — each pack ships and
+enables its **own** flows, invoker binding, and portal URL. Those mirror under a
+`productStatus` object keyed by the scope short name (`hrsd` / `itsm`), then by
+Step ID — same entry shape as `setupStatus`. Only the **shared connection** step
+(`S6.2`, one ServiceNow connection bound for all packs) — plus the up-front
+connection creation (`S6.0`) — stay in the flat `setupStatus` block.
 
 ```json
 {
   "productStatus": {
     "hrsd": {
-      "S6.1": { "state": "done",    "checkpoint": "SN-001",        "gate": "prog", "verifiedBy": "programmatic", "note": "Install the ServiceNow HRSD extension pack into the agent." },
+      "S6.1": { "state": "done",    "checkpoint": "SN-PKG-001",    "gate": "prog", "verifiedBy": "programmatic", "note": "Install the ServiceNow HRSD extension pack into the agent." },
+      "S6.3": { "state": "done",    "checkpoint": "SN-FLOW-*",     "gate": "prog", "verifiedBy": "programmatic", "note": "Turn on the ServiceNow HRSD cloud flows." },
+      "S6.4": { "state": "pending", "checkpoint": "maker-attested", "gate": "attest", "verifiedBy": null },
+      "S6.5": { "state": "pending", "checkpoint": "maker-attested", "gate": "attest", "verifiedBy": null },
       "S6.6": { "state": "pending", "checkpoint": "SN-BASEURL-001", "gate": "prog", "verifiedBy": null }
     },
     "itsm": {
-      "S6.1": { "state": "done",    "checkpoint": "SN-001",        "gate": "prog", "verifiedBy": "programmatic", "note": "Install the ServiceNow ITSM extension pack into the agent." }
+      "S6.1": { "state": "done",    "checkpoint": "SN-PKG-001",    "gate": "prog", "verifiedBy": "programmatic", "note": "Install the ServiceNow ITSM extension pack into the agent." }
     }
   }
 }
