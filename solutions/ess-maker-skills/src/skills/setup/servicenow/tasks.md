@@ -137,7 +137,7 @@ bound.
 <!-- Always rendered — the ServiceNow and Dataverse connection objects every pack shares are created here, before install. -->
 
 - [ ] **Create the ServiceNow and Dataverse connections** — Create the Power Platform ServiceNow connection (using your chosen sign-in method) and the Dataverse connection now, so the extension pack's references bind to existing connections later without re-authenticating.
-  <!-- id: S6.0 | role: Environment Maker | skill: skill-6 | automatable: No (maker creates; confirmed once bound at S6.2) | checkpoints: maker-attested (SN-DV-CONN-001 confirms at bind) | gate: attest | status: pending -->
+  <!-- id: S6.0 | role: Environment Maker | skill: skill-6 | automatable: Partial (maker creates; checkpoint verifies) | checkpoints: SN-CONN-OBJECTS-001 | gate: prog; attest only when inventory is unavailable | status: pending -->
 
 #### 6b. Install the extension pack
 

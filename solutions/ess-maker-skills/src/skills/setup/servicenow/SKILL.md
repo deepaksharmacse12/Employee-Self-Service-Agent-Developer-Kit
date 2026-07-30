@@ -229,7 +229,8 @@ When it returns, go back to **Start** to resume at the next unverified row.
 
 Read `src/skills/setup/servicenow/install-servicenow-extension-pack.md` and follow
 it. That playbook role-gates (Environment Maker), has the maker create the shared
-ServiceNow and Dataverse connections up front (maker-attested, **S6.0**), guides the
+ServiceNow and Dataverse connections up front and verifies both are connected
+(`SN-CONN-OBJECTS-001`, **S6.0**), guides the
 extension-pack install for each in-scope product and verifies it (`SN-PKG-001`,
 **S6.1**), guides the maker to bind the ServiceNow and Dataverse connection
 references to those connections (`SN-DV-CONN-001`, **S6.2**), turns on the ServiceNow
@@ -245,7 +246,7 @@ recorded **per product** under `productStatus.<product>`; only the shared bind
 (**S6.2**) and the up-front connection creation (**S6.0**) mirror under the flat
 `setupStatus`.
 Every step is performed by the maker by hand and verified by the read-only
-flightcheck checkpoint (create and share are maker-attested). The chain runs
+flightcheck checkpoint (connect-invoker and share are maker-attested). The chain runs
 create connections → install → bind → turn on flows → connect and share → portal, in
 that order: connection *creation* needs only the sign-in method (no pack), but the
 connection *references* and flows ship inside the pack, so a flow can only hold

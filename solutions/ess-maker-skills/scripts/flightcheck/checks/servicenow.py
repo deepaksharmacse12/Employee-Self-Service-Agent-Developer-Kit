@@ -15,7 +15,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..runner import CheckResult, Priority, Role, Status
-from .connections import check_connector_connections
+from .connections import (
+    check_connector_connections,
+    filter_connections_by_connector,
+    get_connection_status,
+)
 from .external_systems import _categorize_servicenow_flows
 
 DOC_BASE = "https://learn.microsoft.com/en-us/copilot/microsoft-365/employee-self-service"
@@ -25,7 +29,7 @@ EXPECTED_TEMPLATE_CONFIGS = {
     "hrsd": [
         "ServiceNowHRSDCreateCase",
         "ServiceNowHRSDGetCaseDetails",
-        "ServiceNowHRSDGetCasesList",
+        "ServiceNowHRSDGetUserCases",
     ],
     "itsm": [
         "ServiceNowITSMCreateTicket",
@@ -73,6 +77,9 @@ def run_servicenow_checks(runner) -> list[CheckResult]:
         return results
 
     print("\n  Running ServiceNow deep validation...")
+
+    # --- Pre-install connection objects (SN-CONN-OBJECTS-001, S6.0) ---
+    results.extend(_check_connection_objects(runner))
 
     # --- Connection References ---
     results.extend(_check_connections(runner))
@@ -146,6 +153,85 @@ def _check_connections(runner) -> list[CheckResult]:
         not_found_remediation="Configure ServiceNow connections in the environment. Run /connect servicenow.",
         doc_link=f"{DOC_BASE}/servicenow",
     )
+
+
+def _check_connection_objects(runner) -> list[CheckResult]:
+    """Verify the pre-install ServiceNow and Dataverse connection objects."""
+    roles = [Role.POWER_PLATFORM_ADMIN.value]
+    pp = getattr(runner, "pp_admin", None)
+    env_id = getattr(runner, "env_id", None)
+    description = "ServiceNow and Dataverse connection objects are connected"
+
+    if pp is None or not env_id:
+        return [CheckResult(
+            checkpoint_id="SN-CONN-OBJECTS-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.MANUAL.value,
+            description=description,
+            result="Power Platform Admin API not available — connection objects could not be verified.",
+            roles=roles,
+        )]
+
+    try:
+        connections = pp.get_connections(env_id)
+    except Exception as exc:  # noqa: BLE001 — report an actionable warning
+        connections = {"_error": str(exc)}
+
+    if isinstance(connections, dict) and "_error" in connections:
+        return [CheckResult(
+            checkpoint_id="SN-CONN-OBJECTS-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.MANUAL.value,
+            description=description,
+            result=f"Unable to list Power Platform connections: {connections['_error']}",
+            remediation="Run FlightCheck as a Power Platform Administrator, then retry.",
+            roles=roles,
+        )]
+
+    required = {
+        "ServiceNow": ["shared_service-now", "service-now", "servicenow"],
+        "Microsoft Dataverse": ["shared_commondataserviceforapps"],
+    }
+    states = {}
+    for label, keywords in required.items():
+        matches = filter_connections_by_connector(connections or [], keywords)
+        connected = [conn for conn in matches if get_connection_status(conn) == "Connected"]
+        states[label] = (matches, connected)
+
+    missing = [label for label, (matches, _) in states.items() if not matches]
+    unhealthy = [
+        label for label, (matches, connected) in states.items()
+        if matches and not connected
+    ]
+    if missing:
+        return [CheckResult(
+            checkpoint_id="SN-CONN-OBJECTS-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+            description=description,
+            result=f"Missing required connection object(s): {', '.join(missing)}.",
+            remediation="Create the missing connection(s) in Power Apps > Connections, then retry.",
+            doc_link=f"{DOC_BASE}/servicenow", roles=roles,
+        )]
+    if unhealthy:
+        return [CheckResult(
+            checkpoint_id="SN-CONN-OBJECTS-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.FAILED.value,
+            description=description,
+            result=f"No connected connection object found for: {', '.join(unhealthy)}.",
+            remediation="Re-authenticate the unhealthy connection(s) in Power Apps > Connections, then retry.",
+            doc_link=f"{DOC_BASE}/servicenow", roles=roles,
+        )]
+
+    return [CheckResult(
+        checkpoint_id="SN-CONN-OBJECTS-001", category="ServiceNow",
+        priority=Priority.HIGH.value, status=Status.PASSED.value,
+        description=description,
+        result="Connected ServiceNow and Microsoft Dataverse connection objects were found in this environment.",
+        doc_link=f"{DOC_BASE}/servicenow", roles=roles,
+    )]
+
+
+def run_servicenow_connection_object_checks(runner) -> list[CheckResult]:
+    """Self-contained emitter for the pre-install connection-object gate."""
+    return _check_connection_objects(runner)
 
 
 # ─────────────────────────────────────────────────────────────────────

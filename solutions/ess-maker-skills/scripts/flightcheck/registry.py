@@ -47,6 +47,7 @@ from flightcheck.checks.entra_app import run_entra_app_checks
 from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
 from flightcheck.checks.servicenow import (
     run_servicenow_capture_checks,
+    run_servicenow_connection_object_checks,
     run_servicenow_dataverse_checks,
     run_servicenow_pack_checks,
     run_servicenow_portal_checks,
@@ -445,6 +446,19 @@ _SPECS: list[CheckpointSpec] = [
         requires_dataverse_endpoint=True,
         priority=Priority.HIGH.value,
         roles=(Role.ESS_MAKER.value, Role.POWER_PLATFORM_ADMIN.value),
+    ),
+    # Pre-install ServiceNow + Dataverse connection objects (setup skill 6,
+    # S6.0). Uses the Power Platform admin connection inventory and is separate
+    # from S6.2, which verifies the pack's connection-reference binding.
+    CheckpointSpec(
+        key="SN-CONN-OBJECTS-001",
+        category_fn=run_servicenow_connection_object_checks,
+        category_label="ServiceNow",
+        clients=frozenset({PP_ADMIN}),
+        requires_config=True,
+        requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
+        roles=(Role.POWER_PLATFORM_ADMIN.value,),
     ),
     # ServiceNow Dataverse connection reference binding (setup skill 6, S6.2).
     # Emitted by checks/servicenow.run_servicenow_dataverse_checks — a

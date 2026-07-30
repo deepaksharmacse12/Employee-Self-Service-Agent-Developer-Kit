@@ -29,7 +29,7 @@ password to any config file.
 **Checkpoints this skill drives (run each in isolation):**
 | Step | Checkpoint | Gate |
 |------|------------|------|
-| S6.0 | ServiceNow + Dataverse connections created by the maker (no pack needed; health confirmed at S6.2 bind / S6.4 flow invoker) | attest |
+| S6.0 | `SN-CONN-OBJECTS-001` — ServiceNow + Dataverse connection objects exist and are connected | prog (maker creates, checkpoint verifies) |
 | S6.1 | `SN-PKG-001` — ServiceNow extension pack(s) installed | prog (maker installs, checkpoint verifies) |
 | S6.2 | ServiceNow connection reference bound by the maker (connection health confirmed when the maker connects the flow invoker at S6.4) | prog; auth type may require attestation |
 | S6.2 | `SN-DV-CONN-001` — Dataverse connection reference active | prog |
@@ -200,7 +200,7 @@ For the **ServiceNow** connection, use:
 **End message.**
 Confirm the maker created both connections (ask with the question tool, options
 **Yes, both are created** / **Not yet**). Only an explicit **Yes** completes this
-row — connection creation is a prerequisite for the P6.3 bind, so if the maker
+action — connection creation is a prerequisite for the P6.3 bind, so if the maker
 hasn't done it, leave S6.0 `in-progress` and continue only once they confirm.
 On confirmation, merge `.local/connect/servicenow/config.json`:
 ```json
@@ -211,12 +211,17 @@ On confirmation, merge `.local/connect/servicenow/config.json`:
   }
 }
 ```
+Run `python scripts/flightcheck/cli.py --checkpoint SN-CONN-OBJECTS-001` and render
+the result immediately. `PASSED` completes S6.0. `FAILED` or `NotConfigured` keeps
+the row blocked while the maker creates or re-authenticates the named connection,
+then loops until the check passes. `MANUAL` means the inventory could not be read;
+after showing the result, explicit maker confirmation may complete the row through
+the attestation fallback.
+
 Then update **S6.0** via [`../shared/checklist-updater.md`](../shared/checklist-updater.md)
-with `STEP_ID="S6.0"`, `GATE="attest"`, `CHECKPOINT_RESULT=null`, and `ACK` set from
-the maker's explicit **Yes**. Persist `GATE_EVIDENCE` from P6.0. The connections'
-health is not verified here — `SN-DV-CONN-001` confirms Dataverse at the P6.3 bind
-and the ServiceNow connection is confirmed when the flow invoker connects at P6.5.
-Persist immediately, then continue to P6.2.
+with `STEP_ID="S6.0"`, `GATE="prog"` and the actual checkpoint result. Use
+`GATE="attest"`, `ACK=true` only for the `MANUAL` fallback. Persist
+`GATE_EVIDENCE` from P6.0 immediately, then continue to P6.2.
 ---
 ## P6.2 — Install the extension pack and verify it landed (SN-PKG-001) *(completes S6.1)*
 First check whether the ServiceNow pack content is already installed, so resume does

@@ -44,6 +44,72 @@ def _by_id(results, cid):
 
 
 # --------------------------------------------------------------------------
+# SN-CONN-OBJECTS-001 — pre-install ServiceNow + Dataverse connections
+# --------------------------------------------------------------------------
+
+def _connection_runner(connections):
+    admin = SimpleNamespace(get_connections=lambda env_id: connections)
+    return SimpleNamespace(pp_admin=admin, env_id="env-1")
+
+
+def test_connection_objects_both_connected_passes():
+    from flightcheck.checks.servicenow import _check_connection_objects
+    connections = [
+        pp.connection(api_name="shared_service-now", display_name="ServiceNow"),
+        pp.connection(
+            api_name="shared_commondataserviceforapps",
+            display_name="Microsoft Dataverse",
+        ),
+    ]
+    result = _by_id(
+        _check_connection_objects(_connection_runner(connections)),
+        "SN-CONN-OBJECTS-001",
+    )
+    assert result.status == "Passed"
+
+
+def test_connection_objects_missing_dataverse_not_configured():
+    from flightcheck.checks.servicenow import _check_connection_objects
+    connections = [
+        pp.connection(api_name="shared_service-now", display_name="ServiceNow"),
+    ]
+    result = _by_id(
+        _check_connection_objects(_connection_runner(connections)),
+        "SN-CONN-OBJECTS-001",
+    )
+    assert result.status == "NotConfigured"
+    assert "Microsoft Dataverse" in result.result
+
+
+def test_connection_objects_unhealthy_servicenow_fails():
+    from flightcheck.checks.servicenow import _check_connection_objects
+    connections = [
+        pp.connection(
+            api_name="shared_service-now",
+            display_name="ServiceNow",
+            status="Error",
+        ),
+        pp.connection(
+            api_name="shared_commondataserviceforapps",
+            display_name="Microsoft Dataverse",
+        ),
+    ]
+    result = _by_id(
+        _check_connection_objects(_connection_runner(connections)),
+        "SN-CONN-OBJECTS-001",
+    )
+    assert result.status == "Failed"
+    assert "ServiceNow" in result.result
+
+
+def test_connection_objects_unreadable_inventory_is_manual():
+    from flightcheck.checks.servicenow import _check_connection_objects
+    runner = SimpleNamespace(pp_admin=None, env_id="env-1")
+    result = _by_id(_check_connection_objects(runner), "SN-CONN-OBJECTS-001")
+    assert result.status == "Manual"
+
+
+# --------------------------------------------------------------------------
 # _check_flow_status — SN-FLOW-000 summary + SN-FLOW-NNN per flow
 # --------------------------------------------------------------------------
 
@@ -140,7 +206,7 @@ def test_categorize_servicenow_flows_by_explicit_token():
 
 _HRSD_SCENARIOS = [
     "ServiceNowHRSDCreateCase", "ServiceNowHRSDGetCaseDetails",
-    "ServiceNowHRSDGetCasesList",
+    "ServiceNowHRSDGetUserCases",
 ]
 _ITSM_SCENARIOS = [
     "ServiceNowITSMCreateTicket", "ServiceNowITSMGetTicketDetails",
@@ -270,7 +336,7 @@ def test_pack_install_wrapper_registered_and_self_contained(monkeypatch):
 
 _ALL_SCENARIOS = [
     "ServiceNowHRSDCreateCase", "ServiceNowHRSDGetCaseDetails",
-    "ServiceNowHRSDGetCasesList",
+    "ServiceNowHRSDGetUserCases",
     "ServiceNowITSMCreateTicket", "ServiceNowITSMGetTicketDetails",
     "ServiceNowITSMGetUserTickets", "ServiceNowITSMUpdateTicket",
 ]
