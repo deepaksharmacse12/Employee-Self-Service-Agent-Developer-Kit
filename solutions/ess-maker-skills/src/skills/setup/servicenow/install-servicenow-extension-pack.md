@@ -522,18 +522,11 @@ invoker binding (P6.5) so the invoker connection lands on the activated flow
 definition and does not go stale.
 **Message:**
 
-Now let's turn on the ServiceNow cloud flows so your agent can use them.
+Now I'll check whether the ServiceNow cloud flows are already on.
 
 **End message.**
-Guide the maker to turn on any off flows by hand. A flow can only hold activation
-once its connection references are bound, so this must run after P6.3. Show:
-**Message:**
-
-In Power Platform, open the managed ServiceNow solution, go to **Cloud flows**, and
-turn on any flow that is off. Then tell me and I'll verify them.
-
-**End message.**
-Then verify every ServiceNow cloud flow emitted by the installed packs.
+Verify every ServiceNow cloud flow emitted by the installed packs before asking the
+maker to take any manual action.
 ```
 python scripts/flightcheck/cli.py --scope servicenow --no-open
 ```
@@ -541,7 +534,10 @@ Read the `SN-FLOW-*` rows from the results (they are emitted by the ServiceNow s
 run, not standalone `--checkpoint` IDs; ignore rows owned by other steps here). If every emitted flow row passes, expand/update S6.3 as one
 checkbox per flow result with `GATE="prog"`, routing each to its pack's product
 (`PRODUCT` = the flow's `HRSD`/`ITSM` label → `productStatus.<product>`) and
-persisting each generated row immediately. If any flow row fails, show:
+persisting each generated row immediately. Do not ask the maker to open Power
+Platform when every in-scope flow already passes. If any flow row fails, guide the
+maker to turn on the failed flows by hand. A flow can only hold activation once its
+connection references are bound, so this check must run after P6.3. Show:
 **Message:**
 
 One or more ServiceNow cloud flows are turned off. In Power Platform, open the
@@ -582,44 +578,40 @@ maker action covers every installed pack at once, confirm once and mark each in-
 product's row from that confirmation.
 **Message:**
 
-Now let's connect the ServiceNow connection to your agent's flows so it shows as
-connected in Copilot Studio.
+Connect and share the ServiceNow connection so your agent's flows can run for your
+users:
 
-**End message.**
-Guide the maker to connect the flow invoker connection by hand. Show:
-**Message:**
-
-In Copilot Studio, open your agent's **Settings → Connections**, find the ServiceNow
-connection, and connect it (sign in if prompted) so it shows as **Connected**. Then
-tell me once it shows as connected.
-
-**End message.**
-Connecting has no programmatic checkpoint, so it is confirmed by the maker's
-acknowledgement. Wait for the maker to confirm the connection shows as **Connected**
-before recording S6.4.
-
-Once the maker confirms the connection, guide them through **sharing** it so
-the flows can run on behalf of end users (OBO parameter sharing). Show:
-**Message:**
-
-Last step for the connection: share it so your agent's flows can run for your users.
-
-1. Open the [Power Apps maker portal](https://make.powerapps.com/).
-2. In the left nav, go to **Connections**.
-3. Open the **ServiceNow** connection you just connected.
+1. In Copilot Studio, open your agent's **Settings → Connections**, find the
+  ServiceNow connection, and connect it (sign in if prompted) so it shows as
+  **Connected**.
+2. Open the [Power Apps maker portal](https://make.powerapps.com/).
+3. In the left nav, go to **Connections** and open the same **ServiceNow**
+  connection.
 4. Select **Share**, add the users or security group who will use the agent, and
    give them **Can use** access.
 5. Save.
 
-Tell me when sharing is done.
+Have you completed both steps?
 
 **End message.**
-Sharing has no programmatic checkpoint either, so it is confirmed by the maker's
-acknowledgement. Wait for the maker to confirm before recording S6.5.
+Use the question tool with these options:
+- **Yes, both are complete**
+- **Connected, sharing not done**
+- **Connection is not connected**
+
+Handle the answer as follows:
+- **Yes, both are complete** → record both S6.4 and S6.5 as done.
+- **Connected, sharing not done** → record S6.4 as done, leave S6.5
+  `in-progress`, and show the same bundled instructions again on resume.
+- **Connection is not connected** → leave both rows `in-progress` and show the
+  same bundled instructions again after the maker fixes the connection.
+
+Connecting and sharing have no programmatic checkpoints, so only the maker's
+explicit bundled response can complete either row.
 ### P6.5a — Write flow invoker state (S6.4 connect) and share state (S6.5)
 Record the two stages separately so a resume stays accurate: S6.4 when the maker
 confirms the connection is connected, and S6.5 only when the maker confirms sharing is
-done.
+done. Derive both confirmations from the single bundled answer above.
 
 **S6.4 (connect).** When the maker confirms the connection shows as **Connected**,
 merge `.local/connect/servicenow/config.json` (the reference-level
@@ -649,21 +641,23 @@ can discover the ServiceNow connection. Preserve every existing key:
 }
 ```
 Connecting has no checkpoint, so this is an attested gate: update S6.4 with
-`GATE="attest"` and `ACK=true` only when the maker confirms, passing
+`GATE="attest"` and `ACK=true` only when the bundled answer confirms the connection,
+passing
 `PRODUCT="hrsd"` / `"itsm"` for each in-scope product so the row mirrors under
 `productStatus.<product>.S6.4`. The `connections.servicenow` / `status` state above
 is connection-level and stays shared in the top-level config. Persist immediately.
 
-**S6.5 (share).** Only after the maker confirms they shared the connection, merge the
-share artifact and record the row:
+**S6.5 (share).** Only when the bundled answer confirms sharing, merge the share
+artifact and record the row:
 ```json
 { "parameterSharing": "shared" }
 ```
 Sharing has no checkpoint, so this is an attested gate: update S6.5 with
-`GATE="attest"` and `ACK=true` only when the maker confirms, passing `PRODUCT` for
-each in-scope product so the row mirrors under `productStatus.<product>.S6.5`. If the
-maker has not yet confirmed sharing, leave S6.5 `in-progress`, keep S6.4 `done`, and
-re-prompt for the share confirmation before recording S6.5. Persist immediately.
+`GATE="attest"` and `ACK=true` only when the bundled answer confirms sharing,
+passing `PRODUCT` for each in-scope product so the row mirrors under
+`productStatus.<product>.S6.5`. If the maker selects **Connected, sharing not done**,
+leave S6.5 `in-progress`, keep S6.4 `done`, and show the same bundled question on
+resume. Persist immediately.
 ---
 ## P6.6 — Set the Portal Base URL (SN-BASEURL-001) *(completes S6.6)*
 Derive `{SUGGESTED_PORTAL_BASE_URL}` as `{instanceUrl}/sp`, for example
