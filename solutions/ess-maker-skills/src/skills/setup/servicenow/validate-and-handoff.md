@@ -54,10 +54,14 @@ Set **Run an end-to-end validation** to `in-progress` through the shared updater
 `STEP_ID="S7.1"`, `GATE="attest"`, `CHECKPOINT_RESULT=null`, `ACK=false`,
 `NEW_STATE="in-progress"`. Persist immediately.
 
-If the connection mode requires employees to use a shared maker-owned ServiceNow
-connection, carry forward the old OBO sharing step before the live validation.
-Skip this only when prior setup state clearly says connection sharing is not
-applicable for the chosen connector/auth mode.
+Read `parameterSharing` from the saved ServiceNow setup state before prompting:
+
+- If `parameterSharing == "shared"`, carry that prior maker attestation forward as
+  S7.1 evidence and skip the sharing question. The bundled connect-and-share step
+  already confirmed it.
+- If prior setup state clearly says sharing is not applicable for the chosen
+  connector/auth mode, carry that evidence forward and skip the sharing question.
+- Otherwise, ask the sharing question below before the live validation.
 
 **Message:**
 
@@ -88,7 +92,8 @@ Use `vscode_askQuestions`:
 ]
 ```
 
-- **Yes** → continue and carry the answer as S7.1 evidence.
+- **Yes** → persist `parameterSharing = "shared"`, continue, and carry the answer
+  as S7.1 evidence so later resumes do not ask again.
 - **Not yet** → leave S7.1 `in-progress`, show the stop message, and halt.
 
 **Message:**
