@@ -150,19 +150,31 @@ def _check_connections(runner) -> list[CheckResult]:
 # The ServiceNow extension pack ships its OWN Microsoft Dataverse connection
 # reference (e.g. ``new_sharedcommondataserviceforapps_41c83``) alongside the
 # ESS base agent's (``msdyn_Dataverse``). Both carry the
-# ``shared_commondataserviceforapps`` connector. This checkpoint verifies every
-# Dataverse connection reference in the environment is bound to an ACTIVE
-# connection (owner echoed), matching by CONNECTOR — never by a hardcoded
-# per-pack logical-name suffix.
+# ``shared_commondataserviceforapps`` connector. This checkpoint validates only
+# the SERVICENOW PACK's Dataverse reference — identified by the
+# ``sharedcommondataserviceforapps`` marker in its logical name — and verifies
+# it is bound to an ACTIVE connection (owner echoed).
 #
-# This is deliberately NOT the Workday-family ``DV-CONN-001``: that check keys
-# on the Workday pack's ``…_92b66`` logical-name suffix, so in a ServiceNow-only
+# It deliberately does NOT verify the base agent's ``msdyn_Dataverse`` reference:
+# that reference belongs to the ESS base agent (installed in an earlier step),
+# routinely ships unbound in a healthy ServiceNow setup, and is out of scope for
+# the ServiceNow S6.2 step. Matching every ``shared_commondataserviceforapps``
+# reference by connector alone would false-fail this ServiceNow check whenever an
+# unrelated base-agent/system Dataverse reference is unbound.
+#
+# This is also NOT the Workday-family ``DV-CONN-001``: that check keys on the
+# Workday pack's ``…_92b66`` logical-name suffix, so in a ServiceNow-only
 # environment it reports NotConfigured (its reference is absent) even though the
-# ServiceNow pack's own Dataverse reference is perfectly bound. Matching by
-# connector avoids repeating that coupling.
+# ServiceNow pack's own Dataverse reference is perfectly bound. Matching by the
+# connector-generic ``sharedcommondataserviceforapps`` marker (not a hardcoded
+# hex suffix) avoids repeating that coupling while still scoping to the pack.
 # ─────────────────────────────────────────────────────────────────────
 
 _DV_CONNECTOR_SUFFIX = "/apis/shared_commondataserviceforapps"
+# Logical-name marker that scopes the check to the ServiceNow pack's own
+# Dataverse reference (``<prefix>_sharedcommondataserviceforapps_<suffix>``),
+# excluding the base agent's ``msdyn_Dataverse`` and other system references.
+_SN_DV_LOGICALNAME_MARKER = "sharedcommondataserviceforapps"
 _SN_DV_DESC = "Dataverse connection reference(s) bound to an active connection you own"
 
 # ServiceNow Portal Base URL (SN-BASEURL-001, S6.6). The extension packs never
@@ -217,11 +229,13 @@ def _dv_owner_note(runner, connection_id) -> str:
 def _check_dataverse_connection(runner) -> list[CheckResult]:
     """Verify the ServiceNow pack's Dataverse connection reference(s) are bound.
 
-    Connector-generic sibling of the Workday-family ``DV-CONN-001``: matches
-    every Dataverse connection reference by its connector
-    (``shared_commondataserviceforapps``) rather than a hardcoded pack-specific
-    logical-name suffix, so it correctly sees the ServiceNow pack's own
-    reference (``new_sharedcommondataserviceforapps_<suffix>``).
+    Connector-generic sibling of the Workday-family ``DV-CONN-001``: it matches
+    the ServiceNow pack's own Dataverse reference by the connector-family marker
+    ``sharedcommondataserviceforapps`` in its logical name
+    (``new_sharedcommondataserviceforapps_<suffix>``) rather than a hardcoded
+    hex suffix. It deliberately EXCLUDES the base agent's ``msdyn_Dataverse``
+    reference and other system Dataverse references, which are out of scope for
+    the ServiceNow S6.2 step and routinely ship unbound in a healthy setup.
 
     Documented-tier Dataverse ``connectionreferences`` read (no cassette
     required; tests stub ``query_all``). Never raises a verdict from the owner
@@ -259,6 +273,8 @@ def _check_dataverse_connection(runner) -> list[CheckResult]:
     dv_refs = [
         r for r in (rows or [])
         if str(r.get("connectorid") or "").lower().endswith(_DV_CONNECTOR_SUFFIX)
+        and _SN_DV_LOGICALNAME_MARKER
+        in str(r.get("connectionreferencelogicalname") or "").lower()
     ]
 
     def _names(refs):
@@ -272,8 +288,9 @@ def _check_dataverse_connection(runner) -> list[CheckResult]:
             priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
             description=_SN_DV_DESC,
             result=(
-                "No Microsoft Dataverse connection reference (connector "
-                "shared_commondataserviceforapps) was found in this environment."
+                "No ServiceNow pack Microsoft Dataverse connection reference "
+                "(logical name containing 'sharedcommondataserviceforapps') was "
+                "found in this environment."
             ),
             remediation=(
                 "Install the ServiceNow extension pack so its Dataverse "
