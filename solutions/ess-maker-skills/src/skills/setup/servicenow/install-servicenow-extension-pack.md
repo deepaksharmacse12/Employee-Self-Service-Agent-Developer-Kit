@@ -41,10 +41,9 @@ Run any individually-registered checkpoint by itself:
 ```
 python scripts/flightcheck/cli.py --checkpoint <ID>
 ```
-Only `SN-DV-CONN-001` and the `SN-ENTRA-*` checks are registered as
-standalone `--checkpoint` IDs this skill uses. `SN-PKG-001`, `SN-FLOW-*`, and
-`SN-BASEURL-001` are
-emitted **only** by the ServiceNow scope run — get them with
+Only `SN-PKG-001`, `SN-DV-CONN-001`, `SN-BASEURL-001`, and the `SN-ENTRA-*`
+checks are registered as standalone `--checkpoint` IDs this skill uses. `SN-FLOW-*`
+is emitted **only** by the ServiceNow scope run — get it with
 `python scripts/flightcheck/cli.py --scope servicenow --no-open` and read the matching
 row(s) from the results. **If a `--checkpoint <ID>` call returns "unknown checkpoint",
 that ID is scope-emitted: switch to the scope run and read the row. Never treat an
@@ -229,14 +228,21 @@ your agent.
 
 **End message.**
 ```
-python scripts/flightcheck/cli.py --scope servicenow --no-open
+python scripts/flightcheck/cli.py --checkpoint SN-PKG-001 --no-open
 ```
-Read the `SN-PKG-001` row from the results before continuing (`SN-PKG-001` is emitted
-by the ServiceNow scope run, not a standalone `--checkpoint` ID). Later steps own the
+Read the `SN-PKG-001` row from the results before continuing. It is a real,
+standalone checkpoint (emitted by `run_servicenow_pack_checks`) that verifies the
+pack **content** landed per product by checking each product's Dataverse
+template-config records — so it works even before any flow exists. Its result names
+each in-scope product's install state (installed / partial / not installed). Later
+steps own the
 S6.2–S6.6 rows, so ignore those rows here.
-- `PASSED` → the expected pack content is present; go to **Record S6.1**.
-- `FAILED`, `NotConfigured`, or a manual install finding → install each in-scope
-  pack in Copilot Studio (below), then re-run the checkpoint.
+- `PASSED` → the expected pack content is present for every in-scope product (the
+  summary lists which products are installed); go to **Record S6.1**.
+- `WARNING` (partial install — some template configs missing), `NotConfigured`
+  (no pack content), or `FAILED` on a per-product row → install (or reinstall) each
+  in-scope pack in Copilot Studio (below), then re-run the checkpoint. Only in-scope
+  products matter: a product you are not installing showing `NotConfigured` is fine.
 
 ### P6.2-M — Install the pack in Copilot Studio
 Guide the maker through installing each in-scope pack in Copilot Studio using the
@@ -365,10 +371,10 @@ consent error appears. Then retry the current pack.
 After each product install confirmation, continue to the next product. When all
 in-scope products have been attempted, re-run:
 ```
-python scripts/flightcheck/cli.py --scope servicenow --no-open
+python scripts/flightcheck/cli.py --checkpoint SN-PKG-001 --no-open
 ```
-Read the `SN-PKG-001` row and loop until it passes. Keep S6.1 `in-progress` while the maker
-is still installing or retrying.
+Read the `SN-PKG-001` row and loop until it passes for every in-scope product. Keep
+S6.1 `in-progress` while the maker is still installing or retrying.
 ### Record S6.1
 When the pack checkpoint passes, merge `.local/connect/servicenow/config.json`:
 - Set each in-scope `packs.<product>` to `"installed"`.
@@ -384,8 +390,10 @@ ITSM), passing `PRODUCT` (`"hrsd"` / `"itsm"`) to
 [`../shared/checklist-updater.md`](../shared/checklist-updater.md) so each product's
 state mirrors under `productStatus.<product>.S6.1` (not the shared `setupStatus`).
 The maker performs the install by hand and the checkpoint verifies it, so this is a
-programmatic gate: update S6.1 for each in-scope product with `GATE="prog"` and the
-`SN-PKG-001` checkpoint result.
+programmatic gate: update S6.1 for each in-scope product with `GATE="prog"` and that
+product's own pack result — the per-product `SN-PKG-010` (HRSD) / `SN-PKG-020` (ITSM)
+row from a `--scope servicenow` run, or the `SN-PKG-001` summary, which names each
+product's install state.
 Persist immediately before continuing.
 ---
 ## P6.3 — Bind the ServiceNow and Dataverse connections (SN-DV-CONN-001) *(completes S6.2)*

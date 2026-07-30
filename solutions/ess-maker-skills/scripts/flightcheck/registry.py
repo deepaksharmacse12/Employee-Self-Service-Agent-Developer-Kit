@@ -48,6 +48,7 @@ from flightcheck.checks.servicenow_entra import run_servicenow_entra_checks
 from flightcheck.checks.servicenow import (
     run_servicenow_capture_checks,
     run_servicenow_dataverse_checks,
+    run_servicenow_pack_checks,
     run_servicenow_portal_checks,
 )
 from flightcheck.checks.servicenow_flow_binding import (
@@ -423,6 +424,27 @@ _SPECS: list[CheckpointSpec] = [
         requires_dataverse_endpoint=True,
         priority=Priority.HIGH.value,
         roles=(Role.ESS_MAKER.value,),
+    ),
+    # ServiceNow extension-pack install verification (setup skill 6, S6.1).
+    # Emitted by checks/servicenow.run_servicenow_pack_checks — a self-contained
+    # wrapper (no ServiceNow-flow gate) so it is independently runnable via
+    # --checkpoint and can report the not-installed state BEFORE any flow exists.
+    # Reads the per-product template-config scenario records the pack install
+    # creates, so it needs a Dataverse endpoint. Registered with an exact key so
+    # the drift test resolves the emitted ID and S6.1 finally has a real gate
+    # (previously this ID was referenced in the playbook only, with no
+    # implementation, so the agent improvised install evidence). The per-product
+    # SN-PKG-010/020 rows share this category function; --checkpoint SN-PKG-001
+    # reports the summary row, whose result names each product's install state.
+    CheckpointSpec(
+        key="SN-PKG-001",
+        category_fn=run_servicenow_pack_checks,
+        category_label="ServiceNow",
+        clients=frozenset({DATAVERSE}),
+        requires_config=True,
+        requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
+        roles=(Role.ESS_MAKER.value, Role.POWER_PLATFORM_ADMIN.value),
     ),
     # ServiceNow Dataverse connection reference binding (setup skill 6, S6.2).
     # Emitted by checks/servicenow.run_servicenow_dataverse_checks — a

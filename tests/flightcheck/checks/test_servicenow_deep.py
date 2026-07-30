@@ -134,6 +134,137 @@ def test_categorize_servicenow_flows_by_explicit_token():
 
 
 # --------------------------------------------------------------------------
+# _check_pack_install — SN-PKG-001 summary + per-product SN-PKG-010 / SN-PKG-020
+# (S6.1). Deterministic install evidence = per-product template-config records.
+# --------------------------------------------------------------------------
+
+_HRSD_SCENARIOS = [
+    "ServiceNowHRSDCreateCase", "ServiceNowHRSDGetCaseDetails",
+    "ServiceNowHRSDGetCasesList",
+]
+_ITSM_SCENARIOS = [
+    "ServiceNowITSMCreateTicket", "ServiceNowITSMGetTicketDetails",
+    "ServiceNowITSMGetUserTickets", "ServiceNowITSMUpdateTicket",
+]
+
+
+def _pack_runner():
+    return SimpleNamespace(env_url="https://org.crm.dynamics.com", dv_token="t")
+
+
+def _patch_pack_configs(monkeypatch, names):
+    import auth
+    monkeypatch.setattr(
+        auth, "query_all", lambda *a, **kw: [{"msdyn_name": s} for s in names])
+
+
+def test_pack_install_both_products(monkeypatch):
+    _patch_pack_configs(monkeypatch, _HRSD_SCENARIOS + _ITSM_SCENARIOS)
+    from flightcheck.checks.servicenow import _check_pack_install
+    results = _check_pack_install(_pack_runner())
+    summary = _by_id(results, "SN-PKG-001")
+    assert summary.status == "Passed"
+    assert "HRSD" in summary.result and "ITSM" in summary.result
+    assert _by_id(results, "SN-PKG-010").status == "Passed"
+    assert _by_id(results, "SN-PKG-020").status == "Passed"
+
+
+def test_pack_install_hr_only(monkeypatch):
+    """HR-only scope passes with ITSM reported as not installed, not a failure."""
+    _patch_pack_configs(monkeypatch, _HRSD_SCENARIOS)
+    from flightcheck.checks.servicenow import _check_pack_install
+    results = _check_pack_install(_pack_runner())
+    summary = _by_id(results, "SN-PKG-001")
+    assert summary.status == "Passed"
+    assert "installed for HRSD" in summary.result
+    assert "Not installed: ITSM" in summary.result
+    assert _by_id(results, "SN-PKG-010").status == "Passed"
+    assert _by_id(results, "SN-PKG-020").status == "NotConfigured"
+
+
+def test_pack_install_it_only(monkeypatch):
+    _patch_pack_configs(monkeypatch, _ITSM_SCENARIOS)
+    from flightcheck.checks.servicenow import _check_pack_install
+    results = _check_pack_install(_pack_runner())
+    summary = _by_id(results, "SN-PKG-001")
+    assert summary.status == "Passed"
+    assert "installed for ITSM" in summary.result
+    assert "Not installed: HRSD" in summary.result
+    assert _by_id(results, "SN-PKG-010").status == "NotConfigured"
+    assert _by_id(results, "SN-PKG-020").status == "Passed"
+
+
+def test_pack_install_partial_fails(monkeypatch):
+    """A pack missing some of its template configs is a partial install."""
+    _patch_pack_configs(
+        monkeypatch, _HRSD_SCENARIOS[:1] + _ITSM_SCENARIOS)  # HRSD missing 2
+    from flightcheck.checks.servicenow import _check_pack_install
+    results = _check_pack_install(_pack_runner())
+    summary = _by_id(results, "SN-PKG-001")
+    assert summary.status == "Warning"
+    assert "partially installed for HRSD" in summary.result
+    hrsd = _by_id(results, "SN-PKG-010")
+    assert hrsd.status == "Failed"
+    assert "1/3" in hrsd.result
+    assert "Reinstall" in hrsd.remediation
+    # ITSM is fully present and must still pass.
+    assert _by_id(results, "SN-PKG-020").status == "Passed"
+
+
+def test_pack_install_none_installed(monkeypatch):
+    _patch_pack_configs(monkeypatch, [])
+    from flightcheck.checks.servicenow import _check_pack_install
+    results = _check_pack_install(_pack_runner())
+    summary = _by_id(results, "SN-PKG-001")
+    assert summary.status == "NotConfigured"
+    assert "no pack is installed" in summary.result.lower()
+    assert _by_id(results, "SN-PKG-010").status == "NotConfigured"
+    assert _by_id(results, "SN-PKG-020").status == "NotConfigured"
+
+
+def test_pack_install_reinstall_recovers_partial(monkeypatch):
+    """After a reinstall recreates the missing configs, the pack passes again."""
+    from flightcheck.checks.servicenow import _check_pack_install
+    # Before: HRSD partial.
+    _patch_pack_configs(monkeypatch, _HRSD_SCENARIOS[:1])
+    before = _by_id(_check_pack_install(_pack_runner()), "SN-PKG-010")
+    assert before.status == "Failed"
+    # After reinstall: all HRSD configs present.
+    _patch_pack_configs(monkeypatch, _HRSD_SCENARIOS)
+    after = _by_id(_check_pack_install(_pack_runner()), "SN-PKG-010")
+    assert after.status == "Passed"
+
+
+def test_pack_install_skipped_without_token():
+    from flightcheck.checks.servicenow import _check_pack_install
+    runner = SimpleNamespace(env_url="", dv_token="")
+    summary = _by_id(_check_pack_install(runner), "SN-PKG-001")
+    assert summary.status == "Skipped"
+    assert "Dataverse token not available" in summary.result
+
+
+def test_pack_install_query_error_warns(monkeypatch):
+    import auth
+    def _boom(*a, **kw):
+        raise RuntimeError("dv down")
+    monkeypatch.setattr(auth, "query_all", _boom)
+    from flightcheck.checks.servicenow import _check_pack_install
+    summary = _by_id(_check_pack_install(_pack_runner()), "SN-PKG-001")
+    assert summary.status == "Warning"
+    assert "Unable to read" in summary.result
+
+
+def test_pack_install_wrapper_registered_and_self_contained(monkeypatch):
+    """--checkpoint SN-PKG-001 resolves and the wrapper needs no flow gate."""
+    from flightcheck import registry
+    assert registry.resolve("SN-PKG-001").key == "SN-PKG-001"
+    _patch_pack_configs(monkeypatch, _HRSD_SCENARIOS + _ITSM_SCENARIOS)
+    from flightcheck.checks.servicenow import run_servicenow_pack_checks
+    summary = _by_id(run_servicenow_pack_checks(_pack_runner()), "SN-PKG-001")
+    assert summary.status == "Passed"
+
+
+# --------------------------------------------------------------------------
 # _check_template_configs — SN-CFG-001 + per-pack SN-CFG-010 / SN-CFG-020
 # --------------------------------------------------------------------------
 

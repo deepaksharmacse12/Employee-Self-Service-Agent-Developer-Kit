@@ -86,6 +86,9 @@ def run_servicenow_checks(runner) -> list[CheckResult]:
     # --- Run health (runtime failures connection-status can't see) ---
     results.extend(_check_servicenow_run_health(runner))
 
+    # --- Extension pack install verification (SN-PKG-001, S6.1) ---
+    results.extend(_check_pack_install(runner))
+
     # --- Template Configurations (Dataverse) ---
     results.extend(_check_template_configs(runner))
 
@@ -1189,6 +1192,173 @@ def _validate_expected_configs(
             roles=[Role.ESS_MAKER.value, Role.POWER_PLATFORM_ADMIN.value],
         ))
     # If none found, the pack likely isn't installed — don't flag as error
+
+
+# ─────────────────────────────────────────────────────────────────────
+# SN-PKG-001 — ServiceNow extension-pack install verification (S6.1).
+#
+# Installing a ServiceNow extension pack in Copilot Studio creates that product's
+# Dataverse template-config scenario records (EXPECTED_TEMPLATE_CONFIGS). Their
+# presence is the deterministic, auditable evidence that the pack CONTENT landed
+# for a product — the same artifact SN-CFG reads, but surfaced here as a
+# first-class per-product INSTALL gate so S6.1 has a real checkpoint instead of
+# improvising install evidence from unrelated flow/config rows.
+#
+# Emits a summary ``SN-PKG-001`` (whose result names each product's state so the
+# single-row ``--checkpoint SN-PKG-001`` read carries per-product evidence) plus
+# one per-product row (``SN-PKG-010`` HRSD, ``SN-PKG-020`` ITSM). Per product:
+#   all expected configs present -> Passed        (installed)
+#   some present                 -> Failed        (partial / mid-install or
+#                                                  corrupt — reinstall the pack)
+#   none present                 -> NotConfigured (pack not installed)
+# The summary is PASSED when at least one product is fully installed and none is
+# partial (so an HR-only or IT-only scope passes with the other product absent),
+# WARNING when any product is partially installed, and NotConfigured when no
+# ServiceNow pack content exists at all.
+#
+# Self-contained (no ServiceNow-flow gate) via run_servicenow_pack_checks so it
+# is independently runnable via ``--checkpoint SN-PKG-001`` and reports
+# "not installed" BEFORE any flow exists. The deep run_servicenow_checks path
+# also calls _check_pack_install directly, so scope runs surface it once.
+# ─────────────────────────────────────────────────────────────────────
+
+_SN_PKG_DESC = "ServiceNow extension pack content installed (per-product template configs present)"
+_SN_PKG_PRODUCT_CIDS = {"hrsd": "SN-PKG-010", "itsm": "SN-PKG-020"}
+
+
+def _check_pack_install(runner) -> list[CheckResult]:
+    """Verify each ServiceNow extension pack's content landed in Dataverse."""
+    roles = [Role.ESS_MAKER.value, Role.POWER_PLATFORM_ADMIN.value]
+    env_url = getattr(runner, "env_url", None)
+    dv_token = getattr(runner, "dv_token", None)
+    if not env_url or not dv_token:
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-PKG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.SKIPPED.value,
+            description=_SN_PKG_DESC,
+            result="Dataverse token not available — skipping the ServiceNow pack install check.",
+        )]
+
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+        from auth import query_all
+
+        configs = query_all(
+            env_url, dv_token,
+            "msdyn_employeeselfservicetemplateconfigs",
+            "msdyn_name",
+            filter_expr="contains(msdyn_name,'ServiceNow')",
+        )
+    except Exception as e:  # noqa: BLE001 — degrade to WARNING, never abort
+        return [CheckResult(roles=roles,
+            checkpoint_id="SN-PKG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.WARNING.value,
+            description=_SN_PKG_DESC,
+            result=f"Unable to read ServiceNow template configs: {e}.",
+            remediation="Confirm the FlightCheck identity has Dataverse read access.",
+        )]
+
+    config_names = [str(c.get("msdyn_name", "")).lower() for c in (configs or [])]
+
+    per_product: list[CheckResult] = []
+    installed: list[str] = []
+    partial: list[str] = []
+    absent: list[str] = []
+    for product in ("hrsd", "itsm"):
+        expected = EXPECTED_TEMPLATE_CONFIGS.get(product, [])
+        found = [s for s in expected if any(s.lower() in n for n in config_names)]
+        missing = [s for s in expected if s not in found]
+        label = product.upper()
+        cid = _SN_PKG_PRODUCT_CIDS[product]
+        if found and not missing:
+            installed.append(label)
+            per_product.append(CheckResult(roles=roles,
+                checkpoint_id=cid, category="ServiceNow",
+                priority=Priority.HIGH.value, status=Status.PASSED.value,
+                description=f"ServiceNow {label} extension pack installed",
+                result=f"All {len(expected)} {label} template config(s) present — pack installed.",
+                doc_link=f"{DOC_BASE}/servicenow",
+            ))
+        elif found:
+            partial.append(label)
+            per_product.append(CheckResult(roles=roles,
+                checkpoint_id=cid, category="ServiceNow",
+                priority=Priority.HIGH.value, status=Status.FAILED.value,
+                description=f"ServiceNow {label} extension pack installed",
+                result=(
+                    f"{len(found)}/{len(expected)} {label} template config(s) present — "
+                    f"partial install; missing: {', '.join(missing)}."
+                ),
+                remediation=(
+                    f"Reinstall the ServiceNow {label} extension pack in Copilot Studio so all "
+                    "its template configs are recreated."
+                ),
+                doc_link=f"{DOC_BASE}/servicenow",
+            ))
+        else:
+            absent.append(label)
+            per_product.append(CheckResult(roles=roles,
+                checkpoint_id=cid, category="ServiceNow",
+                priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+                description=f"ServiceNow {label} extension pack installed",
+                result=f"No {label} template configs found — the {label} extension pack is not installed.",
+                remediation=(
+                    f"If {label} is in scope, install the ServiceNow {label} extension pack in "
+                    "Copilot Studio; template configs are created automatically during install."
+                ),
+                doc_link=f"{DOC_BASE}/servicenow",
+            ))
+
+    if partial:
+        summary = CheckResult(roles=roles,
+            checkpoint_id="SN-PKG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.WARNING.value,
+            description=_SN_PKG_DESC,
+            result=(
+                f"ServiceNow pack partially installed for {', '.join(partial)} (missing template "
+                "configs)."
+                + (f" Installed: {', '.join(installed)}." if installed else "")
+                + (f" Not installed: {', '.join(absent)}." if absent else "")
+            ),
+            remediation="Reinstall the partially-installed ServiceNow pack(s) in Copilot Studio.",
+            doc_link=f"{DOC_BASE}/servicenow",
+        )
+    elif installed:
+        summary = CheckResult(roles=roles,
+            checkpoint_id="SN-PKG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.PASSED.value,
+            description=_SN_PKG_DESC,
+            result=(
+                f"ServiceNow extension pack installed for {', '.join(installed)}."
+                + (f" Not installed: {', '.join(absent)}." if absent else "")
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )
+    else:
+        summary = CheckResult(roles=roles,
+            checkpoint_id="SN-PKG-001", category="ServiceNow",
+            priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+            description=_SN_PKG_DESC,
+            result="No ServiceNow extension pack content found in Dataverse — no pack is installed.",
+            remediation=(
+                "Install the in-scope ServiceNow extension pack(s) (HR and/or IT) in Copilot "
+                "Studio; template configs are created automatically during install."
+            ),
+            doc_link=f"{DOC_BASE}/servicenow",
+        )
+    return [summary] + per_product
+
+
+def run_servicenow_pack_checks(runner) -> list[CheckResult]:
+    """Self-contained emitter for ``SN-PKG-001`` (+ per-product SN-PKG-010/020).
+
+    Like :func:`run_servicenow_dataverse_checks` / :func:`run_servicenow_portal_checks`,
+    this wrapper has no ``_servicenow_flows`` gate, so the checkpoint is
+    independently runnable via ``--checkpoint SN-PKG-001`` and can report the
+    not-installed state before any flow exists. The deep ``run_servicenow_checks``
+    path calls :func:`_check_pack_install` directly, so scope runs surface it once.
+    """
+    return _check_pack_install(runner)
 
 
 def _check_local_topics(runner) -> list[CheckResult]:
