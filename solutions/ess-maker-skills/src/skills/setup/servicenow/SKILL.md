@@ -138,7 +138,13 @@ are treated as not-applicable: they are neither shown nor counted toward complet
    idempotent foundation steps (role gate, resource lookup) ahead of the resume item
    to rehydrate in-memory state — follow the playbook's stated build order.
 
-4. If **every** applicable item is `done`: show the **All done** message and stop.
+4. If **every** applicable item is `done`:
+   - If **both** ServiceNow products (HRSD **and** ITSM) are already in `scope`, show
+     the **All done** message and stop.
+   - If **exactly one** product is in `scope`, the other can still be added to this
+     same agent without redoing the shared setup — show the **All done** message's
+     *add-a-product* variant and, if the maker accepts, run the **Add a product**
+     transition below. Otherwise stop.
 
 ---
 
@@ -261,8 +267,79 @@ When it returns, go back to **Start** to resume at the next unverified row.
 
 ## All done
 
+Decide which variant to show from `scope`:
+
+- **Both** HRSD and ITSM in `scope` (or the maker declines to add the other) → show:
+
 **Message:**
 
 Your ServiceNow setup checklist is complete. Type `/menu` to see what you can do next.
 
 **End message.**
+
+- **Exactly one** product in `scope` → the other product can still be added to this
+  same agent, reusing the sign-in, connections, and Dataverse binding you already set
+  up. With `{current}` = the in-scope product name (**ServiceNow HR** for HRSD /
+  **ServiceNow IT** for ITSM) and `{other}` = the not-yet-in-scope product name, show:
+
+**Message:**
+
+Your ServiceNow setup for {current} is complete. Type `/menu` to see what you can do
+next — or, if you like, I can add {other} to this same agent now. It reuses your
+existing sign-in, connections, and Dataverse binding, so you'd only install the
+{other} pack, turn on its flows, connect and share them, and set its portal URL.
+
+**End message.**
+
+Use the question tool with options **Add {other} now** and **No, I'm done**. On
+**No, I'm done**, stop. On **Add {other} now**, run the **Add a product** transition
+below.
+
+---
+
+## Add a product (scope expansion after completion)
+
+Use this transition **only** when the ServiceNow setup is otherwise complete for the
+currently in-scope product and the maker chose to add the other product (HR→Both or
+IT→Both). It preserves all completed state, initializes **only** the new product, and
+resumes at that product's install step. **Do not re-run skill-3 capture (P3.3) to add
+a product** — its first-run merge template resets scope and writes `portalBaseUrl:
+null` and empty status blocks, which would wipe the completed product's state.
+
+Let `{new}` be the product being added (`hrsd` or `itsm`).
+
+1. **HRSD prerequisite.** If `{new}` is `hrsd`, first run the `sn_hr_core` plugin gate
+   from `capture-servicenow-config.md` **P3.2b**. If it isn't satisfied, stop there
+   until the maker confirms the plugin — do not expand scope yet.
+
+2. **Expand scope safely — merge ONLY these keys**, preserving every other field in
+   `.local/connect/servicenow/config.json` exactly as-is (never overwrite
+   `portalBaseUrl`, `makerPermissions`, `authType`, `entra`, `connections`, existing
+   `setupStatus`, or the already-completed product's `productStatus.<product>`):
+   - Set `scope.{new} = true`.
+   - Set `usage = "both"`.
+   - Set `packs.{new} = "pending"` (unless a more advanced value already exists).
+   - Create `productStatus.{new} = {}` **only if it is absent** — never clear an
+     existing product's status.
+
+3. **Insert only the new product's checklist rows.** Add the new product's group-6
+   sub-block rows to `.local/setup/servicenow/tasks.md` from the canonical template
+   `src/skills/setup/servicenow/tasks.md`, in template order — its install row
+   (**S6.1**) and its flows/invoker/share/portal rows (**S6.3–S6.6**). The shared
+   connection-create (**S6.0**), shared Dataverse bind (**S6.2**), auth-path group,
+   and the other product's rows already exist — **leave them and their status markers
+   untouched**. Do not re-render or drop any existing group.
+
+4. **Invalidate only cross-product validation.** The end-to-end validation
+   (**S7.1**) only exercised the previously in-scope product, so it must re-run to
+   cover the new product. Through [`../shared/checklist-updater.md`](../shared/checklist-updater.md)
+   set **S7.1** back to `pending` (`NEW_STATE="pending"`, `CHECKPOINT_RESULT=null`).
+   Leave **S7.2** (topic handoff) and every other `done` row — shared steps and the
+   existing product's per-product steps — untouched. Reset nothing else.
+
+5. **Resume at the new product's install step.** Go back to **Start**. The first
+   unverified row is now the new product's **S6.1** (install): the maker already has
+   the connections (S6.0), the bound shared Dataverse reference (S6.2), and the
+   sign-in path done, so skill-6 picks up the existing connections and only installs
+   the new pack, turns on its flows, connects and shares them, sets its portal URL,
+   then S7.1 re-validates across both products.

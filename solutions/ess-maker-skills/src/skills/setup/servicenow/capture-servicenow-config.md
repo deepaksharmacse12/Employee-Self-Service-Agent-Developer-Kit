@@ -151,6 +151,17 @@ Merge these fields into `.local/connect/servicenow/config.json`:
 }
 ```
 
+**Preserve completed state on a re-run — these are first-run defaults, not
+overwrites.** When the config already exists, apply a value from the block above
+**only if the target key is absent or still null/empty**; never overwrite a key that
+already holds a real value. In particular, do **not** reset `portalBaseUrl`,
+`makerPermissions`, `entra`, `connections`, `packs`, `setupStatus`, `productStatus`,
+or `stepStatus` back to `null`/`{}`, and do **not** flip an already-`true` `scope`
+flag to `false` — only the answers the maker just gave in P3.2 may change `scope`,
+`usage`, `instanceName`, `authType`, and `instanceUrl`. To **add a product** to an
+already-complete setup, do not run this skill at all: use the **Add a product**
+transition in `SKILL.md`, which expands scope without touching completed state.
+
 Set `packs.itsm = "pending"` and/or `packs.hrsd = "pending"` from scope unless a more advanced value already exists. Keep `setupStatus` (shared steps) and `productStatus` (per-product steps: install / portal, keyed by `hrsd` / `itsm`) as the setup source of truth and preserve `stepStatus` for legacy compatibility if already present.
 
 Run:
