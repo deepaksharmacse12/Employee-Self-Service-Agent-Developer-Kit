@@ -161,6 +161,19 @@ def main(argv=None) -> int:
         print("advisory: reply is error-shaped (a real turn, but it failed) — "
               "inspect the flow run (flow_run_inspect.py) or re-drive.")
 
+    # Per-bubble breakdown when the turn is more than a single plain-text bubble
+    # (a card, or a card followed by a generative/confirmation follow-up). The
+    # aggregate had_card flag alone hides this — surfacing each bubble keeps a
+    # card submission from reading as plain text (ADK gap #16).
+    if result.bubble_count > 1 or result.had_card:
+        print("--- bubbles ---")
+        for i, b in enumerate(result.bubbles, 1):
+            kind = "card" if b.had_card else "text"
+            print(f"  [{i}] {kind}: {b.text}")
+        if result.has_text_after_card:
+            print("note: a text bubble follows a card (a generative/confirmation "
+                  "follow-up) — do not treat this turn as plain text.")
+
     print("--- reply ---")
     print(result.reply_text)
 

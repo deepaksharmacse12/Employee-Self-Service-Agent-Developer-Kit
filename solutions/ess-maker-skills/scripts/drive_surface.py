@@ -40,12 +40,39 @@ class DriveResult:
     ``reply_text`` is the turn's bot bubbles joined by newlines — the exact
     surface ``reply_signal.classify_reply_signal`` consumes. ``timed_out`` is
     explicit (never inferred from empty text); an empty turn is ``reply_text=""``,
-    not an exception.
+    not an exception. ``bubbles`` preserves the individual bubbles (in order, with
+    per-bubble ``had_card``) so a caller can distinguish a submitted card from a
+    deterministic topic confirmation from a later generative follow-up — the
+    turn-level ``had_card`` aggregate alone loses that (ADK gap #16).
     """
     reply_text: str
     timed_out: bool
     bubble_count: int
     had_card: bool
+    bubbles: tuple[Bubble, ...] = ()
+
+    @property
+    def card_bubbles(self) -> tuple[Bubble, ...]:
+        """The card/attachment bubbles of the turn, in order."""
+        return tuple(b for b in self.bubbles if b.had_card)
+
+    @property
+    def text_bubbles(self) -> tuple[Bubble, ...]:
+        """The plain-text (non-card) bubbles of the turn, in order."""
+        return tuple(b for b in self.bubbles if not b.had_card)
+
+    @property
+    def has_text_after_card(self) -> bool:
+        """True when a plain-text bubble follows a card bubble — the shape that
+        reads as 'plain text' under the aggregate flag and hides a card
+        submission's later generative/confirmation follow-up (ADK gap #16)."""
+        seen_card = False
+        for b in self.bubbles:
+            if b.had_card:
+                seen_card = True
+            elif seen_card:
+                return True
+        return False
 
 
 def aggregate_turn(bubbles: list[Bubble], *, timed_out: bool = False) -> DriveResult:
@@ -53,7 +80,9 @@ def aggregate_turn(bubbles: list[Bubble], *, timed_out: bool = False) -> DriveRe
 
     Ported from the internal ``capture_turn_reply`` aggregation: the joined text
     includes every bubble in order so a separate-bubble plant (a DBG line, a card
-    plus interim text) is never missed. An empty turn yields ``reply_text=""``.
+    plus interim text) is never missed. The individual bubbles are preserved on
+    ``DriveResult.bubbles`` (immutable) so per-bubble card/text identity survives
+    the aggregation. An empty turn yields ``reply_text=""``.
     """
     texts = [b.text for b in bubbles]
     return DriveResult(
@@ -61,6 +90,7 @@ def aggregate_turn(bubbles: list[Bubble], *, timed_out: bool = False) -> DriveRe
         timed_out=timed_out,
         bubble_count=len(bubbles),
         had_card=any(b.had_card for b in bubbles),
+        bubbles=tuple(bubbles),
     )
 
 

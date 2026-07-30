@@ -201,3 +201,44 @@ def test_main_error_reply_advisory_without_assertions(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0  # no assertions -> a real turn still "drove" successfully
     assert "error-shaped" in out.lower()
+
+
+class _BubbleSurface:
+    """A stub surface returning a fixed list of bubbles as one turn."""
+
+    def __init__(self, bubbles):
+        from drive_surface import aggregate_turn
+        self._result = aggregate_turn(bubbles)
+
+    def drive(self, prompt, timeout_s):
+        return self._result
+
+    def close(self):
+        pass
+
+
+def test_main_prints_per_bubble_breakdown(monkeypatch, capsys):
+    from drive_surface import Bubble
+    surface = _BubbleSurface([Bubble("<card>", True), Bubble("Ticket created.", False)])
+    monkeypatch.setattr(drive_topic, "_connect", lambda **kw: surface)
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "make a ticket", "--env", "e", "--bot", "b"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # A card followed by a text bubble is surfaced per-bubble, not just aggregate.
+    assert "card" in out.lower()
+    assert "Ticket created." in out
+    # The card+follow-up shape (gap #16) is called out so it isn't read as plain text.
+    assert "follow-up" in out.lower() or "after card" in out.lower()
+
+
+def test_main_single_bubble_no_breakdown_noise(monkeypatch, capsys):
+    from drive_surface import Bubble
+    surface = _BubbleSurface([Bubble("You have 3 open HR cases.", False)])
+    monkeypatch.setattr(drive_topic, "_connect", lambda **kw: surface)
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(["--prompt", "show cases", "--env", "e", "--bot", "b"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # A single plain text bubble should not print a per-bubble breakdown block.
+    assert "[1]" not in out

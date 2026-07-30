@@ -66,6 +66,74 @@ def test_aggregate_carries_timeout_flag():
 
 
 # --------------------------------------------------------------------------- #
+# per-bubble granularity — the aggregate MUST also preserve the individual
+# bubbles so a caller can distinguish a submitted card from a deterministic
+# topic confirmation from a later generative follow-up (ADK gap #16). Only the
+# turn-level had_card flag is not enough.
+# --------------------------------------------------------------------------- #
+
+def test_aggregate_preserves_individual_bubbles():
+    bubbles = [
+        Bubble(text="<card>", had_card=True),
+        Bubble(text="Got it — creating your ticket.", had_card=False),
+        Bubble(text="Your ticket INC0012345 is ready.", had_card=False),
+    ]
+    result = aggregate_turn(bubbles)
+    assert len(result.bubbles) == 3
+    assert result.bubbles[0].had_card is True
+    assert result.bubbles[0].text == "<card>"
+    assert [b.text for b in result.bubbles] == [b.text for b in bubbles]
+
+
+def test_result_bubbles_is_an_immutable_tuple():
+    result = aggregate_turn([Bubble("a", False)])
+    assert isinstance(result.bubbles, tuple)
+    with pytest.raises((AttributeError, TypeError)):
+        result.bubbles.append(Bubble("b", False))  # type: ignore[attr-defined]
+
+
+def test_card_and_text_bubble_partitions():
+    result = aggregate_turn([
+        Bubble("<card>", True),
+        Bubble("confirmation text", False),
+        Bubble("<second card>", True),
+    ])
+    assert [b.text for b in result.card_bubbles] == ["<card>", "<second card>"]
+    assert [b.text for b in result.text_bubbles] == ["confirmation text"]
+
+
+def test_trailing_text_after_card_detected():
+    # A card followed by a separate generated text bubble is the exact shape that
+    # read as "plain text" under the aggregate flag (gap #16).
+    with_followup = aggregate_turn([Bubble("<card>", True), Bubble("done", False)])
+    assert with_followup.had_card is True
+    assert with_followup.has_text_after_card is True
+
+    card_only = aggregate_turn([Bubble("<card>", True)])
+    assert card_only.has_text_after_card is False
+
+    text_only = aggregate_turn([Bubble("hello", False)])
+    assert text_only.has_text_after_card is False
+
+
+def test_empty_result_bubble_helpers_are_safe():
+    result = aggregate_turn([])
+    assert result.bubbles == ()
+    assert result.card_bubbles == ()
+    assert result.text_bubbles == ()
+    assert result.has_text_after_card is False
+
+
+def test_surface_drive_exposes_per_bubble():
+    driver = FakeDriver([([Bubble("<card>", True), Bubble("follow-up", False)], False)])
+    surface = DriveSurface(driver)
+    surface.start()
+    result = surface.drive("x", timeout_s=30)
+    assert len(result.bubbles) == 2
+    assert result.has_text_after_card is True
+
+
+# --------------------------------------------------------------------------- #
 # composition with reply_signal — the integration assertion (no browser)
 # --------------------------------------------------------------------------- #
 
