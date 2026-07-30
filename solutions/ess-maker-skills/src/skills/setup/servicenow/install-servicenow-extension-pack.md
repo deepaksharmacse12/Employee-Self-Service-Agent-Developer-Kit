@@ -715,13 +715,19 @@ scope run and is also a registered checkpoint, so you can verify it directly wit
 ITSM), passing `PRODUCT` (`"hrsd"` / `"itsm"`) to
 [`../shared/checklist-updater.md`](../shared/checklist-updater.md) so each product's
 state mirrors under `productStatus.<product>.S6.6`. The checkpoint verifies every
-in-scope product at once and its result lists each product it found `set` vs
-`empty`, so decompose it per product:
-- `PASSED` → the URL is set for every in-scope product; update S6.6 for each with
-  `GATE="prog"`.
+in-scope product at once. It compares each product's stored `ServiceNowPortalBaseURI`
+against the confirmed `portalBaseUrl` you merged into
+`.local/connect/servicenow/config.json` (host compared case-insensitively; path,
+e.g. `/sp`, compared exactly), so a stale or wrong-but-absolute URL cannot pass. Its
+result lists each product it found `set` (matching), `empty`, or mismatched
+(reporting expected-vs-actual), so decompose it per product:
+- `PASSED` → the confirmed URL is set for every in-scope product; update S6.6 for
+  each with `GATE="prog"`.
 - `FAILED` / `NotConfigured` / partial coverage → update S6.6 to `done` (`GATE="prog"`)
-  for each product the result reports as **set**, and leave the products it reports as
-  **empty** `in-progress`; requires attestation after the rendered result:
+  for each product the result reports as **set** (matching the confirmed URL), and
+  leave the products it reports as **empty** or **mismatched** `in-progress`; for a
+  mismatch, show the maker the expected-vs-actual values so they can correct the
+  wrong pack. Requires attestation after the rendered result:
 **Message:**
 
 I can only partially verify that portal setting from the kit. Please confirm you

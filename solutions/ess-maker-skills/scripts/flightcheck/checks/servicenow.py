@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ..runner import CheckResult, Priority, Role, Status
 from .connections import check_connector_connections
@@ -375,15 +376,36 @@ def _portal_uri(value) -> str:
     return str(data.get(_SN_PORTAL_URI_KEY) or "").strip()
 
 
+def _normalize_portal_url(value) -> str:
+    """Normalize a portal URL for equality comparison.
+
+    Lower-cases the scheme and host (case-insensitive per RFC 3986), preserves
+    the path (ServiceNow portal suffixes like ``/sp`` are case-sensitive), and
+    strips surrounding whitespace and any trailing slash. Returns ``""`` for an
+    empty/whitespace value so callers can treat "no confirmed value" uniformly.
+    """
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        # Not an absolute URL — return the trimmed form so a malformed stored
+        # value never accidentally equals a malformed confirmed value.
+        return raw.lower()
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path}"
+
+
 def _check_portal_base_url(runner) -> list[CheckResult]:
     """Verify the ServiceNow Portal Base URL is set for each installed product.
 
     The extension packs create per-product parent config records
     (``msdyn_ServiceNowHRSD`` / ``msdyn_ServiceNowITSM``) but leave the portal
     base URL empty, so the case/ticket links the agent returns don't resolve
-    until a maker sets it. FAILS when a present product's URL is empty or not an
-    ``http(s)`` URL; NOT_CONFIGURED when no product config record exists (pack
-    not installed). Same documented Dataverse read as the template-config check.
+    until a maker sets it. FAILS when a present product's URL is empty, is not an
+    ``http(s)`` URL, or — when a confirmed ``portalBaseUrl`` is recorded in the
+    local ServiceNow connect config — does not match that confirmed value
+    (normalized). NOT_CONFIGURED when no product config record exists (pack not
+    installed). Same documented Dataverse read as the template-config check.
     """
     roles = [Role.ESS_MAKER.value]
     env_url = getattr(runner, "env_url", None)
@@ -439,8 +461,19 @@ def _check_portal_base_url(runner) -> list[CheckResult]:
         )]
 
     label_by_record = {v: k.upper() for k, v in _SN_PORTAL_PARENT_RECORDS.items()}
+
+    # The maker confirms one Portal Base URL and applies it to every in-scope
+    # pack (P6.6). Compare each product's stored Dataverse value against that
+    # confirmed value so a stale/wrong-but-absolute URL can't pass while the run
+    # claims the confirmed URL was deployed. When no confirmed value is recorded
+    # yet, fall back to presence/format validation only.
+    cfg = _load_sn_connect_config() or {}
+    confirmed_raw = str(cfg.get("portalBaseUrl") or "").strip()
+    confirmed = _normalize_portal_url(confirmed_raw)
+
     unset: list[str] = []
     malformed: list[str] = []
+    mismatched: list[str] = []
     ok: list[str] = []
     for record_name, row in parents.items():
         label = label_by_record.get(record_name, record_name)
@@ -449,28 +482,41 @@ def _check_portal_base_url(runner) -> list[CheckResult]:
             unset.append(label)
         elif not uri.lower().startswith(("http://", "https://")):
             malformed.append(f"{label} ({uri})")
+        elif confirmed and _normalize_portal_url(uri) != confirmed:
+            mismatched.append(f"{label}: expected {confirmed_raw}, found {uri}")
         else:
             ok.append(f"{label} ({uri})")
 
-    if unset or malformed:
+    if unset or malformed or mismatched:
         problems = []
         if unset:
             problems.append(f"empty for {', '.join(unset)}")
         if malformed:
             problems.append(f"not a URL for {', '.join(malformed)}")
+        if mismatched:
+            problems.append(
+                "does not match the confirmed URL for " + "; ".join(mismatched)
+            )
+        remediation = (
+            "In Copilot Studio, open each in-scope ServiceNow product config "
+            "and set the Portal Base URL to your Service Portal, e.g. "
+            "https://<instance>.service-now.com/sp."
+        )
+        if mismatched and confirmed_raw:
+            remediation = (
+                "In Copilot Studio, open each in-scope ServiceNow product config "
+                f"and set the Portal Base URL to the confirmed value "
+                f"{confirmed_raw} on every in-scope pack."
+            )
         return [CheckResult(roles=roles,
             checkpoint_id="SN-BASEURL-001", category="ServiceNow",
             priority=Priority.HIGH.value, status=Status.FAILED.value,
             description=_SN_BASEURL_DESC,
             result=(
                 "ServiceNow Portal Base URL is " + "; ".join(problems)
-                + ". Case and ticket links will not resolve for employees."
+                + ". Case and ticket links will not resolve correctly for employees."
             ),
-            remediation=(
-                "In Copilot Studio, open each in-scope ServiceNow product config "
-                "and set the Portal Base URL to your Service Portal, e.g. "
-                "https://<instance>.service-now.com/sp."
-            ),
+            remediation=remediation,
             doc_link=f"{DOC_BASE}/servicenow",
         )]
 
@@ -481,12 +527,16 @@ def _check_portal_base_url(runner) -> list[CheckResult]:
             " Note: " + ", ".join(non_portal)
             + " does not point at a Service Portal path (…/sp)."
         )
+    match_note = (
+        f" Matches the confirmed URL ({confirmed_raw})." if confirmed else ""
+    )
     return [CheckResult(roles=roles,
         checkpoint_id="SN-BASEURL-001", category="ServiceNow",
         priority=Priority.HIGH.value, status=Status.PASSED.value,
         description=_SN_BASEURL_DESC,
         result=(
-            f"Portal base URL set for {len(ok)} product(s): {', '.join(ok)}." + note
+            f"Portal base URL set for {len(ok)} product(s): {', '.join(ok)}."
+            + match_note + note
         ),
         doc_link=f"{DOC_BASE}/servicenow",
     )]

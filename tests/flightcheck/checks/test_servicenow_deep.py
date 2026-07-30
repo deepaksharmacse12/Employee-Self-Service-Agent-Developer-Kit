@@ -308,8 +308,22 @@ def _portal_runner():
     return SimpleNamespace(env_url="https://org.crm.dynamics.com", dv_token="t")
 
 
+def _patch_confirmed_portal(monkeypatch, confirmed=None):
+    """Isolate the confirmed portalBaseUrl the check reads from local config.
+
+    Existing presence/format tests want the presence-only fallback (no confirmed
+    value), so default to an empty config; the equality tests pass an explicit
+    ``confirmed`` URL. Without this the check would read the real developer
+    ``.local`` config from the cwd and couple tests to that value.
+    """
+    from flightcheck.checks import servicenow
+    cfg = {"portalBaseUrl": confirmed} if confirmed else {}
+    monkeypatch.setattr(servicenow, "_load_sn_connect_config", lambda: cfg)
+
+
 def test_portal_base_url_set_passes(monkeypatch):
     import auth
+    _patch_confirmed_portal(monkeypatch)
     monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
         _portal_row("msdyn_ServiceNowHRSD", "https://dev184242.service-now.com/sp"),
         # Unrelated child record must be ignored.
@@ -324,6 +338,7 @@ def test_portal_base_url_set_passes(monkeypatch):
 
 def test_portal_base_url_non_portal_path_passes_with_note(monkeypatch):
     import auth
+    _patch_confirmed_portal(monkeypatch)
     monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
         _portal_row("msdyn_ServiceNowHRSD", "https://dev184242.service-now.com"),
     ])
@@ -387,12 +402,43 @@ def test_portal_base_url_bad_json_treated_as_unset(monkeypatch):
 def test_servicenow_portal_wrapper_self_contained(monkeypatch):
     """The wrapper emits SN-BASEURL-001 with no _servicenow_flows gate."""
     import auth
+    _patch_confirmed_portal(monkeypatch)
     monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
         _portal_row("msdyn_ServiceNowHRSD", "https://x.service-now.com/sp"),
     ])
     from flightcheck.checks.servicenow import run_servicenow_portal_checks
     r = _by_id(run_servicenow_portal_checks(_portal_runner()), "SN-BASEURL-001")
     assert r.status == "Passed"
+
+
+def test_portal_base_url_matches_confirmed_passes(monkeypatch):
+    """A stored URL equal to the confirmed value (case-insensitive host) passes."""
+    import auth
+    _patch_confirmed_portal(monkeypatch, "https://dev184242.service-now.com/sp")
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        # Host case and a trailing slash must not defeat the match.
+        _portal_row("msdyn_ServiceNowHRSD", "https://DEV184242.service-now.com/sp/"),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Passed"
+    assert "Matches the confirmed URL" in r.result
+
+
+def test_portal_base_url_mismatch_confirmed_fails(monkeypatch):
+    """A present, absolute URL that differs from the confirmed value fails."""
+    import auth
+    _patch_confirmed_portal(monkeypatch, "https://dev184242.service-now.com/sp")
+    monkeypatch.setattr(auth, "query_all", lambda *a, **kw: [
+        _portal_row("msdyn_ServiceNowHRSD", "https://stale.service-now.com/sp"),
+    ])
+    from flightcheck.checks.servicenow import _check_portal_base_url
+    r = _by_id(_check_portal_base_url(_portal_runner()), "SN-BASEURL-001")
+    assert r.status == "Failed"
+    assert "does not match the confirmed URL" in r.result
+    # Reports expected-vs-actual for the product.
+    assert "expected https://dev184242.service-now.com/sp" in r.result
+    assert "found https://stale.service-now.com/sp" in r.result
 
 
 # --------------------------------------------------------------------------
