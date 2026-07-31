@@ -27,11 +27,15 @@ import argparse
 import json
 import sys
 import os
+from xml.etree import ElementTree as ET
 
 # Add scripts/ to path so we can import auth
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from auth import authenticate, query_all
 from http_errors import APIError
+
+
+GITHUB_COPILOT_MCP_CLIENT_ID = "aebc6443-996d-45c2-90f0-388ff96faa56"
 
 
 def discover_agents(env_url, token):
@@ -50,6 +54,45 @@ def discover_agents(env_url, token):
             "ismanaged": r.get("ismanaged", False),
         })
     return agents
+
+
+def check_mcp_config(env_url, token):
+    """Return the GA Dataverse MCP and GitHub Copilot allow-list state."""
+    organizations = query_all(
+        env_url,
+        token,
+        entity_set="organizations",
+        select="orgdborgsettings",
+    )
+    org_settings = (
+        organizations[0].get("orgdborgsettings") if organizations else None
+    )
+    root = ET.fromstring(org_settings or "<OrgSettings />")
+    mcp_value = (root.findtext("IsMCPEnabled") or "").strip().lower()
+
+    # Dataverse MCP is enabled by default when IsMCPEnabled is omitted.
+    server_enabled = mcp_value != "false"
+
+    clients = query_all(
+        env_url,
+        token,
+        entity_set="allowedmcpclients",
+        select="applicationid,isenabled,statecode",
+        filter_expr=(
+            f"applicationid eq '{GITHUB_COPILOT_MCP_CLIENT_ID}'"
+        ),
+    )
+    client_enabled = any(
+        client.get("isenabled") is True
+        and client.get("statecode", 0) == 0
+        for client in clients
+    )
+
+    return {
+        "configured": server_enabled and client_enabled,
+        "serverEnabled": server_enabled,
+        "githubCopilotEnabled": client_enabled,
+    }
 
 
 def print_agent_table(agents):
@@ -78,6 +121,8 @@ def main():
                         help="Power Platform environment URL")
     parser.add_argument("--list-environments", action="store_true",
                         help="List all environments in the tenant (no URL needed)")
+    parser.add_argument("--check-mcp-config", action="store_true",
+                        help="Check Dataverse MCP and GitHub Copilot enablement")
     parser.add_argument("--select", type=int, default=None,
                         help="Select agent by number and output JSON")
     args = parser.parse_args()
@@ -123,6 +168,19 @@ def main():
     print("Authenticating to Dataverse...")
     token = authenticate(env_url)
     print("Authenticated.\n")
+
+    if args.check_mcp_config:
+        print("Checking Dataverse MCP configuration...")
+        try:
+            state = check_mcp_config(env_url, token)
+        except (APIError, ET.ParseError) as e:
+            if isinstance(e, APIError):
+                print(e.format_for_terminal())
+            else:
+                print("ERROR: Dataverse returned invalid environment settings.")
+            sys.exit(1)
+        print(f"MCP_CONFIG_JSON:{json.dumps(state)}")
+        return
 
     print("Discovering agents...")
     try:

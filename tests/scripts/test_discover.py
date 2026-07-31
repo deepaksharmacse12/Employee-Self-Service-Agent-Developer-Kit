@@ -12,7 +12,7 @@ the function level — no external API calls are made.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -278,3 +278,95 @@ class TestDiscoverListEnvironmentsMode:
         with pytest.raises(SystemExit) as exc_info:
             discover.main()
         assert exc_info.value.code == 2  # argparse error
+
+
+class TestMcpConfigCheck:
+    """Tests for the Dataverse MCP configuration preflight."""
+
+    @patch("discover.query_all")
+    def test_configured_when_default_server_and_client_enabled(self, query_all):
+        import discover
+
+        query_all.side_effect = [
+            [{"orgdborgsettings": "<OrgSettings />"}],
+            [{"isenabled": True, "statecode": 0}],
+        ]
+
+        state = discover.check_mcp_config("https://org.crm.dynamics.com", "token")
+
+        assert state == {
+            "configured": True,
+            "serverEnabled": True,
+            "githubCopilotEnabled": True,
+        }
+        assert query_all.call_args_list == [
+            call(
+                "https://org.crm.dynamics.com",
+                "token",
+                entity_set="organizations",
+                select="orgdborgsettings",
+            ),
+            call(
+                "https://org.crm.dynamics.com",
+                "token",
+                entity_set="allowedmcpclients",
+                select="applicationid,isenabled,statecode",
+                filter_expr=(
+                    "applicationid eq "
+                    f"'{discover.GITHUB_COPILOT_MCP_CLIENT_ID}'"
+                ),
+            ),
+        ]
+
+    @patch("discover.query_all")
+    def test_reports_each_missing_setting(self, query_all):
+        import discover
+
+        query_all.side_effect = [
+            [{
+                "orgdborgsettings": (
+                    "<OrgSettings><IsMCPEnabled>false</IsMCPEnabled>"
+                    "</OrgSettings>"
+                )
+            }],
+            [{"isenabled": False, "statecode": 0}],
+        ]
+
+        state = discover.check_mcp_config("https://org.crm.dynamics.com", "token")
+
+        assert state == {
+            "configured": False,
+            "serverEnabled": False,
+            "githubCopilotEnabled": False,
+        }
+
+    @patch("discover.query_all")
+    @patch("discover.authenticate")
+    def test_cli_outputs_machine_readable_state(
+        self, authenticate, query_all, capsys, monkeypatch
+    ):
+        import discover
+
+        authenticate.return_value = "token"
+        query_all.side_effect = [
+            [{"orgdborgsettings": "<OrgSettings />"}],
+            [{"isenabled": True, "statecode": 0}],
+        ]
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "discover.py",
+                "--url",
+                "https://org.crm.dynamics.com/",
+                "--check-mcp-config",
+            ],
+        )
+
+        discover.main()
+
+        output = capsys.readouterr().out
+        json_line = next(
+            line for line in output.splitlines()
+            if line.startswith("MCP_CONFIG_JSON:")
+        )
+        assert json.loads(json_line.split(":", 1)[1])["configured"] is True
