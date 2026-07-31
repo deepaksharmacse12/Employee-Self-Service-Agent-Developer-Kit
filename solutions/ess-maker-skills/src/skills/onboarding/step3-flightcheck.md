@@ -9,6 +9,12 @@ This step runs AFTER Step 2 completes (agent extracted, MCP started).
 
 ## 3.1 — Offer the readiness check
 
+**MANDATORY MANUAL GATE:** Always ask this question, including when `/setup`
+resumes directly at Step 5. Do not infer consent from the user running
+`/setup`, from a previous answer, or from the checklist state. Invoke the
+question tool and end the turn while waiting for the user's selection. Do not
+run any FlightCheck command in the same turn as this question.
+
 Use the `vscode_askQuestions` tool:
 
 ```json
@@ -39,9 +45,11 @@ No problem — I'll keep this on your checklist. You can run
 
 Stop here. Do not continue.
 
-**If they choose "Yes":**
+**Only if they explicitly choose "Yes — run readiness check":**
 
 Proceed to 3.2.
+
+Any response other than that explicit selection must not start FlightCheck.
 
 ---
 

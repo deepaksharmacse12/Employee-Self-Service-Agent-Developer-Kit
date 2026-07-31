@@ -54,4 +54,21 @@ def test_complete_config_reoffers_skipped_readiness_check():
     normalized = " ".join(prompt.split())
 
     assert "steps 1–4 checked but step 5 unchecked" in prompt
-    assert "resume onboarding immediately at step 5" in normalized
+    assert "beginning with its manual opt-in question" in normalized
+    assert "never start FlightCheck automatically" in normalized
+
+
+def test_readiness_check_requires_explicit_manual_opt_in():
+    skill = (_ONBOARDING / "SKILL.md").read_text(encoding="utf-8")
+    step3 = (
+        _ONBOARDING / "step3-flightcheck.md"
+    ).read_text(encoding="utf-8")
+    normalized_step3 = " ".join(step3.split())
+
+    assert "The opt-in question is mandatory" in skill
+    assert "MANDATORY MANUAL GATE" in step3
+    assert (
+        "Do not run any FlightCheck command in the same turn"
+        in normalized_step3
+    )
+    assert 'Only if they explicitly choose "Yes' in step3

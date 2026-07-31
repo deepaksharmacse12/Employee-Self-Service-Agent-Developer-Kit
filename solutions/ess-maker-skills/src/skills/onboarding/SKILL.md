@@ -85,4 +85,6 @@ agent extraction.
 
 ## Step 5
 
-Read `src/skills/onboarding/step3-flightcheck.md` and follow it.
+Read `src/skills/onboarding/step3-flightcheck.md` and begin at section 3.1.
+The opt-in question is mandatory. Wait for the user's explicit choice and
+never proceed to section 3.2 automatically.

@@ -16,8 +16,9 @@ MCP startup is still incomplete.
 
 If `.local/config.json` exists with `setup` set to `"complete"`, and the
 onboarding checklist has steps 1–4 checked but step 5 unchecked, resume
-onboarding immediately at step 5 so the optional readiness check is offered
-again. Do not ask for `RESET`.
+onboarding at step 5, beginning with its manual opt-in question. Wait for an
+explicit user choice; never start FlightCheck automatically. Do not ask for
+`RESET`.
 
 If `.local/config.json` exists with `setup` set to `"complete"` and the
 conditions above do not apply, show:
