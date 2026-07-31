@@ -28,10 +28,14 @@ from __future__ import annotations
 
 import argparse
 import time
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
 
 from cdp_driver import (
     CDP_ENDPOINT,
     CdpDriver,
+    _DEFAULT_DEBUG_PORT,
     is_cdp_up,
     launch_browser,
 )
@@ -76,6 +80,49 @@ def _load_env_bot(explicit_env, explicit_bot):
         return explicit_env, explicit_bot
 
 
+def _debug_port(cdp_endpoint: str) -> int:
+    """The TCP port from a CDP endpoint URL, defaulting to 9222 if absent/unparsable.
+
+    Pure. Used to launch the browser on the SAME port the caller will attach to —
+    otherwise ``--cdp http://localhost:9224`` would launch on 9222 and attach to
+    9224 (nothing there).
+    """
+    try:
+        return urlsplit(cdp_endpoint).port or _DEFAULT_DEBUG_PORT
+    except (ValueError, TypeError):
+        return _DEFAULT_DEBUG_PORT
+
+
+def _format_attached(targets) -> str:
+    """One-line-per-page summary of the CDP targets we're about to attach to.
+
+    Pure. ``targets`` is the decoded ``/json`` list; keeps only real pages and
+    renders ``title — url`` so a wrong-attach (another session's agent) is visible
+    instead of silent. Returns "" when there is nothing page-like to show.
+    """
+    lines = []
+    for t in targets or []:
+        if not isinstance(t, dict) or t.get("type") != "page":
+            continue
+        url = (t.get("url") or "").strip()
+        if not url or url.startswith("devtools://"):
+            continue
+        title = (t.get("title") or "").strip() or "(untitled)"
+        lines.append(f"    - {title} — {url}")
+    return "\n".join(lines)
+
+
+def _attached_targets(cdp_endpoint: str, timeout_s: float = 2.0):
+    """Best-effort GET of ``<endpoint>/json`` (the CDP target list). [] on any error."""
+    try:
+        base = cdp_endpoint.rstrip("/")
+        with urllib.request.urlopen(f"{base}/json", timeout=timeout_s) as resp:
+            import json
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return []
+
+
 def _connect(*, env_id, bot_id, allow_launch, cdp_endpoint):
     """Return a started DriveSurface, launching + waiting for sign-in if needed.
 
@@ -92,14 +139,26 @@ def _connect(*, env_id, bot_id, allow_launch, cdp_endpoint):
                 "no CDP browser to attach to, and no env/bot to launch a test pane. "
                 "Pass --env and --bot (or run from an agent workspace).")
         url = test_pane_url(env_id, bot_id)
-        print(f"Launching Edge InPrivate on the test pane:\n  {url}")
-        launch_browser(start_url=url)
+        port = _debug_port(cdp_endpoint)
+        print(f"Launching Edge InPrivate on the test pane (CDP port {port}):\n  {url}")
+        launch_browser(start_url=url, debug_port=port)
         print("\n>>> Sign in as your TEST account in the InPrivate window, open the "
               "agent's Test pane, then press Enter here. <<<")
         try:
             input()
         except EOFError:
             time.sleep(20)  # non-interactive: give a window to sign in
+    else:
+        # Attaching to a browser that was already up — it may belong to another
+        # debug session on this port. Show what we're attaching to so a
+        # wrong-attach (a different agent's pane) is visible, not silent.
+        summary = _format_attached(_attached_targets(cdp_endpoint))
+        print(f"Attaching to the existing CDP browser on {cdp_endpoint} — "
+              "verify this is YOUR agent's Test pane, not another session's.")
+        if summary:
+            print(summary)
+        print("(To run a second, isolated session, pass "
+              "--cdp http://localhost:<other-port>.)")
 
     surface = DriveSurface(CdpDriver(cdp_endpoint))
     surface.start()  # raises if no signed-in Copilot Studio page is present

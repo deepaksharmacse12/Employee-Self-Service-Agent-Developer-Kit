@@ -67,6 +67,63 @@ def test_connect_attaches_when_cdp_already_up(monkeypatch):
     assert isinstance(surface, StubSurface)
 
 
+def test_debug_port_defaults_to_9222_when_absent():
+    assert drive_topic._debug_port("http://localhost") == 9222
+
+
+def test_debug_port_reads_explicit_port():
+    assert drive_topic._debug_port("http://localhost:9224") == 9224
+
+
+def test_debug_port_falls_back_on_garbage():
+    assert drive_topic._debug_port("not a url") == 9222
+
+
+def test_connect_launch_uses_the_cdp_port_not_the_default(monkeypatch):
+    # Regression: --cdp on a non-default port must LAUNCH on that same port,
+    # otherwise launch (9222) and attach (9224) disagree and attach finds nothing.
+    monkeypatch.setattr(drive_topic, "is_cdp_up", lambda ep: False)
+    captured = {}
+
+    def _fake_launch(*, start_url, debug_port):
+        captured["port"] = debug_port
+
+    monkeypatch.setattr(drive_topic, "launch_browser", _fake_launch)
+    monkeypatch.setattr(drive_topic, "input", lambda: "", raising=False)
+
+    class StubSurface:
+        def __init__(self, driver):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(drive_topic, "DriveSurface", StubSurface)
+    monkeypatch.setattr(drive_topic, "CdpDriver", lambda ep: object())
+    drive_topic._connect(env_id="e", bot_id="b", allow_launch=True,
+                         cdp_endpoint="http://localhost:9224")
+    assert captured["port"] == 9224
+
+
+def test_format_attached_renders_pages_only():
+    targets = [
+        {"type": "page", "title": "My Agent | Copilot Studio",
+         "url": "https://copilotstudio.microsoft.com/x"},
+        {"type": "service_worker", "title": "sw", "url": "https://x/sw.js"},
+        {"type": "page", "title": "", "url": "devtools://devtools/bundled/x"},
+    ]
+    out = drive_topic._format_attached(targets)
+    assert "My Agent | Copilot Studio" in out
+    assert "https://copilotstudio.microsoft.com/x" in out
+    assert "sw" not in out           # non-page filtered
+    assert "devtools://" not in out  # devtools page filtered
+
+
+def test_format_attached_empty_is_blank():
+    assert drive_topic._format_attached([]) == ""
+    assert drive_topic._format_attached(None) == ""
+
+
 def test_main_warns_and_returns_2_when_cannot_connect(monkeypatch, capsys):
     def _raise(**kw):
         raise RuntimeError("no signed-in Copilot Studio page")
