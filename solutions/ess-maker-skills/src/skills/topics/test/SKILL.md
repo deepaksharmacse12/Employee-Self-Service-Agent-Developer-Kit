@@ -10,6 +10,7 @@ This skill **drives the topic automatically** — it launches (or attaches to) a
 - **`scripts/reply_signal.py`** — the classifier `drive_topic` uses (also runnable standalone on a pasted reply): real answer vs consent gate / timeout / empty.
 - **`scripts/flow_run_inspect.py`** — for flow-backed topics, read the flow's per-action run history (did the connector run, which action failed, why is the reply generic). Interpret it with `src/reference/ess-docs/operations/flow-run-inspection.md`.
 - **`scripts/plant_debug.py`** / **`scripts/strip_debug.py`** — for topic-internal silent-state bugs, plant a temporary DBG node that projects a topic variable into the transcript, re-drive, read it, then strip it.
+- **`scripts/topic_checker_capture.py`** — for an **unexplained** "something went wrong" reply, surface the Copilot Studio authoring-canvas **Topic checker** (PowerFx / card errors that local diagnostics and a runtime drive both miss). Read-only; escalates command bar → 'More' overflow → tells you to check manually if the panel can't be surfaced.
 
 ## Rules
 
@@ -66,9 +67,25 @@ When the reply is a real answer but wrong (generic error, missing data), read th
 
 3. Interpret the cascade using `src/reference/ess-docs/operations/flow-run-inspection.md`. The key trap: a `runAfter:[Failed]` handler that shows **Succeeded** does NOT mean the flow succeeded — the containing scope can still be **Failed** and a catch-all Response can discard its output, masking (say) a connector **400** as a generic **500**. The **first `Failed` action + its statusCode** is usually the real fault.
 
-If the run history localizes the fault to the flow, fix the flow (see the workflow skills) — not the topic. If the flow ran clean but the topic still behaves wrong, the fault is topic-internal → Step 4.
+If the run history localizes the fault to the flow, fix the flow (see the workflow skills) — not the topic. If the flow ran clean but the topic still behaves wrong, the fault is topic-internal → Step 4. If the flow ran clean (or the topic isn't flow-backed) **and the error is generic and unexplained** — "something went wrong" with no status code, table, or field named — the surface may be a publish-time authoring defect the runtime never articulates → **Step 3b**.
 
-## Step 4: Plant a DBG node (topic-internal silent state)
+## Step 3b: Surface the Topic checker (unexplained authoring-canvas errors)
+
+A generic, unexplained error reply — no status code, no named table/field — is frequently the runtime surface of a **publish-time authoring defect** (an invalid Adaptive Card JSON, a broken PowerFx expression) that a runtime drive and flow inspection both miss, because the defect never runs cleanly enough to produce a specific fault. `reply_signal.py`'s error-shaped advisory tells you the reply is an error; when it carries **no actionable detail**, reach for the Topic checker.
+
+```powershell
+python scripts/topic_checker_capture.py --topic-id <GUID> --json
+```
+
+The tool follows an escalation ladder against the authoring canvas and reports exactly which rung it reached:
+
+1. **Command bar** — clicks the Topic checker button when it's directly visible, captures each error (message + linked node/field where available).
+2. **'More' overflow** — when the button is hidden, opens the '…' overflow menu and clicks it there.
+3. **Manual fallback** — the panel has additional rendering conditions that can't be automated. If neither rung surfaces it, the tool reports `not run` (NOT `clean`) and advises you to **open the Topic checker manually in Copilot Studio and read the errors yourself** — a run that never happened is never reported as a passing check.
+
+Each captured error names a `componentId` (a GUID) rather than the topic's display name — resolve it via `.component-map.json`. Fix the named card/expression, republish, and re-drive. If the tool reports `not run`, do not conclude the topic is clean — surface the checker manually before moving on.
+
+
 
 When the reply looks plausible and the flow run shows nothing wrong, but a branch fired wrong or a field came back blank, make the deciding topic state visible.
 

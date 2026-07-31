@@ -112,3 +112,39 @@ def test_report_not_run_is_a_warning_not_clean():
     assert "could not" in low or "did not run" in low or "not run" in low
     # Must NOT claim a clean bill of health when the checker never opened.
     assert "0 errors" not in low or "could not" in low
+
+
+def test_report_not_run_advises_manual_surfacing():
+    # When the checker could not be surfaced, the report must tell the user there
+    # MIGHT be a checker error they need to surface manually — the panel has
+    # additional rendering conditions we can't fully automate.
+    report = render_report("url", [], checker_found=False)
+    low = report.lower()
+    assert "manual" in low or "surface" in low
+    assert "rendering condition" in low or "may not" in low or "might" in low
+
+
+# --------------------------------------------------------------------------- #
+# looks_like_unexplained_error — the trigger: a generic runtime error with no
+# actionable detail is the cue to run a Topic checker pass.
+# --------------------------------------------------------------------------- #
+
+def test_unexplained_error_detected():
+    from topic_checker_capture import looks_like_unexplained_error
+    assert looks_like_unexplained_error("Sorry, something went wrong.") is True
+    assert looks_like_unexplained_error("An unexpected error occurred.") is True
+
+
+def test_explained_error_is_not_unexplained():
+    from topic_checker_capture import looks_like_unexplained_error
+    # A specific, actionable error (a real status code / message) is NOT the
+    # generic "unexpected error" cue — it points elsewhere (flow run, connector).
+    assert looks_like_unexplained_error(
+        "Error code: 400 Error Message: Invalid table cmdb_xyz") is False
+
+
+def test_non_error_reply_is_not_unexplained():
+    from topic_checker_capture import looks_like_unexplained_error
+    assert looks_like_unexplained_error("You have 3 open tickets.") is False
+    assert looks_like_unexplained_error("") is False
+    assert looks_like_unexplained_error(None) is False

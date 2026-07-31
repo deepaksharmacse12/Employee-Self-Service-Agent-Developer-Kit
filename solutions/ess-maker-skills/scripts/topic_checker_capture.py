@@ -21,10 +21,16 @@ publishes, or navigates destructively.
 Exit codes (so a pre-push gate can branch):
   0  the Topic checker ran and reported no errors
   1  the Topic checker ran and reported one or more errors
-  2  the Topic checker could not be run (no signed-in authoring page, or the
-     panel could not be opened and no errors were visible) — deliberately NOT
-     conflated with "clean", so a run that never happened is never mistaken for
-     a passing check.
+  2  the Topic checker could not be surfaced (tried the command bar and the
+     'More' overflow menu) and no errors were visible — deliberately NOT
+     conflated with "clean". The panel has additional rendering conditions that
+     can't be fully automated, so the report advises surfacing it manually.
+
+Trigger: run this after a runtime drive returns a GENERIC, unexplained error
+(``looks_like_unexplained_error``) — "something went wrong" with no actionable
+detail is often the surface of a publish-time authoring defect the Topic checker
+would name. A specific error (a status code, a named table/field) points at the
+flow run or connector instead, not the authoring canvas.
 
 Usage:
     python scripts/topic_checker_capture.py [--topic-id <GUID>] [--json]
@@ -41,6 +47,43 @@ import json
 from cdp_driver import CDP_ENDPOINT
 
 _ERROR_SELECTOR = '[data-testid="node-error"]'
+
+# Accessible names for the overflow / "More" control that can reveal the Topic
+# checker when it is not directly on the command bar. Tried in order.
+_MORE_BUTTON_NAMES = ("More", "More commands", "More options", "…")
+
+# Markers of a GENERIC, unexplained runtime error — the cue that a publish-time
+# authoring defect (that the Topic checker would show) is the likely cause, as
+# opposed to a specific, actionable error that points at the flow/connector.
+_UNEXPLAINED_MARKERS = (
+    "something went wrong",
+    "unexpected error",
+    "an error occurred",
+    "an error has occurred",
+)
+
+# A specific error carrying real detail (a status code, a named field/table) is
+# NOT "unexplained" — it points at the flow run or connector, not the canvas.
+_EXPLAINED_MARKERS = (
+    "error code:",
+    "status code",
+    "statuscode",
+)
+
+
+def looks_like_unexplained_error(reply: str | None) -> bool:
+    """True when a runtime reply is a GENERIC, unexplained error — the trigger to
+    run a Topic checker pass. A generic "something went wrong" with no actionable
+    detail is often the surface of a publish-time authoring defect the Topic
+    checker would name. An error carrying specific detail (a status code, a named
+    table/field) is explained — it points at the flow run or connector, not the
+    authoring canvas — so it does not trigger the checker pass."""
+    low = (reply or "").lower()
+    if not any(m in low for m in _UNEXPLAINED_MARKERS):
+        return False
+    if any(m in low for m in _EXPLAINED_MARKERS):
+        return False
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -84,9 +127,12 @@ def render_report(url: str, errors: list[dict], *, checker_found: bool) -> str:
     lines = [f"Topic checker @ {url}"]
     if not checker_found and not errors:
         lines.append(
-            "WARNING: the Topic checker panel could not be opened and no error "
-            "nodes were visible — the check DID NOT RUN. This is not a clean "
-            "result. Open the topic's authoring canvas, sign in, and retry.")
+            "WARNING: the Topic checker could not be surfaced (tried the command "
+            "bar and the 'More' overflow menu). This is NOT a clean result — the "
+            "panel has additional rendering conditions that can't be fully "
+            "automated. There MAY be a Topic checker error you need to surface "
+            "manually: open the topic's authoring canvas and open Topic checker "
+            "(via 'More' if it isn't on the command bar), then re-run.")
         return "\n".join(lines)
     if not errors:
         lines.append("0 errors — the Topic checker reported no problems.")
@@ -126,18 +172,44 @@ def _select_page(browser, topic_id: str | None):
     ))
 
 
-def _open_checker(page) -> bool:
-    """Open the Topic checker panel if a button is present. Returns True when the
-    checker is demonstrably available — the button was found, OR error nodes are
-    already visible (panel already open). Returns False when neither holds, so the
-    caller can refuse to report a false-clean."""
+def _try_topic_checker_button(page) -> bool:
+    """Click the 'Topic checker' command if it's visible. Returns True if clicked."""
     button = page.get_by_role("button", name="Topic checker", exact=True)
     if button.count() and button.is_visible(timeout=1000):
         button.click()
         page.wait_for_timeout(1500)
         return True
-    # Button not found — but if error nodes are already on the page, the checker
-    # has clearly run in this session; treat that as available.
+    return False
+
+
+def _open_checker(page) -> bool:
+    """Surface the Topic checker panel via an escalation ladder. Returns True when
+    the checker is demonstrably available; False when it could not be surfaced (so
+    the caller warns the user to check manually rather than report a false-clean).
+
+    Ladder:
+      1. Click the 'Topic checker' command if it's on the command bar.
+      2. Otherwise open the overflow 'More' menu, then click 'Topic checker'.
+      3. If error nodes are already on the page, the checker has clearly run
+         (panel already open) — treat as available.
+      4. Otherwise give up (return False): the panel has additional rendering
+         conditions we can't fully drive, so the caller advises manual surfacing.
+    """
+    # 1. Direct command.
+    if _try_topic_checker_button(page):
+        return True
+    # 2. Overflow 'More' menu, then the command.
+    for name in _MORE_BUTTON_NAMES:
+        try:
+            more = page.get_by_role("button", name=name, exact=True)
+            if more.count() and more.first.is_visible(timeout=800):
+                more.first.click()
+                page.wait_for_timeout(800)
+                if _try_topic_checker_button(page):
+                    return True
+        except Exception:
+            continue
+    # 3. Panel already open (error nodes present) => checker has run.
     try:
         return page.locator(_ERROR_SELECTOR).count() > 0
     except Exception:
