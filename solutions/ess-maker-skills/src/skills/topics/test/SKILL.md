@@ -1,25 +1,31 @@
 # Test / Debug Topic Skill
 
-Guides a maker through debugging a topic they just created or updated — driving it, confirming the reply is real, validating the behaviour against what the scenario expects, and localizing a fault to either the flow it calls or the topic's own internal state.
+Guides a maker through debugging a topic they just created or updated — driving it, confirming the reply is real, checking the fix doesn't break the intent the eval cases encode, and localizing a fault to either the flow it calls or the topic's own internal state.
 
-**Eval cases are the read-only standard.** A topic's **evaluation cases** (authored upstream via the `evaluations/create` skill, stored as `EvaluationData` under `{agent.folder}/evaluations/`) describe the customer-facing behaviour the topic must exhibit — especially failure handling (backend down, record missing, connection unauthorized). This skill **debugs the topic against those cases; it never edits them.** If a topic has no eval cases yet, that is a signal to author them with `evaluations/create` — not work this skill does. Absent evals, drive a representative trigger phrase instead.
+**Eval cases are the read-only intent guardrail.** A topic's **evaluation cases** (authored upstream via the `evaluations/create` skill, stored as `EvaluationData` under `{agent.folder}/evaluations/`) encode the intended customer-facing behaviour — especially failure handling (backend down, record missing, connection unauthorized). This skill treats them as a **guardrail: a fix must not break the intent they encode.** It reads that intent; it does not grade the topic against the cases and it never edits them. If a topic has no eval cases yet, that is a signal to author them with `evaluations/create` — not work this skill does. Absent evals, drive a representative trigger phrase instead.
 
 ## The debug-and-validate loop
 
-Debugging a topic is one loop, repeated per scenario until the behaviour is right. It is not a heavyweight process — it is the loop you already run naturally — but the moves are:
+Debugging a topic is one loop, repeated per probe until the behaviour is right. It is not a heavyweight process — it is the loop you already run naturally — but the moves are:
 
-1. **Pick a scenario** — an eval case's `input`, or a representative trigger phrase. Drive the failure-handling scenarios first; they are the hardest and the highest-value.
+1. **Pick a probe** — the input you drive the topic with. It is one of two kinds, and you usually use both in a session:
+   - an **eval-case input** — the `input` of an `EvaluationData` case, driven to check a fix still preserves the intent that case encodes; or
+   - an **exploratory probe** — an ad-hoc prompt you drive to build or harden behaviour that no eval case covers yet (what you do while a topic is still coming together).
+
+   Drive the failure-handling probes first — backend error, missing record, unauthorized — they are the hardest and the highest-value.
 2. **Drive and capture** the full reply.
 3. **Confirm the reply is real** — classify it (`ok` vs consent gate / timeout / empty) so you never diagnose a phantom reply.
-4. **Validate the behaviour** against what the scenario expects — deterministically where the answer is a substring (`--expect` / `--reject`), and with a **best-effort LLM judge over the capture** where correctness is a matter of judgement (does the failure message actually help the user, is the tone right, is anything missing). The judge is advisory — it informs your diagnosis, it is not a pass/fail gate.
+4. **Check the behaviour against intent** — by the kind of probe: where an eval case covers this behaviour, confirm the fix doesn't break the intent it encodes; on an exploratory probe, judge against your own intent for the behaviour you are building. Use deterministic substring checks (`--expect` / `--reject`) as a quick sanity signal, and a **best-effort LLM judge over the capture** where intent is a matter of judgement (does the failure message actually help the user, is the tone right, is anything missing). This is a guardrail on your fix, not a grade of the topic — both signals are advisory and inform your diagnosis.
 5. **If it diverges, localize the fault** — flow run history, the Topic checker, or a planted DBG node — and **fix the topic, or its flow / template config.**
-6. **Re-drive the same scenario** until it passes, then move to the next.
+6. **Re-drive the same probe** until the behaviour holds, then move to the next.
 
-**The one invariant:** every fix lands on the **topic** (or its flow / template config) — never on the eval cases. The eval cases are the fixed standard you validate against; changing them to make a topic pass defeats the loop.
+Both kinds run in the **same loop** and usually coexist — the common state is a topic with some eval cases plus behaviour still being built. Existing eval cases are a **standing regression guardrail** the whole time: even while you drive exploratory probes on new ground, a fix must not break the intent the existing cases encode. When an exploratory probe's behaviour stabilizes, capture it as a case with `evaluations/create` so the new ground becomes guardrail too.
 
-This skill **drives the topic automatically** — it launches (or attaches to) an InPrivate browser on the agent's test pane, sends the scenario, and captures the reply — then runs deterministic tools over that reply so you are not debugging on a phantom reply or guessing at hidden state:
+**The one invariant:** every fix lands on the **topic** (or its flow / template config) — never on the eval cases. The eval cases are the fixed intent you check against; changing them to make a topic behave defeats the guardrail.
 
-- **`scripts/drive_topic.py`** — drive a scenario against the test pane and classify the reply in one step. It attaches to an already-open CDP browser, or launches Edge InPrivate on the test pane and prompts a single sign-in, then drives. InPrivate is deliberate: it signs in as a *test* account, not the ambient corp account.
+This skill **drives the topic automatically** — it launches (or attaches to) an InPrivate browser on the agent's test pane, sends the probe, and captures the reply — then runs deterministic tools over that reply so you are not debugging on a phantom reply or guessing at hidden state:
+
+- **`scripts/drive_topic.py`** — drive a probe against the test pane and classify the reply in one step. It attaches to an already-open CDP browser, or launches Edge InPrivate on the test pane and prompts a single sign-in, then drives. InPrivate is deliberate: it signs in as a *test* account, not the ambient corp account.
 - **`scripts/reply_signal.py`** — the classifier `drive_topic` uses (also runnable standalone on a pasted reply): real answer vs consent gate / timeout / empty.
 - **`scripts/flow_run_inspect.py`** — for flow-backed topics, read the flow's per-action run history (did the connector run, which action failed, why is the reply generic). Interpret it with `src/reference/ess-docs/operations/flow-run-inspection.md`.
 - **`scripts/plant_debug.py`** / **`scripts/strip_debug.py`** — for topic-internal silent-state bugs, plant a temporary DBG node that projects a topic variable into the transcript, re-drive, read it, then strip it.
@@ -31,7 +37,7 @@ This skill **drives the topic automatically** — it launches (or attaches to) a
 - **Classify before you trust a reply.** Do not diagnose topic logic on a reply until `reply_signal.py` says it is `ok`. A consent gate or empty reply will make any conclusion vacuous.
 - **Drive is automated, with a manual fallback.** `drive_topic.py` sends the turn and captures the full reply (all bubbles — a card plus a separate DBG bubble is one reply). If it cannot reach a signed-in test pane, it **warns and tells you how to fix it** (launch/sign-in) rather than failing silently; only then paste the reply into `reply_signal.py` by hand.
 - **Read-only where possible.** Flow inspection only reads run history. Only the DBG plant path mutates the topic, and it is byte-reversible.
-- **Validate, don't assume.** An `ok` reply is a real turn, not a correct one — a `400` error reply is also `ok`. Assert on the content: deterministic `--expect` / `--reject` for substrings, plus a best-effort LLM judge over the capture when correctness needs judgement. The eval cases are the standard you validate against and are **read-only here** — never edit them to make a topic pass.
+- **Check, don't assume.** An `ok` reply is a real turn, not a correct one — a `400` error reply is also `ok`. Check the content against intent: deterministic `--expect` / `--reject` substrings as a sanity signal, plus a best-effort LLM judge over the capture when intent needs judgement. The eval cases are the intent you check against and are **read-only here** — a fix must not break them, and you never edit them to make a topic behave.
 - **TRACK PROGRESS.** Use the todo list tool to track the loop so the maker can see where you are.
 
 ## Classify the topic — which fault surface?
@@ -45,24 +51,24 @@ Most real topics are both; work outward — confirm the drive, then the flow, th
 
 ## Drive, confirm, and validate the reply
 
-1. Pick a scenario to drive. Prefer the topic's **evaluation cases** (`{agent.folder}/evaluations/`) — each `EvaluationData` case's `input` is a scenario the topic must handle, and the failure-handling cases (backend error, missing record, unauthorized) are the highest-value ones to exercise here. Absent evals, use a representative trigger phrase.
+1. Pick a probe to drive — an **eval-case input** (`{agent.folder}/evaluations/`; each `EvaluationData` case's `input` is a behaviour the topic must handle) or an **exploratory prompt** for behaviour no case covers yet. Drive the failure-handling probes first (backend error, missing record, unauthorized) — they are the highest-value.
 2. Drive it and classify the reply in one step:
 
    ```
-   python scripts/drive_topic.py --prompt "<scenario input>"
+   python scripts/drive_topic.py --prompt "<probe input>"
    ```
 
    - **First run** (no browser attached yet): the tool launches Edge InPrivate on the agent's test pane and asks you to **sign in once with your test account**, then drives. Pass `--env <env-guid> --bot <bot-guid>` if they can't be read from the workspace config. Subsequent drives re-attach to that same browser automatically.
    - It prints the `signal`, a one-line remediation, and the captured reply.
    - **If it can't reach a signed-in test pane**, it warns and tells you exactly what to do (launch / sign in) — it does **not** fail silently. Fix that and re-run, or fall back to a manual drive: send the prompt in the Test pane, copy the full reply, and run `python scripts/reply_signal.py "<pasted reply>"`.
    - **After a publish** (e.g. you just planted a DBG node or edited the topic), add `--new-session` so the drive starts a fresh test conversation — otherwise stale routing from the pre-publish session can answer the turn.
-   - **Grade deterministically** with `--expect "<text the reply must contain>"` and/or `--reject "<text it must not>"` (both repeatable). A failed assertion returns a non-zero exit — this is the axis that separates a real success from a `400`/runtime error, since **both are `ok` turns** (a real error reply is a real turn). Prefer wiring the eval case's `expectedOutput` substrings here.
+   - **Sanity-check the content** with `--expect "<text the reply must contain>"` and/or `--reject "<text it must not>"` (both repeatable). A failed assertion returns a non-zero exit — this is the axis that separates a real success from a `400`/runtime error, since **both are `ok` turns** (a real error reply is a real turn). Where an eval case names expected content, use its `expectedOutput` substrings here as the intent to hold to.
 
 3. Act on the signal:
    - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Authorize the connection in the test pane, then re-drive. Do NOT diagnose logic on this reply.
    - **`timeout`** — re-drive; a hibernating backend may need a warm-up call first.
    - **`empty`** — confirm the topic actually triggered (right trigger phrase, no conflicting topic), then re-drive.
-   - **`ok`** — a real reply. Note that a genuine backend error reply (e.g. `Error code: 400`) is also `ok` — it is a real turn, so the tool prints an **`advisory: reply is error-shaped`** line and you must assert on it, not assume success. Validate against what the scenario expects: use `--expect` / `--reject` for the substrings, and — where correctness is a matter of judgement (is the failure message actually helpful, is the tone right, is anything missing) — apply a best-effort LLM judge over the capture. If the behaviour matches, move to the next scenario; if it diverges, localize the fault (below) and fix the topic / flow / config.
+   - **`ok`** — a real reply. Note that a genuine backend error reply (e.g. `Error code: 400`) is also `ok` — it is a real turn, so the tool prints an **`advisory: reply is error-shaped`** line and you must check it, not assume success. Check the behaviour against intent — the eval case's where one covers this probe, your own for an exploratory probe: use `--expect` / `--reject` for the substrings, and — where intent is a matter of judgement (is the failure message actually helpful, is the tone right, is anything missing) — apply a best-effort LLM judge over the capture. If the behaviour holds, move to the next probe; if it diverges, localize the fault (below) and fix the topic / flow / config.
 
 Only proceed past this step on an `ok` reply.
 
@@ -112,7 +118,7 @@ When the reply looks plausible and the flow run shows nothing wrong, but a branc
 
    `--topic` accepts the friendly file stem (e.g. `servicenow-hrsd-get-cases-by-status`), the display name, or the full schemaname — it resolves to the immutable schemaname via `.component-map.json`. This PATCHes the topic, records provenance to `.local/.dbg_provenance.json`, and publishes (retrying transient publish throttling automatically). It refuses to double-plant.
 
-3. **Re-drive** the topic with a fresh session so the just-published change is what answers (`python scripts/drive_topic.py --prompt "<same scenario>" --new-session`). The DBG line renders as its own bubble and is captured with the rest of the reply; read the `DBG ...` values from the output.
+3. **Re-drive** the topic with a fresh session so the just-published change is what answers (`python scripts/drive_topic.py --prompt "<same probe>" --new-session`). The DBG line renders as its own bubble and is captured with the rest of the reply; read the `DBG ...` values from the output.
 4. Interpret: an empty value where you expected data, or a branch tag that does not match the path you thought fired, is your fault.
 5. **Strip — always:**
 
