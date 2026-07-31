@@ -13,6 +13,9 @@ workspace/**
 # from the scripts dir (e.g. `python adk_telemetry.py --selftest`). Never commit.
 scripts/.local/
 
+# Per-user Dataverse MCP endpoint written by /setup. Never commit tenant URLs.
+.vscode/mcp.json
+
 # ISV reference docs synced from an internal ESS reference source (never committed)
 src/reference/ess-docs/isv/
 

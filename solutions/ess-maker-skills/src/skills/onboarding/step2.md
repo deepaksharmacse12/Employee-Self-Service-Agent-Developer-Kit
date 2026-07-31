@@ -3,8 +3,19 @@
 Every **Message** block is the exact text to show the user. Copy it verbatim.
 Do not rephrase, add commentary, or tell the user what tools you are calling.
 
-You should already have these values from Step 1: ENV_URL, BOT_ID, BOT_NAME,
-SCHEMA_NAME, IS_MANAGED.
+Reload the saved environment and agent selection:
+
+```
+python scripts/onboarding_state.py show
+```
+
+Find the line starting with `ONBOARDING_STATE_JSON:` and parse the JSON after
+the colon. Load ENV_URL from `environmentUrl`, and BOT_ID, BOT_NAME,
+SCHEMA_NAME, and IS_MANAGED from `agent.botId`, `agent.name`,
+`agent.schemaName`, and `agent.isManaged`.
+
+If the agent object is missing, read `src/skills/onboarding/step1b.md` and
+follow it. Do not run extraction without a persisted agent selection.
 
 ---
 
@@ -74,6 +85,12 @@ Wait for the user to respond.
 ## 2.3 — Finish
 
 Update `workspace/onboarding/tasks.md` — change step 4 from `- [ ]` to `- [x]`.
+
+Clear the partial onboarding state now that the durable setup config exists:
+
+```
+python scripts/onboarding_state.py clear
+```
 
 **Message:**
 

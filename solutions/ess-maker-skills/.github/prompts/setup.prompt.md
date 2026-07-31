@@ -5,8 +5,22 @@ description: "Type Enter to set up your ESS customization environment"
 
 # Setup
 
-**Idempotency check.** Read `.local/config.json`. If it exists AND
-`setup` is `"complete"`, show:
+**Idempotency check.** Read `.local/config.json` and
+`workspace/onboarding/tasks.md`.
+
+If `.local/config.json` exists with `setup` set to `"complete"`, and the
+onboarding checklist exists with step 4 unchecked, mark steps 1–3 checked and
+resume onboarding immediately. The checklist router will continue at step 4.
+Do not ask for `RESET`; the durable config proves extraction completed, but
+MCP startup is still incomplete.
+
+If `.local/config.json` exists with `setup` set to `"complete"`, and the
+onboarding checklist has steps 1–4 checked but step 5 unchecked, resume
+onboarding immediately at step 5 so the optional readiness check is offered
+again. Do not ask for `RESET`.
+
+If `.local/config.json` exists with `setup` set to `"complete"` and the
+conditions above do not apply, show:
 
 > Your environment is already set up. Re-running setup will replace your local agent files.
 > Type `RESET` to confirm a full re-setup, or anything else to cancel.

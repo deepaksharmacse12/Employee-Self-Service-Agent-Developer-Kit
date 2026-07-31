@@ -60,19 +60,26 @@ Go to Step 1.
 
 ---
 
-## Step 1 and Step 2
+## Step 1
 
 Read `src/skills/onboarding/step1.md` and follow it.
 
 (Step 1 handles connecting to Dataverse. When it finishes, it tells you to
-read step1b.md, which discovers agents. When that finishes, it tells you to
-read step2.md, which extracts the agent and starts the MCP server.)
+read step1b.md, which discovers agents.)
 
----
+## Step 2
 
-## Step 3 or Step 4
+Read `src/skills/onboarding/step1b.md` and follow it. It reloads the saved
+environment selection before discovering agents.
+
+## Step 3
 
 Read `src/skills/onboarding/step2.md` and follow it.
+
+## Step 4
+
+Read `src/skills/onboarding/step2.md` and begin at section 2.2. Do not repeat
+agent extraction.
 
 ---
 

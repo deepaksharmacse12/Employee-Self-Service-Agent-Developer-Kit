@@ -3,7 +3,17 @@
 Every **Message** block is the exact text to show the user. Copy it verbatim.
 Do not rephrase, add commentary, or tell the user what tools you are calling.
 
-You should already have ENV_URL from Step 1.
+Reload the saved environment selection:
+
+```
+python scripts/onboarding_state.py show
+```
+
+Find the line starting with `ONBOARDING_STATE_JSON:` and parse the JSON after
+the colon. Save `environmentUrl` as ENV_URL.
+
+If `environmentUrl` is missing, read `src/skills/onboarding/step1.md` and
+follow it from section 0.9. Do not ask for an environment here.
 
 ---
 
@@ -69,6 +79,12 @@ python scripts/discover.py --url "{ENV_URL}" --select {NUMBER}
 Find the line starting with `SELECTED_AGENT_JSON:` in the output. Parse the
 JSON after the colon to get BOT_ID (`botid`), BOT_NAME (`name`),
 SCHEMA_NAME (`schemaname`), and IS_MANAGED (`ismanaged`).
+
+Persist the selected agent:
+
+```
+python scripts/onboarding_state.py save-agent --url "{ENV_URL}" --bot-id "{BOT_ID}" --name "{BOT_NAME}" --schema "{SCHEMA_NAME}" {--managed if IS_MANAGED is true}
+```
 
 Update `workspace/onboarding/tasks.md` — change both step 1 and step 2 from
 `- [ ]` to `- [x]`.
