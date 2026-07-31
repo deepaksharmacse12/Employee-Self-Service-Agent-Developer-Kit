@@ -345,6 +345,6 @@ If the topic misbehaves at runtime — a generic error, a blank field, a branch 
 After the topic is pushed and verified:
 
 - "Want to define what 'correct' means for this topic? Run `evaluations/create` to author its evaluation cases — the customer-facing scenarios, including failure handling, the topic must satisfy."
-- "Want to test or debug it? Run the `topics/test` skill to drive the topic and diagnose any runtime issue until its behaviour is right."
+- "Want to test or debug it? Type `/test` to drive the topic and debug its runtime behaviour until it's right."
 - "Would you like to create another topic?"
 - "Type `/menu` to see other options."

@@ -116,5 +116,6 @@ python scripts/emit_capability.py workflow_create
 After the workflow is created, the user needs a topic to call it. Tell them:
 - "Your workflow is ready with ID `{GUID}`. To use it from a topic, add an `InvokeFlowAction` with `flowId: {GUID}`."
 - "Would you like me to create a topic that calls this workflow?"
+- "Want to check it works? Type `/test` to exercise the workflow and debug its run history."
 
 If they say yes, hand off to the topic creation skill (`src/skills/topics/create/SKILL.md`).
