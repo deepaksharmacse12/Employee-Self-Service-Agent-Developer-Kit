@@ -1,8 +1,21 @@
 # Test / Debug Topic Skill
 
-Guides a maker through debugging a topic they just created or updated — driving it, confirming the reply is real, and localizing a fault to either the flow it calls or the topic's own internal state.
+Guides a maker through debugging a topic they just created or updated — driving it, confirming the reply is real, validating the behaviour against what the scenario expects, and localizing a fault to either the flow it calls or the topic's own internal state.
 
-**This is the self-serve step that gets a topic to meet its evals.** The topic's **evaluation cases** (authored via the `evaluations/create` skill, stored as `EvaluationData` under `{agent.folder}/evaluations/`) describe the customer-facing behavior the topic must exhibit — especially failure handling (backend down, record missing, connection unauthorized). This skill exercises the topic against those scenarios and debugs it until it behaves. Once it does, the topic is ready for the **completion gate** — the automated eval runner that grades the same `EvaluationData` cases to gate completion (see Step 5). If the topic has no evaluation cases yet, author them with `evaluations/create` first — they are the standard you are debugging toward.
+**Eval cases are the read-only standard.** A topic's **evaluation cases** (authored upstream via the `evaluations/create` skill, stored as `EvaluationData` under `{agent.folder}/evaluations/`) describe the customer-facing behaviour the topic must exhibit — especially failure handling (backend down, record missing, connection unauthorized). This skill **debugs the topic against those cases; it never edits them.** If a topic has no eval cases yet, that is a signal to author them with `evaluations/create` — not work this skill does. Absent evals, drive a representative trigger phrase instead.
+
+## The debug-and-validate loop
+
+Debugging a topic is one loop, repeated per scenario until the behaviour is right. It is not a heavyweight process — it is the loop you already run naturally — but the moves are:
+
+1. **Pick a scenario** — an eval case's `input`, or a representative trigger phrase. Drive the failure-handling scenarios first; they are the hardest and the highest-value.
+2. **Drive and capture** the full reply.
+3. **Confirm the reply is real** — classify it (`ok` vs consent gate / timeout / empty) so you never diagnose a phantom reply.
+4. **Validate the behaviour** against what the scenario expects — deterministically where the answer is a substring (`--expect` / `--reject`), and with a **best-effort LLM judge over the capture** where correctness is a matter of judgement (does the failure message actually help the user, is the tone right, is anything missing). The judge is advisory — it informs your diagnosis, it is not a pass/fail gate.
+5. **If it diverges, localize the fault** — flow run history, the Topic checker, or a planted DBG node — and **fix the topic, or its flow / template config.**
+6. **Re-drive the same scenario** until it passes, then move to the next.
+
+**The one invariant:** every fix lands on the **topic** (or its flow / template config) — never on the eval cases. The eval cases are the fixed standard you validate against; changing them to make a topic pass defeats the loop.
 
 This skill **drives the topic automatically** — it launches (or attaches to) an InPrivate browser on the agent's test pane, sends the scenario, and captures the reply — then runs deterministic tools over that reply so you are not debugging on a phantom reply or guessing at hidden state:
 
@@ -18,20 +31,21 @@ This skill **drives the topic automatically** — it launches (or attaches to) a
 - **Classify before you trust a reply.** Do not diagnose topic logic on a reply until `reply_signal.py` says it is `ok`. A consent gate or empty reply will make any conclusion vacuous.
 - **Drive is automated, with a manual fallback.** `drive_topic.py` sends the turn and captures the full reply (all bubbles — a card plus a separate DBG bubble is one reply). If it cannot reach a signed-in test pane, it **warns and tells you how to fix it** (launch/sign-in) rather than failing silently; only then paste the reply into `reply_signal.py` by hand.
 - **Read-only where possible.** Flow inspection only reads run history. Only the DBG plant path mutates the topic, and it is byte-reversible.
-- **TRACK PROGRESS.** Use the todo list tool to track the steps below so the maker can see where you are.
+- **Validate, don't assume.** An `ok` reply is a real turn, not a correct one — a `400` error reply is also `ok`. Assert on the content: deterministic `--expect` / `--reject` for substrings, plus a best-effort LLM judge over the capture when correctness needs judgement. The eval cases are the standard you validate against and are **read-only here** — never edit them to make a topic pass.
+- **TRACK PROGRESS.** Use the todo list tool to track the loop so the maker can see where you are.
 
-## Step 1: Classify the topic
+## Classify the topic — which fault surface?
 
 Read the topic file and decide which fault surface applies — it drives which tool you reach for:
 
-- **Flow-backed** — the topic calls a shared system topic (`BeginDialog` to `...System...`) or an `InvokeFlowAction`. Faults here are usually in the flow / connector path → **Step 3**.
-- **Topic-only** — the topic branches on its own variables (a `ConditionGroup`, a parsed table, a count) with no backend call, or the backend call succeeded but a downstream branch/variable is wrong → **Step 4**.
+- **Flow-backed** — the topic calls a shared system topic (`BeginDialog` to `...System...`) or an `InvokeFlowAction`. Faults here are usually in the flow / connector path → **Inspect the flow run**.
+- **Topic-only** — the topic branches on its own variables (a `ConditionGroup`, a parsed table, a count) with no backend call, or the backend call succeeded but a downstream branch/variable is wrong → **Plant a DBG node**.
 
-Most real topics are both; work outward — confirm the drive (Step 2), then the flow (Step 3), then the topic's internal state (Step 4).
+Most real topics are both; work outward — confirm the drive, then the flow, then the topic's internal state.
 
-## Step 2: Drive and confirm the reply is real
+## Drive, confirm, and validate the reply
 
-1. Pick a scenario to drive. Prefer the topic's **evaluation cases** (`{agent.folder}/evaluations/`) — each `EvaluationData` case's `input` is a scenario the topic must handle, and the failure-handling cases (backend error, missing record, unauthorized) are the highest-value ones to exercise here, since they are what the completion gate will grade. Absent evals, use a representative trigger phrase.
+1. Pick a scenario to drive. Prefer the topic's **evaluation cases** (`{agent.folder}/evaluations/`) — each `EvaluationData` case's `input` is a scenario the topic must handle, and the failure-handling cases (backend error, missing record, unauthorized) are the highest-value ones to exercise here. Absent evals, use a representative trigger phrase.
 2. Drive it and classify the reply in one step:
 
    ```
@@ -48,11 +62,11 @@ Most real topics are both; work outward — confirm the drive (Step 2), then the
    - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Authorize the connection in the test pane, then re-drive. Do NOT diagnose logic on this reply.
    - **`timeout`** — re-drive; a hibernating backend may need a warm-up call first.
    - **`empty`** — confirm the topic actually triggered (right trigger phrase, no conflicting topic), then re-drive.
-   - **`ok`** — a real reply. Note that a genuine backend error reply (e.g. `Error code: 400`) is also `ok` — it is a real turn, so the tool prints an **`advisory: reply is error-shaped`** line and you must assert on it, not assume success. Compare it against the eval case's `expectedOutput` (use `--expect`/`--reject` above to make this a pass/fail): does the topic's failure handling match the standard? If yes, continue to the next scenario; if not, the divergence is your fault to localize (Steps 3–4).
+   - **`ok`** — a real reply. Note that a genuine backend error reply (e.g. `Error code: 400`) is also `ok` — it is a real turn, so the tool prints an **`advisory: reply is error-shaped`** line and you must assert on it, not assume success. Validate against what the scenario expects: use `--expect` / `--reject` for the substrings, and — where correctness is a matter of judgement (is the failure message actually helpful, is the tone right, is anything missing) — apply a best-effort LLM judge over the capture. If the behaviour matches, move to the next scenario; if it diverges, localize the fault (below) and fix the topic / flow / config.
 
 Only proceed past this step on an `ok` reply.
 
-## Step 3: Inspect the flow run (flow-backed topics)
+## Inspect the flow run (flow-backed topics)
 
 When the reply is a real answer but wrong (generic error, missing data), read the flow's run history — the decisive "why" surface.
 
@@ -67,9 +81,9 @@ When the reply is a real answer but wrong (generic error, missing data), read th
 
 3. Interpret the cascade using `src/reference/ess-docs/operations/flow-run-inspection.md`. The key trap: a `runAfter:[Failed]` handler that shows **Succeeded** does NOT mean the flow succeeded — the containing scope can still be **Failed** and a catch-all Response can discard its output, masking (say) a connector **400** as a generic **500**. The **first `Failed` action + its statusCode** is usually the real fault.
 
-If the run history localizes the fault to the flow, fix the flow (see the workflow skills) — not the topic. If the flow ran clean but the topic still behaves wrong, the fault is topic-internal → Step 4. If the flow ran clean (or the topic isn't flow-backed) **and the error is generic and unexplained** — "something went wrong" with no status code, table, or field named — the surface may be a publish-time authoring defect the runtime never articulates → **Step 3b**.
+If the run history localizes the fault to the flow, fix the flow (see the workflow skills) — not the topic. If the flow ran clean but the topic still behaves wrong, the fault is topic-internal → **Plant a DBG node**. If the flow ran clean (or the topic isn't flow-backed) **and the error is generic and unexplained** — "something went wrong" with no status code, table, or field named — the surface may be a publish-time authoring defect the runtime never articulates → **Surface the Topic checker**.
 
-## Step 3b: Surface the Topic checker (unexplained authoring-canvas errors)
+## Surface the Topic checker (unexplained authoring-canvas errors)
 
 A generic, unexplained error reply — no status code, no named table/field — is frequently the runtime surface of a **publish-time authoring defect** (an invalid Adaptive Card JSON, a broken PowerFx expression) that a runtime drive and flow inspection both miss, because the defect never runs cleanly enough to produce a specific fault. `reply_signal.py`'s error-shaped advisory tells you the reply is an error; when it carries **no actionable detail**, reach for the Topic checker.
 
@@ -85,7 +99,7 @@ The tool follows an escalation ladder against the authoring canvas and reports e
 
 Each captured error names a `componentId` (a GUID) rather than the topic's display name — resolve it via `.component-map.json`. Fix the named card/expression, republish, and re-drive. If the tool reports `not run`, do not conclude the topic is clean — surface the checker manually before moving on.
 
-
+## Plant a DBG node (topic-internal silent state)
 
 When the reply looks plausible and the flow run shows nothing wrong, but a branch fired wrong or a field came back blank, make the deciding topic state visible.
 
@@ -108,21 +122,13 @@ When the reply looks plausible and the flow run shows nothing wrong, but a branc
 
    This restores the topic byte-identically, publishes, and clears the provenance. Run it even if the diagnosis was inconclusive. (`--yes` because you already owned the plant/strip consent above; the bare command prompts and would hang as a subprocess.)
 
-## Step 5: Report
+## Report
 
 Summarize for the maker:
 
-- The drive-outcome signal (Step 2) and, if it was not `ok`, what unblocked it.
+- The drive-outcome signal and, if it was not `ok`, what unblocked it.
 - If flow-inspected: the first failing action + statusCode and whether the fault is in the flow or the topic.
 - If DBG-planted: the decisive variable/branch value and what it revealed — and confirm the plant was stripped.
 - The concrete fix and where it belongs (topic YAML, flow, template config).
 
 If you planted a DBG node at any point, confirm `strip_debug.py` ran and `.local/.dbg_provenance.json` is gone before you finish.
-
-## Step 6: Hand off to the completion gate
-
-Once the topic behaves correctly on its evaluation scenarios — the failure-handling cases included — it has met the standard this skill exists to reach. Hand off:
-
-- If the topic has evaluation cases, tell the maker it is ready for the **completion gate**: the automated eval runner grades the same `EvaluationData` cases to decide whether the topic can be marked complete. (That runner is a separate workstream; this skill's job ends at "the topic meets its evals.")
-- If the topic has **no** evaluation cases yet, point the maker at the `evaluations/create` skill to author them — the topic cannot be gated on a standard that does not exist, and the cases you just debugged against should be captured there so the gate can enforce them.
-- Optionally validate the eval set's quality first with `python scripts/evaluate_evals.py` (this grades whether the *eval cases themselves* are realistic and well-scoped — it does not drive the topic).
