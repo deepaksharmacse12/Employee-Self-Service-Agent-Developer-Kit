@@ -35,7 +35,7 @@ This skill **drives the topic automatically** — it launches (or attaches to) a
 
 - **Always strip.** A DBG node planted with `plant_debug.py` is a live mutation of the deployed topic. It MUST be removed with `strip_debug.py` before you finish — never leave debug noise in a shipped topic. If you plant, you strip, even if the diagnosis fails.
 - **Classify before you trust a reply.** Do not diagnose topic logic on a reply until `reply_signal.py` says it is `ok`. A consent gate or empty reply will make any conclusion vacuous.
-- **Drive is automated, with a manual fallback.** `drive_topic.py` sends the turn and captures the full reply (all bubbles — a card plus a separate DBG bubble is one reply). If it cannot reach a signed-in test pane, it **warns and tells you how to fix it** (launch/sign-in) rather than failing silently; only then paste the reply into `reply_signal.py` by hand.
+- **Drive is automated; the sign-in is a human turn.** Getting a browser ready is two phases — the agent launches an InPrivate Edge (CDP port open) and ends its turn so the user signs in as a test account, then attaches with `--no-launch` and drives. Never block a subprocess waiting for sign-in. Once attached, `drive_topic.py` sends the turn and captures the full reply (all bubbles — a card plus a separate DBG bubble is one reply). If it can't reach a signed-in test pane, it **warns and tells you how to fix it** rather than failing silently; only then paste the reply into `reply_signal.py` by hand.
 - **Read-only where possible.** Flow inspection only reads run history. Only the DBG plant path mutates the topic, and it is byte-reversible.
 - **Check, don't assume.** An `ok` reply is a real turn, not a correct one — a `400` error reply is also `ok`. Check the content against intent: deterministic `--expect` / `--reject` substrings as a sanity signal, plus a best-effort LLM judge over the capture when intent needs judgement. The eval cases are the intent you check against and are **read-only here** — a fix must not break them, and you never edit them to make a topic behave.
 - **TRACK PROGRESS.** Use the todo list tool to track the loop so the maker can see where you are.
@@ -49,17 +49,39 @@ Read the topic file and decide which fault surface applies — it drives which t
 
 Most real topics are both; work outward — confirm the drive, then the flow, then the topic's internal state.
 
+## Get the browser ready (launch → sign in → attach)
+
+The drive is automated, but the **sign-in is not** — a test account has to sign in once in a real browser window, and that is a human step across a turn boundary. So getting ready is two phases, and the agent must not try to do both in one blocking call:
+
+1. **Launch** an InPrivate Edge with the CDP debug port open, pointed at the agent's test pane, and **end the turn** asking the user to sign in. Do not block a subprocess on `input()` waiting for sign-in — launch, then hand control back to the user.
+
+   ```
+   msedge --inprivate --remote-debugging-port=9222 "<test-pane-url>"
+   ```
+
+   - **InPrivate is mandatory, not cosmetic.** A normal-profile launch (`--user-data-dir` alone) lets Windows WAM / sync silently sign in the **ambient corp account** — in session this flip-flopped between identities. InPrivate disables that SSO so the user gets a clean account picker and signs in as the **test** account.
+   - The **test-pane URL** is the agent overview page; `drive_topic.py` builds it from `--env`/`--bot` (or `.local/config.json`) — read it from there.
+   - **Port** defaults to **9222**. If another session already holds it, pick another (e.g. `9224`) and use it in both the launch and the attach below.
+
+2. **Wait for the user to confirm they are signed in** (a chat turn — "signed in" / "done"), *then* **attach and drive**. Because the browser is already up, use `--no-launch` so the tool attaches instead of trying to launch again:
+
+   ```
+   python scripts/drive_topic.py --prompt "<probe input>" --no-launch --cdp http://localhost:9222
+   ```
+
+   Subsequent drives in the same session reuse that window — no re-launch, no re-sign-in.
+
 ## Drive, confirm, and validate the reply
 
 1. Pick a probe to drive — an **eval-case input** (`{agent.folder}/evaluations/`; each `EvaluationData` case's `input` is a behaviour the topic must handle) or an **exploratory prompt** for behaviour no case covers yet. Drive the failure-handling probes first (backend error, missing record, unauthorized) — they are the highest-value.
-2. Drive it and classify the reply in one step:
+2. Drive it and classify the reply in one step (the browser is already up and signed in from the step above):
 
    ```
-   python scripts/drive_topic.py --prompt "<probe input>"
+   python scripts/drive_topic.py --prompt "<probe input>" --no-launch --cdp http://localhost:9222
    ```
 
-   - **First run** (no browser attached yet): the tool launches Edge InPrivate on the agent's test pane and asks you to **sign in once with your test account**, then drives. Pass `--env <env-guid> --bot <bot-guid>` if they can't be read from the workspace config. Subsequent drives re-attach to that same browser automatically.
-   - **Getting the browser ready — the CDP port.** The launched browser exposes a debugging port (default **9222**), and the tool attaches to `http://localhost:9222`. **If a CDP browser is already up on that port, the tool attaches to it** — which, if it belongs to another debug session or a different agent, means you'd drive the **wrong** pane. The tool prints what it attached to so you can verify it's *your* agent. To run a **second, concurrent session** (or dodge a port another session already holds), pass `--cdp http://localhost:<other-port>` — this both launches and attaches on that port, keeping the two sessions isolated.
+   - **If no browser is ready yet**, `drive_topic.py` *can* launch one itself (omit `--no-launch`, pass `--env`/`--bot` or run from the workspace) — but that path blocks on an interactive sign-in prompt and only suits a human running it at a terminal. When the **agent** drives, do the two-phase launch above instead, so the sign-in is a chat turn, not a blocked subprocess.
+   - **The CDP port and concurrent sessions.** The tool attaches to `http://localhost:9222` by default. **If a CDP browser is already up on that port, it attaches to it** — if that browser belongs to another debug session or a different agent, you would drive the **wrong** pane. The tool prints what it attached to; verify it is *your* agent. To run a **second, concurrent session** (or dodge a port another session holds), pass `--cdp http://localhost:<other-port>` and launch on that same port — the two sessions stay isolated.
    - It prints the `signal`, a one-line remediation, and the captured reply.
    - **If it can't reach a signed-in test pane**, it warns and tells you exactly what to do (launch / sign in) — it does **not** fail silently. Fix that and re-run, or fall back to a manual drive: send the prompt in the Test pane, copy the full reply, and run `python scripts/reply_signal.py "<pasted reply>"`.
    - **After a publish** (e.g. you just planted a DBG node or edited the topic), add `--new-session` so the drive starts a fresh test conversation — otherwise stale routing from the pre-publish session can answer the turn.
