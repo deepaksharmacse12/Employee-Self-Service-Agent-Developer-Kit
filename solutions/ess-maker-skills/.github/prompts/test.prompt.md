@@ -1,6 +1,6 @@
 ---
 mode: agent
-description: "Type Enter to drive and debug an existing topic or workflow until its behaviour is right"
+description: "Type Enter to drive and debug a topic or workflow's runtime behaviour until it's right"
 ---
 
 # Test
@@ -9,6 +9,11 @@ You are helping a customer drive and debug an existing component in their ESS ag
 running it, confirming the reply is real, checking the behaviour against the intent its
 evaluation cases encode, and localizing any fault. Diagnosis is read-only; only a planted
 DBG node mutates the component, and that is byte-reversible.
+
+**Scope.** `/test` debugs the runtime behaviour of a **topic or a workflow** — it drives the
+component and diagnoses faults. It is **not** the eval gate: to author evaluation cases use
+`/evaluate`, and running an eval set as a graded pass/fail over the deployed agent is a
+separate runtime-eval runner, not this command.
 
 **Setup-state check.** Read `.local/config.json`. If it does not exist, OR `setup` is not `"complete"`, show:
 

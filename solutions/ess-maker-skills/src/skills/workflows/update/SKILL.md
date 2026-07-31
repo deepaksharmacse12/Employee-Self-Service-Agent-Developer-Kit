@@ -113,5 +113,6 @@ python scripts/push.py --yes
 
 ## Step 9: Offer Next Steps
 
+- "Want to check it works? Type `/test` to exercise the workflow and debug its run history."
 - "Would you like to make another change?"
 - "Type `/menu` to see all available commands."

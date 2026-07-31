@@ -155,6 +155,7 @@ If the user prefers to publish manually instead, point them at [Copilot Studio](
 
 ## Step 9: Offer Next Steps
 
+- "Want to check it works? Type `/test` to drive the topic and debug its runtime behaviour."
 - "Would you like to make another change?"
 - "Type `/scan` to check for errors."
 - "Type `/menu` to see all available commands."
