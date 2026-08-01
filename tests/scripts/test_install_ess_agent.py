@@ -208,6 +208,7 @@ def test_install_resolves_environment_and_polls_api(
         },
         statuses=[{"status": "Succeeded"}],
     )
+    states = []
 
     schema = install_ess_agent.install_agent(
         "https://org.crm.dynamics.com/",
@@ -217,6 +218,7 @@ def test_install_resolves_environment_and_polls_api(
         powerplatform_client_factory=lambda _tenant: powerplatform,
         poll_interval_seconds=0,
         sleep=lambda _seconds: None,
+        installation_state_callback=states.append,
     )
 
     assert schema == "msdyn_CopilotForEmployeeSelfServiceDAIT"
@@ -226,6 +228,7 @@ def test_install_resolves_environment_and_polls_api(
     assert powerplatform.install_calls == [
         ("env-123", "msdyn_CopilotForEmployeeSelfServiceDAIT")
     ]
+    assert states == ["installing", "automatic-complete"]
     assert "Installation status (poll 1, 0s elapsed): Succeeded" in (
         capsys.readouterr().out
     )

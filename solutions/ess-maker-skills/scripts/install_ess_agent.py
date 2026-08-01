@@ -530,6 +530,7 @@ def install_agent(
     sleep=time.sleep,
     clock=time.monotonic,
     status_callback=lambda message: print(message, flush=True),
+    installation_state_callback=lambda _status: None,
 ) -> str:
     """Authenticate and install the selected ESS application through REST APIs."""
     env_url = env_url.rstrip("/")
@@ -569,9 +570,11 @@ def install_agent(
     unique_name = package.get("uniqueName") or application_unique_name
     state = package.get("state")
     if state in INSTALLED_STATES:
+        installation_state_callback("automatic-complete")
         return schema_name
 
     if state in IN_PROGRESS_STATES:
+        installation_state_callback("installing")
         operation_id = None
     else:
         result = client.install_application_package(
@@ -587,11 +590,13 @@ def install_agent(
         operation_id = result.get("_operationId")
         last_state = result.get("lastOperation", {}).get("state")
         if last_state in INSTALLED_STATES:
+            installation_state_callback("automatic-complete")
             return schema_name
         if last_state == "InstallFailed":
             raise RuntimeError(
                 _error_message(result.get("lastOperation", {}), "Installation failed.")
             )
+        installation_state_callback("installing")
 
     _wait_for_install(
         client,
@@ -604,6 +609,7 @@ def install_agent(
         clock=clock,
         status_callback=status_callback,
     )
+    installation_state_callback("automatic-complete")
     return schema_name
 
 
@@ -630,14 +636,35 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    from onboarding_state import save_installation
+
+    def persist_installation_state(status):
+        save_installation(
+            args.url,
+            args.experience,
+            args.vertical,
+            status,
+            args.connection_name,
+            api_started=True,
+        )
+
     try:
         schema_name = install_agent(
             args.url,
             args.experience,
             args.vertical,
             connection_name=args.connection_name,
+            installation_state_callback=persist_installation_state,
         )
     except InstallationTimeoutError as error:
+        save_installation(
+            args.url,
+            args.experience,
+            args.vertical,
+            "manual-required",
+            args.connection_name,
+            api_started=True,
+        )
         result = {
             "environmentUrl": args.url.rstrip("/"),
             "experience": args.experience,

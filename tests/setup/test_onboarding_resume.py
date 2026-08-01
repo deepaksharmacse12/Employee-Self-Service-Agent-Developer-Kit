@@ -149,3 +149,26 @@ def test_existing_agents_offer_only_missing_installations_before_selection():
     ]
     assert "go to step 1.8f" in another_agent_route
     assert "go to step 1.8e" not in another_agent_route
+
+
+def test_preflight_does_not_persist_abandoned_agent_selection():
+    step1b = (_ONBOARDING / "step1b.md").read_text(encoding="utf-8")
+    normalized = " ".join(step1b.split())
+    preflight = step1b[
+        step1b.index("### 1.8f"):step1b.index("### 1.8d")
+    ]
+
+    assert "save-connection" not in preflight
+    assert "save-installation" not in preflight
+    assert "Do not persist the selected agent or preflight result" in normalized
+    assert "installer owns installation-state persistence" in normalized
+
+
+def test_legacy_it_install_without_connection_returns_to_preflight():
+    step1b = (_ONBOARDING / "step1b.md").read_text(encoding="utf-8")
+    normalized = " ".join(step1b.split())
+
+    assert "`installation.vertical` is `it`" in normalized
+    assert "`installation.connectionName` is missing" in normalized
+    assert "go to section 1.8f regardless of installation status" in normalized
+    assert "without reinstalling it" in normalized

@@ -11,21 +11,25 @@ python scripts/onboarding_state.py show
 
 Find the line starting with `ONBOARDING_STATE_JSON:` and parse the JSON after
 the colon. Save `environmentUrl` as ENV_URL and inspect the optional
-`installation` and `connection` objects.
+`installation` object.
 
 If `environmentUrl` is missing, read `src/skills/onboarding/step1.md` and
 follow it from section 0.9. Do not ask for an environment here.
 
+- If `installation.vertical` is `it` but `installation.connectionName` is
+  missing, load EXPERIENCE and VERTICAL and go to section 1.8f regardless of
+  installation status. This reconciles durable IT installations created by
+  older setup versions before connection selection was stored. The installer
+  will detect an already-installed or in-progress package without reinstalling
+  it and then persist the selected connection.
 - If `installation.status` is `installing`, load EXPERIENCE and VERTICAL from
-  the object and go directly to section 1.8f. Do not repeat the agent selection
-  question.
+  the object, load its optional `connectionName` as CONNECTION_NAME, and go
+  directly to section 1.8d. This state exists only after Power Platform
+  accepted or reported an in-progress installation.
 - If `installation.status` is `manual-required`, load EXPERIENCE and VERTICAL
   from the object and go directly to section 1.8c.
 - If `installation.status` is `automatic-complete` or `verified`, load
   EXPERIENCE and VERTICAL and go directly to section 1.8g.
-- If there is no `installation` object and `connection.status` is `missing` or
-  `selected`, load EXPERIENCE and VERTICAL from `connection` and go directly
-  to section 1.8f.
 
 ---
 
@@ -223,8 +227,8 @@ The installer resolves the composite `{EXPERIENCE}.{VERTICAL}` key from
 and solution unique names against `src/reference/solution-catalog.md`. Do not
 hard-code a schema name in the onboarding instructions.
 
-First continue to section 1.8f. Persist the installation only after its
-connection preflight passes.
+First continue to section 1.8f. Do not persist the selected agent or preflight
+result.
 
 ### 1.8f — Validate required connections before installation
 
@@ -242,19 +246,11 @@ python scripts/ess_connection_binding.py inspect --url "{ENV_URL}" --experience 
 
 Parse the JSON after `ESS_CONNECTION_PREFLIGHT_JSON:`.
 
-- If `status` is `not-required`, persist it and continue to section 1.8e:
-
-  ```
-  python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status not-required
-  ```
+- If `status` is `not-required`, continue directly to section 1.8d.
 
 - If `status` is `ready`, save
-  `selectedConnection.name` as CONNECTION_NAME, persist it, and continue to
-  section 1.8e:
-
-  ```
-  python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status selected --connection-name "{CONNECTION_NAME}"
-  ```
+  `selectedConnection.name` as the in-memory CONNECTION_NAME and continue
+  directly to section 1.8d. Do not write it to onboarding state yet.
 
   **Message (do NOT wait for user response — continue immediately):**
 
@@ -267,15 +263,10 @@ Parse the JSON after `ESS_CONNECTION_PREFLIGHT_JSON:`.
   `displayName` plus `accountName` (or `name` when no account is available),
   and include the stable connection `name` in the description. Do not
   auto-select among multiple connections. Save the selected item's `name` as
-  CONNECTION_NAME, persist it with the same
-  `save-connection --status selected` command, and continue to section 1.8e.
+  the in-memory CONNECTION_NAME and continue directly to section 1.8d. Do not
+  write it to onboarding state yet.
 
-- If `status` is `missing`, persist the blocked state:
-
-  ```
-  python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status missing
-  ```
-
+- If `status` is `missing`:
   **Message:**
 
   The selected agent requires an active **{displayName}** connection before it
@@ -290,20 +281,14 @@ Parse the JSON after `ESS_CONNECTION_PREFLIGHT_JSON:`.
   Ask with `vscode_askQuestions`:
 
   - **Check again** — rerun section 1.8f.
-  - **Not yet** — stop and preserve the blocked state so `/setup` can resume.
+  - **Not yet** — stop without saving the agent selection or connection
+    preflight. The next `/setup` run must rediscover agents and ask what to
+    install.
 
 Do not run the installer unless this preflight returns `not-required`, `ready`,
-or the user explicitly selects one of multiple connected matches.
-
-### 1.8e — Persist the installation selection
-
-Persist the selection before starting the potentially long-running operation:
-
-```
-python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status installing
-```
-
-Then continue to section 1.8d.
+or the user explicitly selects one of multiple connected matches. The installer
+owns installation-state persistence and writes it only after the Power Platform
+API confirms that installation has started or is already complete.
 
 ### 1.8d — Run or resume automatic installation
 
@@ -334,19 +319,9 @@ selection.
 
 - If the command prints `INSTALLED_ESS_AGENT_JSON:`, continue immediately.
 - If the command prints `ESS_AGENT_INSTALLATION_TIMEOUT_JSON:`, persist the
-  timeout using the command below, then go to step 1.8c:
-
-  ```
-  python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status manual-required
-  ```
+  timeout state emitted by the installer and go to step 1.8c.
 
 - If the command fails, go to step 1.8a.
-
-Persist the completed automatic installation:
-
-```
-python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status automatic-complete
-```
 
 **Message (do NOT wait for user response — continue immediately):**
 
@@ -360,8 +335,8 @@ binding is verified.
 
 ### 1.8g — Bind and verify the required connection
 
-Reload `ONBOARDING_STATE_JSON` and read `connection.connectionName` as
-CONNECTION_NAME when present.
+Reload `ONBOARDING_STATE_JSON` and read
+`installation.connectionName` as CONNECTION_NAME when present.
 
 For an agent with a selected connection, run:
 
@@ -369,8 +344,8 @@ For an agent with a selected connection, run:
 python scripts/ess_connection_binding.py bind --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --connection-name "{CONNECTION_NAME}"
 ```
 
-For an agent whose connection status is `not-required`, run the same command
-without `--connection-name`.
+When `installation.connectionName` is absent, run the same command without
+`--connection-name`; the selected agent does not require a parent connection.
 
 Continue only when the command prints `ESS_CONNECTION_BINDING_JSON:` with
 `status` equal to `bound` or `not-required`. The script updates the nested

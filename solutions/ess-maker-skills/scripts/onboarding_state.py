@@ -21,8 +21,6 @@ INSTALLATION_STATUSES = {
 }
 CONNECTION_STATUSES = {
     "not-required",
-    "missing",
-    "selected",
     "bound",
 }
 
@@ -78,6 +76,23 @@ def load_state(*, recover_from_mcp=True):
             f"Unsupported onboarding state version: {state.get('version')}"
         )
 
+    installation = state.get("installation") or {}
+    if (
+        installation.get("status") == "installing"
+        and installation.get("apiStarted") is not True
+    ):
+        state.pop("installation", None)
+        setup_status = state.get("setupStatus")
+        if isinstance(setup_status, dict):
+            setup_status.pop("S1", None)
+
+    connection = state.get("connection") or {}
+    if connection.get("status") in {"missing", "selected"}:
+        state.pop("connection", None)
+        setup_status = state.get("setupStatus")
+        if isinstance(setup_status, dict):
+            setup_status.pop("S2", None)
+
     if state.get("environmentUrl"):
         state["environmentUrl"] = _normalize_environment_url(
             state["environmentUrl"]
@@ -131,11 +146,31 @@ def save_agent(url, bot_id, name, schema_name, is_managed):
     return save_state(state)
 
 
-def save_installation(url, experience, vertical, status):
+def save_installation(
+    url,
+    experience,
+    vertical,
+    status,
+    connection_name=None,
+    *,
+    api_started=False,
+):
     if status not in INSTALLATION_STATUSES:
         raise ValueError(f"Unsupported installation status: {status}")
+    if status == "installing" and not api_started:
+        raise ValueError(
+            "Installing state can only be saved after the installation API "
+            "accepts the request or reports an in-progress package."
+        )
     state = load_state(recover_from_mcp=False)
     state["environmentUrl"] = _normalize_environment_url(url)
+    previous_installation = state.get("installation") or {}
+    if (
+        connection_name is None
+        and previous_installation.get("experience") == experience
+        and previous_installation.get("vertical") == vertical
+    ):
+        connection_name = previous_installation.get("connectionName")
     connection = state.get("connection") or {}
     if (
         connection.get("experience") != experience
@@ -150,6 +185,10 @@ def save_installation(url, experience, vertical, status):
         "vertical": vertical,
         "status": status,
     }
+    if api_started or previous_installation.get("apiStarted") is True:
+        state["installation"]["apiStarted"] = True
+    if connection_name:
+        state["installation"]["connectionName"] = connection_name
     state.setdefault("setupStatus", {})["S1"] = {
         "state": (
             "done" if status in {"automatic-complete", "verified"}
@@ -175,7 +214,7 @@ def save_connection(
 ):
     if status not in CONNECTION_STATUSES:
         raise ValueError(f"Unsupported connection status: {status}")
-    if status in {"selected", "bound"} and not connection_name:
+    if status == "bound" and not connection_name:
         raise ValueError(f"Connection name is required for status '{status}'")
     state = load_state(recover_from_mcp=False)
     state["environmentUrl"] = _normalize_environment_url(url)
@@ -186,15 +225,9 @@ def save_connection(
         "connectionName": connection_name,
     }
     state.setdefault("setupStatus", {})["S2"] = {
-        "state": (
-            "done" if status in {"not-required", "bound"}
-            else "blocked" if status == "missing"
-            else "in-progress"
-        ),
+        "state": "done",
         "checkpoint": "ESS-CONN-001",
-        "verifiedBy": (
-            "programmatic" if status in {"not-required", "bound"} else None
-        ),
+        "verifiedBy": "programmatic",
         "connectionName": connection_name,
         "notRequired": status == "not-required",
     }
@@ -246,6 +279,12 @@ def main():
     installation_parser.add_argument(
         "--status", required=True, choices=sorted(INSTALLATION_STATUSES)
     )
+    installation_parser.add_argument("--connection-name")
+    installation_parser.add_argument(
+        "--api-started",
+        action="store_true",
+        help="Confirm the Power Platform API accepted or is running installation",
+    )
 
     connection_parser = subparsers.add_parser(
         "save-connection", help="Save ESS connection preflight or binding state"
@@ -284,6 +323,8 @@ def main():
                 args.experience,
                 args.vertical,
                 args.status,
+                args.connection_name,
+                api_started=args.api_started,
             ))
         elif args.command == "save-connection":
             _print_state(save_connection(

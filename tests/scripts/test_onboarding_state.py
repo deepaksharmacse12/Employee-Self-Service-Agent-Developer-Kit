@@ -108,10 +108,80 @@ def test_new_agent_installation_clears_other_agents_connection_state(
         "cea",
         "it",
         "installing",
+        api_started=True,
     )
 
     assert "connection" not in saved
     assert "S2" not in saved["setupStatus"]
+
+
+def test_installing_state_requires_confirmed_api_start(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="installation API accepts"):
+        onboarding_state.save_installation(
+            "https://org.crm.dynamics.com",
+            "cea",
+            "it",
+            "installing",
+        )
+
+
+def test_installing_state_keeps_selected_connection_after_api_start(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+
+    saved = onboarding_state.save_installation(
+        "https://org.crm.dynamics.com",
+        "cea",
+        "it",
+        "installing",
+        "shared-alchemy-connection",
+        api_started=True,
+    )
+
+    assert saved["installation"] == {
+        "experience": "cea",
+        "vertical": "it",
+        "status": "installing",
+        "apiStarted": True,
+        "connectionName": "shared-alchemy-connection",
+    }
+
+
+def test_load_discards_legacy_preflight_and_unstarted_installation(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / ".local" / "onboarding.json"
+    state_path.parent.mkdir()
+    state_path.write_text(json.dumps({
+        "version": 1,
+        "environmentUrl": "https://org.crm.dynamics.com",
+        "installation": {
+            "experience": "cea",
+            "vertical": "it",
+            "status": "installing",
+        },
+        "connection": {
+            "experience": "cea",
+            "vertical": "it",
+            "status": "missing",
+        },
+        "setupStatus": {
+            "S1": {"state": "in-progress"},
+            "S2": {"state": "blocked"},
+        },
+    }), encoding="utf-8")
+
+    loaded = onboarding_state.load_state()
+
+    assert "installation" not in loaded
+    assert "connection" not in loaded
+    assert loaded["setupStatus"] == {}
 
 
 def test_recovers_environment_from_existing_mcp_config(tmp_path, monkeypatch):
