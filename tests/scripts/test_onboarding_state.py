@@ -70,6 +70,50 @@ def test_installation_progress_rejects_unknown_status(tmp_path, monkeypatch):
         )
 
 
+def test_connection_binding_progress_persists_s2_state(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    saved = onboarding_state.save_connection(
+        "https://org.crm.dynamics.com",
+        "da",
+        "it",
+        "bound",
+        "shared-alchemy-connection",
+    )
+
+    assert saved["connection"]["status"] == "bound"
+    assert saved["setupStatus"]["S2"] == {
+        "state": "done",
+        "checkpoint": "ESS-CONN-001",
+        "verifiedBy": "programmatic",
+        "connectionName": "shared-alchemy-connection",
+        "notRequired": False,
+    }
+
+
+def test_new_agent_installation_clears_other_agents_connection_state(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    onboarding_state.save_connection(
+        "https://org.crm.dynamics.com",
+        "cea",
+        "hr",
+        "not-required",
+    )
+
+    saved = onboarding_state.save_installation(
+        "https://org.crm.dynamics.com",
+        "cea",
+        "it",
+        "installing",
+    )
+
+    assert "connection" not in saved
+    assert "S2" not in saved["setupStatus"]
+
+
 def test_recovers_environment_from_existing_mcp_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     mcp_dir = tmp_path / ".vscode"

@@ -11,19 +11,21 @@ python scripts/onboarding_state.py show
 
 Find the line starting with `ONBOARDING_STATE_JSON:` and parse the JSON after
 the colon. Save `environmentUrl` as ENV_URL and inspect the optional
-`installation` object.
+`installation` and `connection` objects.
 
 If `environmentUrl` is missing, read `src/skills/onboarding/step1.md` and
 follow it from section 0.9. Do not ask for an environment here.
 
 - If `installation.status` is `installing`, load EXPERIENCE and VERTICAL from
-  the object and go directly to section 1.8d. Do not repeat either selection
+  the object and go directly to section 1.8f. Do not repeat the agent selection
   question.
 - If `installation.status` is `manual-required`, load EXPERIENCE and VERTICAL
   from the object and go directly to section 1.8c.
-- If `installation.status` is `automatic-complete` or `verified`, remember
-  that installation completed during this setup run and continue to section
-  1.4.
+- If `installation.status` is `automatic-complete` or `verified`, load
+  EXPERIENCE and VERTICAL and go directly to section 1.8g.
+- If there is no `installation` object and `connection.status` is `missing` or
+  `selected`, load EXPERIENCE and VERTICAL from `connection` and go directly
+  to section 1.8f.
 
 ---
 
@@ -39,19 +41,75 @@ seconds...
 Run this command in the terminal (substitute ENV_URL):
 
 ```
-python scripts/discover.py --url "{ENV_URL}"
+python scripts/discover.py --url "{ENV_URL}" --sync-config
 ```
 
 A browser window will open for sign-in. Wait for the script to finish.
 
 **Check the terminal output:**
 
-- **Script printed a table of agents → go to step 1.5.**
-- **Script printed "No agents found" and no installation completed during this
+- Find `ESS_AGENT_DISCOVERY_JSON:` and parse the JSON after the colon as
+  DISCOVERY. It contains `agents`, `installedInstallationKeys`, and
+  `availableInstallations`.
+- The command also synchronizes every detected supported agent into
+  `.local/config.json`. Installed but unselected agents have
+  `installation.status` set to `installed` and `extraction.status` set to
+  `not-started`.
+- **DISCOVERY contains agents and available installations → go to step 1.4a.**
+- **DISCOVERY contains agents and no available installations → go to step
+  1.5.**
+- **Script printed "No supported ESS agents found" and no installation
+  completed during this
   setup run → go to step 1.8.**
-- **Script printed "No agents found" after installation completed during this
-  setup run → go to step 1.8b.**
+- **Script printed "No supported ESS agents found" after installation completed
+  during this setup run → go to step 1.8b.**
 - **Script failed with an auth/connection error → go to step 1.9.**
+
+---
+
+## 1.4a — Offer another supported ESS agent
+
+Build INSTALLED_AGENT_NAMES from `DISCOVERY.agents[*].name`.
+
+**Message:**
+
+This environment already has these supported ESS agents:
+
+{INSTALLED_AGENT_NAMES as a Markdown bullet list}
+
+You can install another supported agent before choosing which one to customize.
+
+**End message.**
+
+Use `vscode_askQuestions`. Build one option for every entry in
+`DISCOVERY.availableInstallations`, preserving its order and using its `label`
+and `description`. Append the continue option last:
+
+```json
+[
+  {
+    "header": "Install another agent",
+    "question": "Would you like to install another ESS agent?",
+    "options": [
+      {
+        "label": "{available installation label}",
+        "description": "{available installation description}"
+      },
+      {
+        "label": "Continue with installed agents",
+        "description": "Choose an existing agent to customize."
+      }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+- If the user selects **Continue with installed agents**, go to step 1.5.
+- Otherwise, map the selected option to its `experience` and `vertical` values,
+  save them as EXPERIENCE and VERTICAL, and go to step 1.8f. Every installation
+  route, including installing another agent, must pass connection preflight
+  before installation state is persisted or the installer is started.
 
 ---
 
@@ -124,24 +182,32 @@ Now read `src/skills/onboarding/step2.md` and follow it.
 
 ## 1.8 — No agents found
 
-Read `src/reference/ess-agent-installation/config.json`. Build the experience
-options from `experiences`, ordered by `displayOrder`; use each entry's `label`
-and `description`. Use the `vscode_askQuestions` tool and wait for the user's
-response. The resulting question should be equivalent to:
+Use `DISCOVERY.availableInstallations` from step 1.4. It contains all four
+supported agents on a fresh environment, already ordered with both DA options
+first and both CEA options last. Use `vscode_askQuestions` and wait for the
+user's response. The question should be equivalent to:
 
 ```json
 [
   {
-    "header": "Select experience",
-    "question": "Which Employee Self-Service experience do you want to install?",
+    "header": "Install ESS agent",
+    "question": "Which Employee Self-Service agent do you want to install?",
     "options": [
       {
-        "label": "ESS as DA (Recommended)",
-        "description": "Install the declarative agent experience."
+        "label": "DA : Employee Self-Service HR",
+        "description": "Install the declarative Human Resources agent."
       },
       {
-        "label": "ESS as CEA",
-        "description": "Install the custom engine agent experience."
+        "label": "DA : Employee Self-Service IT",
+        "description": "Install the declarative Information Technology agent."
+      },
+      {
+        "label": "CEA : Employee Self-Service HR",
+        "description": "Install the custom engine Human Resources agent."
+      },
+      {
+        "label": "CEA : Employee Self-Service IT",
+        "description": "Install the custom engine Information Technology agent."
       }
     ],
     "allowFreeformInput": false
@@ -149,41 +215,87 @@ response. The resulting question should be equivalent to:
 ]
 ```
 
-Map the selected label back to its key under `experiences` and save that key as
-EXPERIENCE.
-
-After the user answers, build the vertical options from `verticals`, ordered by
-`displayOrder`; use each entry's `label` and `description`. Use the
-`vscode_askQuestions` tool and wait for the second response. The resulting
-question should be equivalent to:
-
-```json
-[
-  {
-    "header": "Select vertical",
-    "question": "Which Employee Self-Service vertical do you want to install?",
-    "options": [
-      {
-        "label": "Employee Self-Service HR",
-        "description": "Install the Human Resources agent."
-      },
-      {
-        "label": "Employee Self-Service IT",
-        "description": "Install the Information Technology agent."
-      }
-    ],
-    "allowFreeformInput": false
-  }
-]
-```
-
-Map the selected label back to its key under `verticals` and save that key as
-VERTICAL.
+Map the selected option to its `experience` and `vertical` values and save them
+as EXPERIENCE and VERTICAL.
 
 The installer resolves the composite `{EXPERIENCE}.{VERTICAL}` key from
 `src/reference/ess-agent-installation/config.json` and validates its application
 and solution unique names against `src/reference/solution-catalog.md`. Do not
 hard-code a schema name in the onboarding instructions.
+
+First continue to section 1.8f. Persist the installation only after its
+connection preflight passes.
+
+### 1.8f — Validate required connections before installation
+
+**Message (do NOT wait for user response — continue immediately):**
+
+Checking required connections for the selected Employee Self-Service agent...
+
+**End message.**
+
+Run:
+
+```
+python scripts/ess_connection_binding.py inspect --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL}
+```
+
+Parse the JSON after `ESS_CONNECTION_PREFLIGHT_JSON:`.
+
+- If `status` is `not-required`, persist it and continue to section 1.8e:
+
+  ```
+  python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status not-required
+  ```
+
+- If `status` is `ready`, save
+  `selectedConnection.name` as CONNECTION_NAME, persist it, and continue to
+  section 1.8e:
+
+  ```
+  python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status selected --connection-name "{CONNECTION_NAME}"
+  ```
+
+  **Message (do NOT wait for user response — continue immediately):**
+
+  ✅ Found an active **{displayName}** connection. Installation can proceed.
+
+  **End message.**
+
+- If `status` is `selection-required`, use `vscode_askQuestions` to show one
+  option for every item in `connections`. Build a unique label from
+  `displayName` plus `accountName` (or `name` when no account is available),
+  and include the stable connection `name` in the description. Do not
+  auto-select among multiple connections. Save the selected item's `name` as
+  CONNECTION_NAME, persist it with the same
+  `save-connection --status selected` command, and continue to section 1.8e.
+
+- If `status` is `missing`, persist the blocked state:
+
+  ```
+  python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status missing
+  ```
+
+  **Message:**
+
+  The selected agent requires an active **{displayName}** connection before it
+  can be installed.
+
+  {creationGuidance}
+
+  Create the connection in this environment, then choose **Check again**.
+
+  **End message.**
+
+  Ask with `vscode_askQuestions`:
+
+  - **Check again** — rerun section 1.8f.
+  - **Not yet** — stop and preserve the blocked state so `/setup` can resume.
+
+Do not run the installer unless this preflight returns `not-required`, `ready`,
+or the user explicitly selects one of multiple connected matches.
+
+### 1.8e — Persist the installation selection
 
 Persist the selection before starting the potentially long-running operation:
 
@@ -209,6 +321,17 @@ Run this command in the terminal:
 python scripts/install_ess_agent.py --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL}
 ```
 
+When connection preflight selected CONNECTION_NAME, append:
+
+```
+--connection-name "{CONNECTION_NAME}"
+```
+
+The installer independently repeats the required-connection validation and
+will refuse to start the package installation if the preflight was bypassed,
+the connection became unhealthy, or multiple matches exist without an explicit
+selection.
+
 - If the command prints `INSTALLED_ESS_AGENT_JSON:`, continue immediately.
 - If the command prints `ESS_AGENT_INSTALLATION_TIMEOUT_JSON:`, persist the
   timeout using the command below, then go to step 1.8c:
@@ -227,13 +350,51 @@ python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experie
 
 **Message (do NOT wait for user response — continue immediately):**
 
-✅ Employee Self-Service installation completed. Discovering the new agent...
+✅ Employee Self-Service installation completed. Binding its required
+connection...
 
 **End message.**
 
-Return to step 1.4 and run discovery again. Remember that installation
+Continue to section 1.8g. Do not run discovery until required connection
+binding is verified.
+
+### 1.8g — Bind and verify the required connection
+
+Reload `ONBOARDING_STATE_JSON` and read `connection.connectionName` as
+CONNECTION_NAME when present.
+
+For an agent with a selected connection, run:
+
+```
+python scripts/ess_connection_binding.py bind --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --connection-name "{CONNECTION_NAME}"
+```
+
+For an agent whose connection status is `not-required`, run the same command
+without `--connection-name`.
+
+Continue only when the command prints `ESS_CONNECTION_BINDING_JSON:` with
+`status` equal to `bound` or `not-required`. The script updates the nested
+agent state in `.local/config.json`:
+
+- `setupStatus.S1` — package installed and verified.
+- `setupStatus.S2` — required connection bound and reread from Dataverse, or
+  explicitly marked not required.
+
+Persist the resumable binding state:
+
+```
+python scripts/onboarding_state.py save-connection --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status bound --connection-name "{CONNECTION_NAME}"
+```
+
+For `not-required`, use `--status not-required` and omit `--connection-name`.
+If binding fails, show the exact error and stop. Do not mark S2 done and do not
+continue to discovery.
+
+Return to step 1.4 and run discovery again after binding succeeds. Remember
+that installation
 completed during this setup run so a delayed agent registration does not
-trigger another installation.
+trigger another installation. Once the new agent appears, step 1.4a offers
+only the other supported agents that are still missing.
 
 ### 1.8c — Automatic installation timed out
 
@@ -299,11 +460,12 @@ python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experie
 
 **Message (do NOT wait for user response — continue immediately):**
 
-✅ Employee Self-Service installation verified. Discovering the new agent...
+✅ Employee Self-Service installation verified. Binding its required
+connection...
 
 **End message.**
 
-Return to step 1.4 and run discovery again. If the checkpoint does not pass,
+Continue to section 1.8g. If the checkpoint does not pass,
 show its result and offer the same **Verify installation** and **Not yet**
 choices again. Do not rerun automatic installation.
 

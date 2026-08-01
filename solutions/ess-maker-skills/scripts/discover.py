@@ -27,15 +27,21 @@ import argparse
 import json
 import sys
 import os
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 # Add scripts/ to path so we can import auth
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from auth import authenticate, query_all
 from http_errors import APIError
+from install_ess_agent import (
+    build_installation_options,
+    load_installation_config,
+)
 
 
 GITHUB_COPILOT_MCP_CLIENT_ID = "aebc6443-996d-45c2-90f0-388ff96faa56"
+LOCAL_CONFIG_PATH = Path(".local") / "config.json"
 
 
 def discover_agents(env_url, token):
@@ -54,6 +60,105 @@ def discover_agents(env_url, token):
             "ismanaged": r.get("ismanaged", False),
         })
     return agents
+
+
+def build_ess_agent_inventory(agents, config):
+    """Classify discovered bots and return missing supported installations."""
+    options = build_installation_options(config)
+    options_by_schema = {
+        option["schemaName"].casefold(): option
+        for option in options
+    }
+    ess_agents = []
+    installed_keys = set()
+
+    for agent in agents:
+        schema_name = agent.get("schemaname")
+        if not isinstance(schema_name, str):
+            continue
+        option = options_by_schema.get(schema_name.casefold())
+        if not option:
+            continue
+        ess_agents.append({
+            **agent,
+            "installationKey": option["key"],
+            "configKey": option["configKey"],
+        })
+        installed_keys.add(option["key"])
+
+    return {
+        "agents": ess_agents,
+        "installedInstallationKeys": sorted(installed_keys),
+        "availableInstallations": [
+            option for option in options
+            if option["key"] not in installed_keys
+        ],
+    }
+
+
+def sync_installed_agents(
+    env_url,
+    inventory,
+    config_path=LOCAL_CONFIG_PATH,
+):
+    """Persist every detected supported ESS agent in config schema v2."""
+    path = Path(config_path)
+    existing = {}
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing.get("configVersion") not in (None, 2):
+            return existing
+
+    config = existing if existing.get("configVersion") == 2 else {
+        "configVersion": 2,
+        "setup": "in-progress",
+        "common": {},
+        "agents": {},
+    }
+    config.setdefault("common", {})["dataverseEndpoint"] = env_url.rstrip("/")
+    grouped_agents = config.setdefault("agents", {})
+
+    detected_keys = set()
+    for agent in inventory["agents"]:
+        config_key = agent["configKey"]
+        experience, agent_section = config_key.split(".", 1)
+        detected_keys.add(config_key)
+        existing_agent = (
+            grouped_agents.get(experience, {}).get(agent_section, {})
+        )
+        extraction = existing_agent.get("extraction") or {
+            "status": "not-started"
+        }
+        grouped_agents.setdefault(experience, {})[agent_section] = {
+            **existing_agent,
+            "name": agent["name"],
+            "botId": agent["botid"],
+            "schemaName": agent["schemaname"],
+            "isManaged": agent["ismanaged"],
+            "installation": {"status": "installed"},
+            "extraction": extraction,
+        }
+
+    for experience, experience_agents in grouped_agents.items():
+        if not isinstance(experience_agents, dict):
+            continue
+        for agent_section, agent in experience_agents.items():
+            config_key = f"{experience}.{agent_section}"
+            if (
+                isinstance(agent, dict)
+                and config_key not in detected_keys
+                and agent.get("installation")
+            ):
+                agent["installation"]["status"] = "not-detected"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp_path, path)
+    return config
 
 
 def check_mcp_config(env_url, token):
@@ -125,6 +230,11 @@ def main():
                         help="Check Dataverse MCP and GitHub Copilot enablement")
     parser.add_argument("--select", type=int, default=None,
                         help="Select agent by number and output JSON")
+    parser.add_argument(
+        "--sync-config",
+        action="store_true",
+        help="Persist detected supported agents in .local/config.json",
+    )
     args = parser.parse_args()
 
     # --- Environment listing mode ---
@@ -184,17 +294,28 @@ def main():
 
     print("Discovering agents...")
     try:
-        agents = discover_agents(env_url, token)
+        discovered_agents = discover_agents(env_url, token)
+        inventory = build_ess_agent_inventory(
+            discovered_agents,
+            load_installation_config(),
+        )
     except APIError as e:
         print(e.format_for_terminal())
         sys.exit(1)
-
-    if not agents:
-        print("No agents found in this environment.")
-        print("Make sure your ESS agent is installed in Copilot Studio.")
+    except (OSError, ValueError) as e:
+        print(f"ERROR: Could not load ESS installation catalog: {e}")
         sys.exit(1)
 
-    print(f"Found {len(agents)} agent(s):")
+    print(f"ESS_AGENT_DISCOVERY_JSON:{json.dumps(inventory)}")
+    if args.sync_config:
+        sync_installed_agents(env_url, inventory)
+    agents = inventory["agents"]
+
+    if not agents:
+        print("No supported ESS agents found in this environment.")
+        sys.exit(1)
+
+    print(f"Found {len(agents)} supported ESS agent(s):")
     print_agent_table(agents)
 
     if args.select is not None:

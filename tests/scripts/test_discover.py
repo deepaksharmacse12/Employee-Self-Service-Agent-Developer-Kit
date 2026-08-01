@@ -370,3 +370,237 @@ class TestMcpConfigCheck:
             if line.startswith("MCP_CONFIG_JSON:")
         )
         assert json.loads(json_line.split(":", 1)[1])["configured"] is True
+
+
+def test_ess_inventory_excludes_installed_agent_from_available_options():
+    import discover
+
+    config = {
+        "experiences": {
+            "da": {
+                "shortLabel": "DA",
+                "description": "DA.",
+                "displayOrder": 1,
+            },
+            "cea": {
+                "shortLabel": "CEA",
+                "description": "CEA.",
+                "displayOrder": 2,
+            },
+        },
+        "verticals": {
+            "hr": {
+                "label": "Employee Self-Service HR",
+                "description": "HR.",
+                "displayOrder": 1,
+            },
+            "it": {
+                "label": "Employee Self-Service IT",
+                "description": "IT.",
+                "displayOrder": 2,
+            },
+        },
+        "installations": {
+            "da.hr": {
+                "configKey": "da.esshr",
+                "experienceKey": "da",
+                "verticalKey": "hr",
+                "solution": {"parentUniqueName": "schema_da_hr"},
+            },
+            "da.it": {
+                "configKey": "da.essit",
+                "experienceKey": "da",
+                "verticalKey": "it",
+                "solution": {"parentUniqueName": "schema_da_it"},
+            },
+            "cea.hr": {
+                "configKey": "cea.esshr",
+                "experienceKey": "cea",
+                "verticalKey": "hr",
+                "solution": {"parentUniqueName": "schema_cea_hr"},
+            },
+            "cea.it": {
+                "configKey": "cea.essit",
+                "experienceKey": "cea",
+                "verticalKey": "it",
+                "solution": {"parentUniqueName": "schema_cea_it"},
+            },
+        },
+    }
+    agents = [
+        {
+            "botid": "ess",
+            "name": "ESS DA HR",
+            "schemaname": "SCHEMA_DA_HR",
+            "ismanaged": True,
+        },
+        {
+            "botid": "unrelated",
+            "name": "Unrelated bot",
+            "schemaname": "custom_bot",
+            "ismanaged": False,
+        },
+    ]
+
+    inventory = discover.build_ess_agent_inventory(agents, config)
+
+    assert [agent["botid"] for agent in inventory["agents"]] == ["ess"]
+    assert inventory["installedInstallationKeys"] == ["da.hr"]
+    assert [
+        option["key"] for option in inventory["availableInstallations"]
+    ] == ["da.it", "cea.hr", "cea.it"]
+
+
+@patch("discover.load_installation_config")
+@patch("discover.discover_agents")
+@patch("discover.authenticate")
+def test_agent_cli_emits_inventory_and_filters_unrelated_bots(
+    authenticate,
+    discover_agents,
+    load_config,
+    capsys,
+    monkeypatch,
+):
+    import discover
+    import install_ess_agent
+
+    authenticate.return_value = "token"
+    load_config.return_value = install_ess_agent.load_installation_config()
+    discover_agents.return_value = [
+        {
+            "botid": "ess",
+            "name": "ESS DA HR",
+            "schemaname": "msdyn_copilotforemployeeselfservicedahr",
+            "ismanaged": True,
+        },
+        {
+            "botid": "other",
+            "name": "Other bot",
+            "schemaname": "custom_other",
+            "ismanaged": False,
+        },
+    ]
+    monkeypatch.setattr(
+        "sys.argv",
+        ["discover.py", "--url", "https://org.crm.dynamics.com"],
+    )
+
+    discover.main()
+
+    output = capsys.readouterr().out
+    marker = next(
+        line for line in output.splitlines()
+        if line.startswith("ESS_AGENT_DISCOVERY_JSON:")
+    )
+    inventory = json.loads(marker.split(":", 1)[1])
+    assert [agent["botid"] for agent in inventory["agents"]] == ["ess"]
+    assert [
+        option["key"] for option in inventory["availableInstallations"]
+    ] == ["da.it", "cea.hr", "cea.it"]
+    assert "Other bot" not in output
+
+
+@patch("discover.load_installation_config")
+@patch("discover.discover_agents", return_value=[])
+@patch("discover.authenticate", return_value="token")
+def test_agent_cli_emits_all_four_options_when_no_agent_exists(
+    _authenticate,
+    _discover_agents,
+    load_config,
+    capsys,
+    monkeypatch,
+):
+    import discover
+    import install_ess_agent
+
+    load_config.return_value = install_ess_agent.load_installation_config()
+    monkeypatch.setattr(
+        "sys.argv",
+        ["discover.py", "--url", "https://org.crm.dynamics.com"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        discover.main()
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    marker = next(
+        line for line in output.splitlines()
+        if line.startswith("ESS_AGENT_DISCOVERY_JSON:")
+    )
+    inventory = json.loads(marker.split(":", 1)[1])
+    assert len(inventory["availableInstallations"]) == 4
+    assert "No supported ESS agents found" in output
+
+
+def test_sync_installed_agents_records_all_agents_and_preserves_extraction(
+    tmp_path,
+):
+    import discover
+
+    config_path = tmp_path / ".local" / "config.json"
+    config_path.parent.mkdir()
+    config_path.write_text(json.dumps({
+        "configVersion": 2,
+        "setup": "complete",
+        "activeAgent": "da.esshr",
+        "common": {"environmentSku": "Sandbox"},
+        "agents": {
+            "da": {
+                "esshr": {
+                    "name": "Old HR",
+                    "folder": "workspace/agents/hr",
+                    "extraction": {
+                        "status": "complete",
+                        "workflowCount": 2,
+                    },
+                    "installation": {"status": "installed"},
+                }
+            }
+        },
+    }), encoding="utf-8")
+    inventory = {
+        "agents": [
+            {
+                "configKey": "da.esshr",
+                "name": "DA HR",
+                "botid": "bot-hr",
+                "schemaname": "schema-hr",
+                "ismanaged": True,
+            },
+            {
+                "configKey": "cea.essit",
+                "name": "CEA IT",
+                "botid": "bot-it",
+                "schemaname": "schema-it",
+                "ismanaged": True,
+            },
+        ],
+        "installedInstallationKeys": ["da.hr", "cea.it"],
+        "availableInstallations": [],
+    }
+
+    config = discover.sync_installed_agents(
+        "https://org.crm.dynamics.com/",
+        inventory,
+        config_path,
+    )
+
+    assert config["setup"] == "complete"
+    assert config["common"] == {
+        "environmentSku": "Sandbox",
+        "dataverseEndpoint": "https://org.crm.dynamics.com",
+    }
+    assert config["agents"]["da"]["esshr"]["folder"] == (
+        "workspace/agents/hr"
+    )
+    assert config["agents"]["da"]["esshr"]["extraction"] == {
+        "status": "complete",
+        "workflowCount": 2,
+    }
+    assert config["agents"]["cea"]["essit"]["installation"] == {
+        "status": "installed"
+    }
+    assert config["agents"]["cea"]["essit"]["extraction"] == {
+        "status": "not-started"
+    }

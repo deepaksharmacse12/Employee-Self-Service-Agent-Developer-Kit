@@ -19,6 +19,12 @@ INSTALLATION_STATUSES = {
     "automatic-complete",
     "verified",
 }
+CONNECTION_STATUSES = {
+    "not-required",
+    "missing",
+    "selected",
+    "bound",
+}
 
 
 def _normalize_environment_url(url):
@@ -130,10 +136,67 @@ def save_installation(url, experience, vertical, status):
         raise ValueError(f"Unsupported installation status: {status}")
     state = load_state(recover_from_mcp=False)
     state["environmentUrl"] = _normalize_environment_url(url)
+    connection = state.get("connection") or {}
+    if (
+        connection.get("experience") != experience
+        or connection.get("vertical") != vertical
+    ):
+        state.pop("connection", None)
+        setup_status = state.get("setupStatus")
+        if isinstance(setup_status, dict):
+            setup_status.pop("S2", None)
     state["installation"] = {
         "experience": experience,
         "vertical": vertical,
         "status": status,
+    }
+    state.setdefault("setupStatus", {})["S1"] = {
+        "state": (
+            "done" if status in {"automatic-complete", "verified"}
+            else "in-progress" if status == "installing"
+            else "blocked"
+        ),
+        "checkpoint": "ESS-SOLN-001",
+        "verifiedBy": (
+            "programmatic"
+            if status in {"automatic-complete", "verified"}
+            else None
+        ),
+    }
+    return save_state(state)
+
+
+def save_connection(
+    url,
+    experience,
+    vertical,
+    status,
+    connection_name=None,
+):
+    if status not in CONNECTION_STATUSES:
+        raise ValueError(f"Unsupported connection status: {status}")
+    if status in {"selected", "bound"} and not connection_name:
+        raise ValueError(f"Connection name is required for status '{status}'")
+    state = load_state(recover_from_mcp=False)
+    state["environmentUrl"] = _normalize_environment_url(url)
+    state["connection"] = {
+        "experience": experience,
+        "vertical": vertical,
+        "status": status,
+        "connectionName": connection_name,
+    }
+    state.setdefault("setupStatus", {})["S2"] = {
+        "state": (
+            "done" if status in {"not-required", "bound"}
+            else "blocked" if status == "missing"
+            else "in-progress"
+        ),
+        "checkpoint": "ESS-CONN-001",
+        "verifiedBy": (
+            "programmatic" if status in {"not-required", "bound"} else None
+        ),
+        "connectionName": connection_name,
+        "notRequired": status == "not-required",
     }
     return save_state(state)
 
@@ -184,6 +247,21 @@ def main():
         "--status", required=True, choices=sorted(INSTALLATION_STATUSES)
     )
 
+    connection_parser = subparsers.add_parser(
+        "save-connection", help="Save ESS connection preflight or binding state"
+    )
+    connection_parser.add_argument("--url", required=True)
+    connection_parser.add_argument(
+        "--experience", required=True, choices=("da", "cea")
+    )
+    connection_parser.add_argument(
+        "--vertical", required=True, choices=("hr", "it")
+    )
+    connection_parser.add_argument(
+        "--status", required=True, choices=sorted(CONNECTION_STATUSES)
+    )
+    connection_parser.add_argument("--connection-name")
+
     subparsers.add_parser("clear", help="Clear partial onboarding state")
     args = parser.parse_args()
 
@@ -206,6 +284,14 @@ def main():
                 args.experience,
                 args.vertical,
                 args.status,
+            ))
+        elif args.command == "save-connection":
+            _print_state(save_connection(
+                args.url,
+                args.experience,
+                args.vertical,
+                args.status,
+                args.connection_name,
             ))
         else:
             clear_state()

@@ -16,18 +16,23 @@ MCP startup is still incomplete.
 
 If `.local/config.json` exists with `setup` set to `"complete"`, and the
 onboarding checklist has steps 1–4 checked but step 5 unchecked, resume
-onboarding at step 5, beginning with its manual opt-in question. Wait for an
-explicit user choice; never start FlightCheck automatically. Do not ask for
+at agent discovery before readiness. Read `common.dataverseEndpoint` from the
+config as ENV_URL, then persist it with:
+
+```
+python scripts/onboarding_state.py save-environment --url "{ENV_URL}"
+```
+
+Then read `src/skills/onboarding/step1b.md` and follow it. This rechecks which
+of the four supported ESS agents are installed and offers only missing agents
+before readiness. Do not start FlightCheck directly and do not ask for
 `RESET`.
 
 If `.local/config.json` exists with `setup` set to `"complete"` and the
-conditions above do not apply, show:
-
-> Your environment is already set up. Re-running setup will replace your local agent files.
-> Type `RESET` to confirm a full re-setup, or anything else to cancel.
-
-and wait. If the user types exactly `RESET`, run `scripts/checkpoint.py` to snapshot the
-current state first, then proceed with onboarding. Otherwise STOP and tell the user setup was cancelled.
+conditions above do not apply, use the same agent-discovery route described
+above. Re-running `/setup` is how the user installs another supported ESS agent
+or switches the active local agent. Existing agent entries and workspaces are
+preserved by `scripts/setup.py`.
 
 If `.local/config.json` does not exist, proceed with onboarding immediately.
 
