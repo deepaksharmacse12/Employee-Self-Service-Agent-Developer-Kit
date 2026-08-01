@@ -20,6 +20,10 @@ CATALOG_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "reference"
     / "solution-catalog.md"
 )
+CONFIG_PATH = (
+    Path(__file__).resolve().parents[1] / "src" / "reference"
+    / "ess-agent-installation" / "config.json"
+)
 
 EXPERIENCE_STATUS = {
     "da": "Active (DA bundle)",
@@ -89,6 +93,114 @@ def load_parent_schemas(catalog_path: Path = CATALOG_PATH) -> dict[tuple[str, st
     return mappings
 
 
+def load_installation_config(
+    config_path: Path = CONFIG_PATH,
+    catalog_path: Path = CATALOG_PATH,
+) -> dict:
+    """Load installation metadata and reject ambiguous or stale mappings."""
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if config.get("schemaVersion") != 1:
+        raise ValueError("Unsupported ESS installation config schemaVersion.")
+
+    experiences = config.get("experiences")
+    verticals = config.get("verticals")
+    installations = config.get("installations")
+    if not all(isinstance(value, dict) for value in (
+        experiences,
+        verticals,
+        installations,
+    )):
+        raise ValueError(
+            "ESS installation config must define experiences, verticals, "
+            "and installations objects."
+        )
+
+    for dimension_name, dimension in (
+        ("experiences", experiences),
+        ("verticals", verticals),
+    ):
+        labels: set[str] = set()
+        display_orders: set[int] = set()
+        for key, metadata in dimension.items():
+            label = metadata.get("label")
+            display_order = metadata.get("displayOrder")
+            if not isinstance(label, str) or not label.strip():
+                raise ValueError(
+                    f"{dimension_name}.{key} must define a non-empty label."
+                )
+            normalized_label = label.casefold()
+            if normalized_label in labels:
+                raise ValueError(
+                    f"{dimension_name} contains duplicate label '{label}'."
+                )
+            labels.add(normalized_label)
+            if not isinstance(display_order, int) or display_order in display_orders:
+                raise ValueError(
+                    f"{dimension_name}.{key} must define a unique integer "
+                    "displayOrder."
+                )
+            display_orders.add(display_order)
+
+    expected_keys = {
+        f"{experience_key}.{vertical_key}"
+        for experience_key in experiences
+        for vertical_key in verticals
+    }
+    if set(installations) != expected_keys:
+        raise ValueError(
+            "ESS installation config must define exactly one entry for every "
+            "experience and vertical combination."
+        )
+
+    application_names: set[str] = set()
+    catalog_schemas = load_parent_schemas(catalog_path)
+    for installation_key, installation in installations.items():
+        experience_key = installation.get("experienceKey")
+        vertical_key = installation.get("verticalKey")
+        expected_key = f"{experience_key}.{vertical_key}"
+        if installation_key != expected_key:
+            raise ValueError(
+                f"Installation key '{installation_key}' does not match its "
+                f"experienceKey and verticalKey ('{expected_key}')."
+            )
+
+        application = installation.get("marketplaceApplication") or {}
+        solution = installation.get("solution") or {}
+        catalog_match = installation.get("catalogMatch") or {}
+        unique_name = application.get("uniqueName")
+        parent_unique_name = solution.get("parentUniqueName")
+        if not unique_name or not parent_unique_name:
+            raise ValueError(
+                f"Installation '{installation_key}' is missing an application "
+                "or parent solution unique name."
+            )
+        normalized_name = unique_name.casefold()
+        if normalized_name in application_names:
+            raise ValueError(
+                f"Marketplace application unique name '{unique_name}' is "
+                "assigned to more than one installation."
+            )
+        application_names.add(normalized_name)
+
+        if catalog_match != {
+            "parentPackage": VERTICAL_PACKAGE[vertical_key],
+            "status": EXPERIENCE_STATUS[experience_key],
+        }:
+            raise ValueError(
+                f"Installation '{installation_key}' has catalogMatch metadata "
+                "that does not match its experience and vertical."
+            )
+
+        catalog_schema = catalog_schemas[(experience_key, vertical_key)]
+        if unique_name != catalog_schema or parent_unique_name != catalog_schema:
+            raise ValueError(
+                f"Installation '{installation_key}' does not match the parent "
+                f"schema '{catalog_schema}' in solution-catalog.md."
+            )
+
+    return config
+
+
 INSTALLED_STATES = {"Installed", "TemplateInstalled"}
 IN_PROGRESS_STATES = {
     "InstallRequested",
@@ -97,6 +209,19 @@ IN_PROGRESS_STATES = {
     "InstallRetrying",
 }
 FAILED_STATES = {"InstallFailed"}
+DEFAULT_TIMEOUT_SECONDS = 10 * 60
+
+
+class InstallationTimeoutError(RuntimeError):
+    """Raised when Power Platform does not finish installation in time."""
+
+    def __init__(self, unique_name: str, timeout_seconds: int):
+        self.unique_name = unique_name
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            "Application installation did not finish within "
+            f"{timeout_seconds // 60} minutes."
+        )
 
 
 def _find_package(packages: list[dict], schema_name: str) -> dict | None:
@@ -151,11 +276,20 @@ def _wait_for_install(
     timeout_seconds: int,
     poll_interval_seconds: int,
     sleep,
+    clock,
+    status_callback,
 ) -> None:
     """Poll the operation endpoint, falling back to package state if needed."""
-    deadline = time.monotonic() + timeout_seconds
+    started_at = clock()
+    deadline = started_at + timeout_seconds
+    poll_number = 0
 
-    while time.monotonic() < deadline:
+    while True:
+        now = clock()
+        if now >= deadline:
+            break
+        poll_number += 1
+        observed_status = "Unknown"
         if operation_id:
             status_response = client.get_application_package_install_status(
                 environment_id,
@@ -166,6 +300,12 @@ def _wait_for_install(
                     "Your account cannot read application installation status."
                 )
             status = status_response.get("status")
+            observed_status = status or "InProgress"
+            status_callback(
+                "Installation status "
+                f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
+                f"{observed_status}"
+            )
             if status == "Succeeded":
                 return
             if status in {"Failed", "Canceled"}:
@@ -182,6 +322,12 @@ def _wait_for_install(
             )
             if package:
                 state = package.get("state")
+                observed_status = state or "Unknown"
+                status_callback(
+                    "Installation status "
+                    f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
+                    f"{observed_status}"
+                )
                 if state in INSTALLED_STATES:
                     return
                 if state in FAILED_STATES:
@@ -191,13 +337,16 @@ def _wait_for_install(
                             f"Application installation ended with state {state}.",
                         )
                     )
+            else:
+                status_callback(
+                    "Installation status "
+                    f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
+                    f"{observed_status}"
+                )
 
         sleep(poll_interval_seconds)
 
-    raise RuntimeError(
-        f"Application installation did not finish within "
-        f"{timeout_seconds // 60} minutes."
-    )
+    raise InstallationTimeoutError(unique_name, timeout_seconds)
 
 
 def install_agent(
@@ -205,16 +354,23 @@ def install_agent(
     experience: str,
     vertical: str,
     *,
+    config_path: Path = CONFIG_PATH,
     catalog_path: Path = CATALOG_PATH,
     pp_admin_client_factory=PPAdminClient,
     powerplatform_client_factory=PowerPlatformClient,
-    timeout_seconds: int = 1800,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     poll_interval_seconds: int = 20,
     sleep=time.sleep,
+    clock=time.monotonic,
+    status_callback=lambda message: print(message, flush=True),
 ) -> str:
     """Authenticate and install the selected ESS application through REST APIs."""
     env_url = env_url.rstrip("/")
-    schema_name = load_parent_schemas(catalog_path)[(experience, vertical)]
+    config = load_installation_config(config_path, catalog_path)
+    installation_key = f"{experience}.{vertical}"
+    installation = config["installations"][installation_key]
+    schema_name = installation["solution"]["parentUniqueName"]
+    application_unique_name = installation["marketplaceApplication"]["uniqueName"]
     tenant_id = discover_tenant(env_url)
 
     pp_admin = pp_admin_client_factory(tenant_id)
@@ -229,15 +385,15 @@ def install_agent(
     client.authenticate()
     package = _find_package(
         _list_packages(client, environment_id),
-        schema_name,
+        application_unique_name,
     )
     if not package:
         raise RuntimeError(
-            f"The Marketplace application '{schema_name}' is not available "
+            f"The Marketplace application '{application_unique_name}' is not available "
             "for this tenant or environment."
         )
 
-    unique_name = package.get("uniqueName") or schema_name
+    unique_name = package.get("uniqueName") or application_unique_name
     state = package.get("state")
     if state in INSTALLED_STATES:
         return schema_name
@@ -272,6 +428,8 @@ def install_agent(
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
         sleep=sleep,
+        clock=clock,
+        status_callback=status_callback,
     )
     return schema_name
 
@@ -301,6 +459,21 @@ def main() -> None:
             args.experience,
             args.vertical,
         )
+    except InstallationTimeoutError as error:
+        result = {
+            "environmentUrl": args.url.rstrip("/"),
+            "experience": args.experience,
+            "vertical": args.vertical,
+            "schemaName": error.unique_name,
+            "timeoutMinutes": error.timeout_seconds // 60,
+        }
+        print(
+            "ESS_AGENT_INSTALLATION_TIMEOUT_JSON:"
+            f"{json.dumps(result)}",
+            flush=True,
+        )
+        print(f"ERROR: {error}", file=sys.stderr)
+        sys.exit(2)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         sys.exit(1)

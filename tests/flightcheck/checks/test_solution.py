@@ -53,6 +53,7 @@ SOLUTION_ID = "11111111-1111-1111-1111-111111111111"
 class _MinimalRunner:
     env_url: str | None
     dv_token: str | None
+    expected_solution_unique_name: str | None = None
 
 
 @pytest.fixture
@@ -170,6 +171,42 @@ def test_passed_when_hr_variant_present(runner: _MinimalRunner) -> None:
     r = _check_ess_solution_installed(runner)[0]
     assert r.status == "Passed"
     assert "msdyn_copilotforemployeeselfservicehr" in r.result
+
+
+@responses.activate
+def test_failed_when_expected_variant_is_not_present(
+    runner: _MinimalRunner,
+) -> None:
+    runner.expected_solution_unique_name = (
+        "msdyn_CopilotForEmployeeSelfServiceDAIT"
+    )
+    _register_solutions(solutions=[
+        _solution_record("msdyn_copilotforemployeeselfservicehr"),
+    ])
+
+    r = _check_ess_solution_installed(runner)[0]
+
+    assert r.status == "Failed"
+    assert "msdyn_CopilotForEmployeeSelfServiceDAIT" in r.result
+
+
+@responses.activate
+def test_passed_when_expected_variant_matches_case_insensitively(
+    runner: _MinimalRunner,
+) -> None:
+    runner.expected_solution_unique_name = (
+        "msdyn_CopilotForEmployeeSelfServiceDAIT"
+    )
+    _register_solutions(solutions=[
+        _solution_record("msdyn_copilotforemployeeselfservicedait"),
+        _solution_record("msdyn_copilotforemployeeselfservicehr"),
+    ])
+
+    r = _check_ess_solution_installed(runner)[0]
+
+    assert r.status == "Passed"
+    assert "msdyn_copilotforemployeeselfservicedait" in r.result
+    assert "msdyn_copilotforemployeeselfservicehr" not in r.result
 
 
 @responses.activate

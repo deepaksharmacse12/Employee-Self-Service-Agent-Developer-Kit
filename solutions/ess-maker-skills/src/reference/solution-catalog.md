@@ -24,9 +24,11 @@ reference names, and runtime sources from packaged workflow definitions.
 
 > [!IMPORTANT]
 >
-> `scripts/install_ess_agent.py` resolves Marketplace applications from the
+> `src/reference/ess-agent-installation/config.json` stores the installation
+> selector and Marketplace identities. `scripts/install_ess_agent.py` validates
+> every configured application and parent solution unique name against the
 > **Parent package**, **Parent schema name**, and **Status** values below.
-> Keep those values stable when editing this catalog.
+> Update both files together.
 
 | # | Parent package | Parent schema name | Status | Parent connection reference (logical name — connector) |
 | --- | --- | --- | --- | --- |

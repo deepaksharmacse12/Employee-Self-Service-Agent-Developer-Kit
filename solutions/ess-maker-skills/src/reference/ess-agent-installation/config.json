@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "experiences": {
+    "da": {
+      "label": "ESS as DA (Recommended)",
+      "description": "Install the declarative agent experience.",
+      "displayOrder": 1,
+      "recommended": true
+    },
+    "cea": {
+      "label": "ESS as CEA",
+      "description": "Install the custom engine agent experience.",
+      "displayOrder": 2,
+      "recommended": false
+    }
+  },
+  "verticals": {
+    "hr": {
+      "label": "Employee Self-Service HR",
+      "description": "Install the Human Resources agent.",
+      "displayOrder": 1
+    },
+    "it": {
+      "label": "Employee Self-Service IT",
+      "description": "Install the Information Technology agent.",
+      "displayOrder": 2
+    }
+  },
+  "installations": {
+    "da.hr": {
+      "experienceKey": "da",
+      "verticalKey": "hr",
+      "marketplaceApplication": {
+        "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAHR"
+      },
+      "solution": {
+        "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceDAHR"
+      },
+      "catalogMatch": {
+        "parentPackage": "Employee Self-Service HR",
+        "status": "Active (DA bundle)"
+      }
+    },
+    "da.it": {
+      "experienceKey": "da",
+      "verticalKey": "it",
+      "marketplaceApplication": {
+        "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT"
+      },
+      "solution": {
+        "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT"
+      },
+      "catalogMatch": {
+        "parentPackage": "Employee Self-Service IT",
+        "status": "Active (DA bundle)"
+      }
+    },
+    "cea.hr": {
+      "experienceKey": "cea",
+      "verticalKey": "hr",
+      "marketplaceApplication": {
+        "uniqueName": "msdyn_CopilotForEmployeeSelfServiceHR"
+      },
+      "solution": {
+        "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceHR"
+      },
+      "catalogMatch": {
+        "parentPackage": "Employee Self-Service HR",
+        "status": "Active (CEA bundle)"
+      }
+    },
+    "cea.it": {
+      "experienceKey": "cea",
+      "verticalKey": "it",
+      "marketplaceApplication": {
+        "uniqueName": "msdyn_CopilotForEmployeeSelfServiceIT"
+      },
+      "solution": {
+        "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceIT"
+      },
+      "catalogMatch": {
+        "parentPackage": "Employee Self-Service IT",
+        "status": "Active (CEA bundle)"
+      }
+    }
+  }
+}

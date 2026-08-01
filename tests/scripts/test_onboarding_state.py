@@ -6,6 +6,7 @@
 import json
 
 import onboarding_state
+import pytest
 
 
 def test_environment_selection_persists(tmp_path, monkeypatch):
@@ -37,6 +38,36 @@ def test_agent_selection_preserves_environment(tmp_path, monkeypatch):
         "schemaName": "new_essagent",
         "isManaged": True,
     }
+
+
+def test_installation_progress_persists_for_resume(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    saved = onboarding_state.save_installation(
+        "https://org.crm.dynamics.com/",
+        "da",
+        "hr",
+        "manual-required",
+    )
+
+    assert saved["installation"] == {
+        "experience": "da",
+        "vertical": "hr",
+        "status": "manual-required",
+    }
+    assert onboarding_state.load_state() == saved
+
+
+def test_installation_progress_rejects_unknown_status(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="Unsupported installation status"):
+        onboarding_state.save_installation(
+            "https://org.crm.dynamics.com",
+            "da",
+            "hr",
+            "unknown",
+        )
 
 
 def test_recovers_environment_from_existing_mcp_config(tmp_path, monkeypatch):

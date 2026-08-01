@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,6 +42,65 @@ def test_catalog_requires_all_four_parent_mappings(tmp_path: Path):
 
     with pytest.raises(ValueError, match="missing parent schema mappings"):
         install_ess_agent.load_parent_schemas(catalog)
+
+
+def test_installation_config_has_collision_safe_composite_keys():
+    import install_ess_agent
+
+    config = install_ess_agent.load_installation_config()
+
+    assert set(config["installations"]) == {
+        "da.hr",
+        "da.it",
+        "cea.hr",
+        "cea.it",
+    }
+    assert config["experiences"]["da"]["recommended"] is True
+    assert config["experiences"]["cea"]["recommended"] is False
+    assert len({
+        entry["marketplaceApplication"]["uniqueName"]
+        for entry in config["installations"].values()
+    }) == 4
+
+
+def test_installation_config_rejects_mismatched_composite_key(tmp_path: Path):
+    import install_ess_agent
+
+    config = install_ess_agent.load_installation_config()
+    config["installations"]["da.hr"]["verticalKey"] = "it"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match"):
+        install_ess_agent.load_installation_config(config_path)
+
+
+def test_installation_config_rejects_duplicate_application_name(tmp_path: Path):
+    import install_ess_agent
+
+    config = install_ess_agent.load_installation_config()
+    config["installations"]["da.it"]["marketplaceApplication"]["uniqueName"] = (
+        config["installations"]["da.hr"]["marketplaceApplication"]["uniqueName"]
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="assigned to more than one"):
+        install_ess_agent.load_installation_config(config_path)
+
+
+def test_installation_config_rejects_catalog_drift(tmp_path: Path):
+    import install_ess_agent
+
+    config = install_ess_agent.load_installation_config()
+    config["installations"]["cea.hr"]["solution"]["parentUniqueName"] = (
+        "msdyn_WrongSolution"
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match the parent schema"):
+        install_ess_agent.load_installation_config(config_path)
 
 
 class FakePPAdminClient:
@@ -96,6 +156,7 @@ class FakePowerPlatformClient:
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")
 def test_install_resolves_environment_and_polls_api(
     _mock_discover_tenant,
+    capsys,
 ):
     import install_ess_agent
 
@@ -133,6 +194,9 @@ def test_install_resolves_environment_and_polls_api(
     assert powerplatform.install_calls == [
         ("env-123", "msdyn_CopilotForEmployeeSelfServiceDAIT")
     ]
+    assert "Installation status (poll 1, 0s elapsed): Succeeded" in (
+        capsys.readouterr().out
+    )
 
 
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")
@@ -233,3 +297,44 @@ def test_install_reports_application_install_permission_failure(
             pp_admin_client_factory=FakePPAdminClient,
             powerplatform_client_factory=lambda _tenant: powerplatform,
         )
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_times_out_after_ten_minutes_and_reports_last_status(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    schema_name = "msdyn_CopilotForEmployeeSelfServiceDAHR"
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[{"uniqueName": schema_name, "state": "None"}],
+        install_result={"_operationId": "operation-123"},
+        statuses=[{"status": "Running"}, {"status": "Running"}],
+    )
+    now = [0]
+    messages = []
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.raises(
+        install_ess_agent.InstallationTimeoutError,
+        match="10 minutes",
+    ):
+        install_ess_agent.install_agent(
+            "https://org.crm.dynamics.com",
+            "da",
+            "hr",
+            pp_admin_client_factory=FakePPAdminClient,
+            powerplatform_client_factory=lambda _tenant: powerplatform,
+            poll_interval_seconds=300,
+            sleep=sleep,
+            clock=lambda: now[0],
+            status_callback=messages.append,
+        )
+
+    assert messages == [
+        "Installation status (poll 1, 0s elapsed): Running",
+        "Installation status (poll 2, 300s elapsed): Running",
+    ]

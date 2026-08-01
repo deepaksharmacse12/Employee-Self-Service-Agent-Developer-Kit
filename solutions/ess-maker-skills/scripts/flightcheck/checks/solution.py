@@ -54,6 +54,9 @@ def _check_ess_solution_installed(runner) -> list[CheckResult]:
     """
     env_url = getattr(runner, "env_url", None)
     token = getattr(runner, "dv_token", None)
+    expected_unique_name = getattr(
+        runner, "expected_solution_unique_name", None
+    )
 
     if not env_url or not token:
         return [CheckResult(roles=[Role.ESS_MAKER.value],
@@ -72,16 +75,32 @@ def _check_ess_solution_installed(runner) -> list[CheckResult]:
             _ESS_SOLN_FILTER,
         )
 
+        if expected_unique_name:
+            expected_casefold = expected_unique_name.casefold()
+            solutions = [
+                solution
+                for solution in solutions
+                if str(solution.get("uniquename", "")).casefold()
+                == expected_casefold
+            ]
+
         if not solutions:
+            if expected_unique_name:
+                result = (
+                    f"The expected ESS solution '{expected_unique_name}' is "
+                    "not installed in this environment."
+                )
+            else:
+                result = (
+                    "No solution whose unique name starts with "
+                    f"'{_ESS_SOLUTION_PREFIX}' is installed in this "
+                    "environment. The base ESS agent is not present."
+                )
             return [CheckResult(roles=[Role.ESS_MAKER.value],
                 checkpoint_id="ESS-SOLN-001", category="Solution",
                 priority=Priority.CRITICAL.value, status=Status.FAILED.value,
                 description=_ESS_SOLN_DESCRIPTION,
-                result=(
-                    "No solution whose unique name starts with "
-                    f"'{_ESS_SOLUTION_PREFIX}' is installed in this "
-                    "environment. The base ESS agent is not present."
-                ),
+                result=result,
                 remediation=(
                     "Install the Employee Self Service agent from AppSource "
                     "into this environment (Microsoft 365 admin center / "

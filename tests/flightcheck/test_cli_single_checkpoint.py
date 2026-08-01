@@ -41,6 +41,7 @@ def _args(
     return argparse.Namespace(
         checkpoint=checkpoint,
         environment_url=environment_url,
+        expected_solution=None,
         environment_id=None,
         output=str(tmp_path / "out"),
         no_telemetry=no_telemetry,
@@ -115,7 +116,11 @@ class TestHermeticRun:
 
     @staticmethod
     def _install_fake_plan(
-        monkeypatch: pytest.MonkeyPatch, rows: list[CheckResult]
+        monkeypatch: pytest.MonkeyPatch,
+        rows: list[CheckResult],
+        *,
+        requires_config: bool = False,
+        requires_dataverse_endpoint: bool = False,
     ) -> None:
         class _Spec:
             category_label = "Fake"
@@ -127,6 +132,10 @@ class TestHermeticRun:
 
             def __init__(self, fns: list) -> None:
                 self.ordered_fns = fns
+                self.requires_config = requires_config
+                self.requires_dataverse_endpoint = (
+                    requires_dataverse_endpoint
+                )
 
         def _fn(runner):  # noqa: ARG001 — runner arg is the check-fn contract
             return list(rows)
@@ -161,6 +170,30 @@ class TestHermeticRun:
         with pytest.raises(SystemExit) as exc:
             cli._run_single_checkpoint(_args("FAKE-001", tmp_path))
         assert exc.value.code == 1
+
+    def test_ess_solution_can_run_before_setup_with_explicit_environment(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        _silence_output: None,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._install_fake_plan(
+            monkeypatch,
+            [_row("ESS-SOLN-001", Status.PASSED.value)],
+            requires_config=True,
+            requires_dataverse_endpoint=True,
+        )
+        args = _args(
+            "ESS-SOLN-001",
+            tmp_path,
+            environment_url="https://org.crm.dynamics.com",
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cli._run_single_checkpoint(args)
+
+        assert exc.value.code == 0
 
 
 class TestCheckpointTelemetry:

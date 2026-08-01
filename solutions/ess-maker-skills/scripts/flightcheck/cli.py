@@ -645,7 +645,9 @@ def _run_single_checkpoint(args):
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
-    elif plan.requires_config:
+    elif plan.requires_config and not (
+        target == "ESS-SOLN-001" and args.environment_url
+    ):
         print("ERROR: .local/config.json not found. Run /setup first.")
         sys.exit(1)
 
@@ -754,6 +756,7 @@ def _run_single_checkpoint(args):
     )
     runner.config = config
     runner.env_url = env_url
+    runner.expected_solution_unique_name = args.expected_solution
     runner.dv_token = dv_token
     runner.env_id = env_id
     runner.graph = graph
@@ -903,6 +906,11 @@ def main():
              "report only its result. Hydrates the checkpoint's declared "
              "prerequisites and initialises only the clients it needs. Mutually "
              "exclusive with --scope.",
+    )
+    parser.add_argument(
+        "--expected-solution",
+        help="For ESS-SOLN-001, require this exact solution unique name. "
+             "Ignored by other checkpoints.",
     )
     parser.add_argument(
         "--list-checkpoints", action="store_true",

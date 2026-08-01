@@ -10,10 +10,20 @@ python scripts/onboarding_state.py show
 ```
 
 Find the line starting with `ONBOARDING_STATE_JSON:` and parse the JSON after
-the colon. Save `environmentUrl` as ENV_URL.
+the colon. Save `environmentUrl` as ENV_URL and inspect the optional
+`installation` object.
 
 If `environmentUrl` is missing, read `src/skills/onboarding/step1.md` and
 follow it from section 0.9. Do not ask for an environment here.
+
+- If `installation.status` is `installing`, load EXPERIENCE and VERTICAL from
+  the object and go directly to section 1.8d. Do not repeat either selection
+  question.
+- If `installation.status` is `manual-required`, load EXPERIENCE and VERTICAL
+  from the object and go directly to section 1.8c.
+- If `installation.status` is `automatic-complete` or `verified`, remember
+  that installation completed during this setup run and continue to section
+  1.4.
 
 ---
 
@@ -114,7 +124,10 @@ Now read `src/skills/onboarding/step2.md` and follow it.
 
 ## 1.8 — No agents found
 
-Use the `vscode_askQuestions` tool and wait for the user's response:
+Read `src/reference/ess-agent-installation/config.json`. Build the experience
+options from `experiences`, ordered by `displayOrder`; use each entry's `label`
+and `description`. Use the `vscode_askQuestions` tool and wait for the user's
+response. The resulting question should be equivalent to:
 
 ```json
 [
@@ -136,11 +149,13 @@ Use the `vscode_askQuestions` tool and wait for the user's response:
 ]
 ```
 
-Map **ESS as DA (Recommended)** to EXPERIENCE=`da` and
-**ESS as CEA** to EXPERIENCE=`cea`.
+Map the selected label back to its key under `experiences` and save that key as
+EXPERIENCE.
 
-After the user answers, use the `vscode_askQuestions` tool and wait for the
-second response:
+After the user answers, build the vertical options from `verticals`, ordered by
+`displayOrder`; use each entry's `label` and `description`. Use the
+`vscode_askQuestions` tool and wait for the second response. The resulting
+question should be equivalent to:
 
 ```json
 [
@@ -162,18 +177,29 @@ second response:
 ]
 ```
 
-Map **Employee Self-Service HR** to VERTICAL=`hr` and
-**Employee Self-Service IT** to VERTICAL=`it`.
+Map the selected label back to its key under `verticals` and save that key as
+VERTICAL.
 
-The installer resolves the selected application's schema name from
-`src/reference/solution-catalog.md`. Do not hard-code a schema name in the
-onboarding instructions.
+The installer resolves the composite `{EXPERIENCE}.{VERTICAL}` key from
+`src/reference/ess-agent-installation/config.json` and validates its application
+and solution unique names against `src/reference/solution-catalog.md`. Do not
+hard-code a schema name in the onboarding instructions.
+
+Persist the selection before starting the potentially long-running operation:
+
+```
+python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status installing
+```
+
+Then continue to section 1.8d.
+
+### 1.8d — Run or resume automatic installation
 
 **Message (do NOT wait for user response — continue immediately):**
 
 Installing the selected Employee Self-Service agent in your environment.
 A browser window may open for Power Platform administrator sign-in.
-Installation can take several minutes...
+I'll check the installation status every 20 seconds for up to 10 minutes...
 
 **End message.**
 
@@ -184,7 +210,20 @@ python scripts/install_ess_agent.py --url "{ENV_URL}" --experience {EXPERIENCE} 
 ```
 
 - If the command prints `INSTALLED_ESS_AGENT_JSON:`, continue immediately.
+- If the command prints `ESS_AGENT_INSTALLATION_TIMEOUT_JSON:`, persist the
+  timeout using the command below, then go to step 1.8c:
+
+  ```
+  python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status manual-required
+  ```
+
 - If the command fails, go to step 1.8a.
+
+Persist the completed automatic installation:
+
+```
+python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status automatic-complete
+```
 
 **Message (do NOT wait for user response — continue immediately):**
 
@@ -195,6 +234,78 @@ python scripts/install_ess_agent.py --url "{ENV_URL}" --experience {EXPERIENCE} 
 Return to step 1.4 and run discovery again. Remember that installation
 completed during this setup run so a delayed agent registration does not
 trigger another installation.
+
+### 1.8c — Automatic installation timed out
+
+Read `src/reference/ess-agent-installation/config.json`. Resolve the
+`{EXPERIENCE}.{VERTICAL}` installation and use its experience label, vertical
+label, and `marketplaceApplication.uniqueName` in the message below.
+
+**Message:**
+
+Automatic installation is still not complete after 10 minutes.
+
+Please install **{EXPERIENCE_LABEL} — {VERTICAL_LABEL}** manually:
+
+1. Open Power Platform admin center and select this environment.
+2. Go to **Resources → Dynamics 365 apps**.
+3. Find and install the application with unique name
+   **{MARKETPLACE_APPLICATION_UNIQUE_NAME}**.
+
+When the installation finishes, choose **Verify installation** and I'll confirm
+it with the ESS solution FlightCheck.
+
+**End message.**
+
+Use the `vscode_askQuestions` tool and wait for the user's response:
+
+```json
+[
+  {
+    "header": "Manual installation",
+    "question": "Is the selected ESS application installed?",
+    "options": [
+      {
+        "label": "Verify installation",
+        "description": "Run the ESS solution FlightCheck now."
+      },
+      {
+        "label": "Not yet",
+        "description": "Keep this step pending so setup can resume later."
+      }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+- If the user selects **Not yet**, stop. Keep `installation.status` as
+  `manual-required`.
+- If the user selects **Verify installation**, run:
+
+  ```
+  python scripts/flightcheck/cli.py --checkpoint ESS-SOLN-001 --environment-url "{ENV_URL}" --expected-solution "{MARKETPLACE_APPLICATION_UNIQUE_NAME}" --output workspace/flightcheck/installation-verification --no-open --invocation-source installer
+  ```
+
+Read `workspace/flightcheck/installation-verification/results.json`. Continue
+only when the `ESS-SOLN-001` row has status `Passed`. Do not treat the command's
+exit code alone as confirmation.
+
+When the checkpoint passes, persist the verification:
+
+```
+python scripts/onboarding_state.py save-installation --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL} --status verified
+```
+
+**Message (do NOT wait for user response — continue immediately):**
+
+✅ Employee Self-Service installation verified. Discovering the new agent...
+
+**End message.**
+
+Return to step 1.4 and run discovery again. If the checkpoint does not pass,
+show its result and offer the same **Verify installation** and **Not yet**
+choices again. Do not rerun automatic installation.
 
 ### 1.8a — Installation failed
 

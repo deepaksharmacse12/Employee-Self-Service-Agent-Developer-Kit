@@ -13,6 +13,12 @@ from urllib.parse import urlparse
 STATE_PATH = os.path.join(".local", "onboarding.json")
 MCP_CONFIG_PATH = os.path.join(".vscode", "mcp.json")
 STATE_VERSION = 1
+INSTALLATION_STATUSES = {
+    "installing",
+    "manual-required",
+    "automatic-complete",
+    "verified",
+}
 
 
 def _normalize_environment_url(url):
@@ -119,6 +125,19 @@ def save_agent(url, bot_id, name, schema_name, is_managed):
     return save_state(state)
 
 
+def save_installation(url, experience, vertical, status):
+    if status not in INSTALLATION_STATUSES:
+        raise ValueError(f"Unsupported installation status: {status}")
+    state = load_state(recover_from_mcp=False)
+    state["environmentUrl"] = _normalize_environment_url(url)
+    state["installation"] = {
+        "experience": experience,
+        "vertical": vertical,
+        "status": status,
+    }
+    return save_state(state)
+
+
 def clear_state():
     try:
         os.remove(STATE_PATH)
@@ -151,6 +170,20 @@ def main():
     agent_parser.add_argument("--schema", required=True)
     agent_parser.add_argument("--managed", action="store_true")
 
+    installation_parser = subparsers.add_parser(
+        "save-installation", help="Save ESS application installation progress"
+    )
+    installation_parser.add_argument("--url", required=True)
+    installation_parser.add_argument(
+        "--experience", required=True, choices=("da", "cea")
+    )
+    installation_parser.add_argument(
+        "--vertical", required=True, choices=("hr", "it")
+    )
+    installation_parser.add_argument(
+        "--status", required=True, choices=sorted(INSTALLATION_STATUSES)
+    )
+
     subparsers.add_parser("clear", help="Clear partial onboarding state")
     args = parser.parse_args()
 
@@ -166,6 +199,13 @@ def main():
                 args.name,
                 args.schema,
                 args.managed,
+            ))
+        elif args.command == "save-installation":
+            _print_state(save_installation(
+                args.url,
+                args.experience,
+                args.vertical,
+                args.status,
             ))
         else:
             clear_state()

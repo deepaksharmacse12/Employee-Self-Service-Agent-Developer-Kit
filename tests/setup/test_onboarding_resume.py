@@ -84,7 +84,15 @@ def test_no_agent_path_offers_installation_and_resumes_discovery():
     assert "Employee Self-Service HR" in step1b
     assert "Employee Self-Service IT" in step1b
     assert "install_ess_agent.py" in step1b
+    assert "ess-agent-installation/config.json" in step1b
     assert "src/reference/solution-catalog.md" in step1b
     assert "Return to step 1.4 and run discovery again" in normalized
     assert "without reinstalling the package" in normalized
     assert "Do not rerun the installation command" in normalized
+    assert "up to 10 minutes" in normalized
+    assert "ESS_AGENT_INSTALLATION_TIMEOUT_JSON:" in step1b
+    assert "save-installation" in step1b
+    assert "--checkpoint ESS-SOLN-001" in step1b
+    assert "--expected-solution" in step1b
+    assert "installation-verification/results.json" in step1b
+    assert "status `Passed`" in step1b
