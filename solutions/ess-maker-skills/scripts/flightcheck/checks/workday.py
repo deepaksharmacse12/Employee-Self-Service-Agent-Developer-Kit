@@ -5076,7 +5076,12 @@ def _cache_test_employee_id(employee_id: str):
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
-        config["workdayTestEmployeeId"] = employee_id
+        if config.get("configVersion") == 2:
+            config.setdefault("common", {})[
+                "workdayTestEmployeeId"
+            ] = employee_id
+        else:
+            config["workdayTestEmployeeId"] = employee_id
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
     except (OSError, json.JSONDecodeError):

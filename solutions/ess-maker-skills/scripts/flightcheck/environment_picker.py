@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 # Ensure scripts/ is on the path so we can import auth and flightcheck modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from auth import discover_tenant
+from auth import discover_tenant, normalize_config
 from flightcheck.pp_admin_client import PPAdminClient
 from list_environments import parse_raw_environments
 
@@ -131,11 +131,11 @@ def main():
         sys.exit(1)
 
     with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
+        config = normalize_config(json.load(f))
 
     env_url = config.get("dataverseEndpoint", "")
     if not env_url:
-        print("ERROR: No dataverseEndpoint in .local/config.json.")
+        print("ERROR: No common.dataverseEndpoint in .local/config.json.")
         sys.exit(1)
 
     # Discover tenant and authenticate to Power Platform

@@ -34,21 +34,20 @@ def _studio_agent_url(runner) -> str | None:
     The publishing/QA checks are agent-scoped in spirit (the maker
     runs evaluations against a specific agent), but the result rows
     themselves are emitted once per checklist item — not per agent.
-    We pick the first configured agent so the deep link lands on a
-    real Studio surface rather than the generic homepage; if a tenant
-    runs multi-agent the operator can switch from the agent picker.
+    Prefer the active agent so the deep link matches the current workspace,
+    falling back to the first configured agent for legacy runtime shapes.
     """
     env_id = getattr(runner, "env_id", None)
     if not env_id:
         return None
     config = getattr(runner, "config", None) or {}
-    bot_id = None
+    bot_id = (config.get("agent") or {}).get("botId")
+    if bot_id:
+        return f"{STUDIO_BASE}/environments/{env_id}/bots/{bot_id}/overview"
     for agent in config.get("agents", []) or []:
         bot_id = agent.get("botId")
         if bot_id:
             break
-    if not bot_id:
-        bot_id = (config.get("agent") or {}).get("botId")
     if not bot_id:
         return None
     return f"{STUDIO_BASE}/environments/{env_id}/bots/{bot_id}/overview"

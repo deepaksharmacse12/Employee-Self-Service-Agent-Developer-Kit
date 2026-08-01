@@ -38,6 +38,7 @@ from pathlib import Path
 # Ensure scripts/ is on the path so we can import auth
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from auth import load_config, normalize_config
 from flightcheck.runner import (
     FlightCheckRunner,
     save_results,
@@ -357,8 +358,7 @@ def _list_targets(args):
         payload["error"] = ".local/config.json not found. Run /setup first."
         print(json.dumps(payload))
         return
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
+    config = load_config()
 
     env_url = args.environment_url or config.get("dataverseEndpoint", "")
     from auth import discover_tenant
@@ -643,8 +643,7 @@ def _run_single_checkpoint(args):
     config = {}
     config_path = os.path.join(".local", "config.json")
     if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+        config = load_config()
     elif plan.requires_config and not (
         target == "ESS-SOLN-001" and args.environment_url
     ):
@@ -653,7 +652,7 @@ def _run_single_checkpoint(args):
 
     env_url = args.environment_url or config.get("dataverseEndpoint", "")
     if plan.requires_dataverse_endpoint and not env_url:
-        print("ERROR: No dataverseEndpoint in .local/config.json.")
+        print("ERROR: No common.dataverseEndpoint in .local/config.json.")
         sys.exit(1)
 
     # --- Banner ---
@@ -1009,12 +1008,12 @@ def main():
         sys.exit(1)
 
     with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
+        config = normalize_config(json.load(f))
 
     infra_only_scope = args.scope == "infrastructure"
     env_url = args.environment_url or config.get("dataverseEndpoint", "")
     if not env_url and not infra_only_scope:
-        print("ERROR: No dataverseEndpoint in .local/config.json.")
+        print("ERROR: No common.dataverseEndpoint in .local/config.json.")
         sys.exit(1)
 
     # --- Banner ---
@@ -1260,6 +1259,18 @@ def main():
 
     # Save results
     save_results(result, args.output)
+    print(
+        "FLIGHTCHECK_COMPLETE_JSON:"
+        + json.dumps({
+            "overall": result.overall,
+            "durationSeconds": result.duration_secs,
+            "total": result.total,
+            "passed": result.passed,
+            "failed": result.failed,
+            "warnings": result.warnings,
+        }),
+        flush=True,
+    )
 
     # Emit anonymous outcome telemetry (best-effort; never affects exit code).
     if not args.no_telemetry:

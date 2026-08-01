@@ -405,7 +405,7 @@ def check_microsoft_service_reachability(runner: Any) -> list[CheckResult]:
                 description="Network connectivity to Dataverse",
                 result="Dataverse target skipped: no Dataverse environment URL configured.",
                 remediation=(
-                    "Set dataverseEndpoint in .local/config.json or pass "
+                    "Set common.dataverseEndpoint in .local/config.json or pass "
                     "--environment-url to include Dataverse in INFRA-001."
                 ),
                 doc_link=_DOC_LINK_INFRA_001,
