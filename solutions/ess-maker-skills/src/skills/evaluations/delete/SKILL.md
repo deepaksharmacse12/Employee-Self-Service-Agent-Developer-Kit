@@ -28,9 +28,9 @@ children first, then the parent. Do NOT push partial deletions.
 
 ## Step 1: Identify What to Delete
 
-Read `.local/config.json` to get `agent.folder`.
+Read `.local/config.json` to get `ACTIVE_AGENT.folder`.
 
-List files in `{agent.folder}/evaluations/`. Read the `.component-map.json`
+List files in `{ACTIVE_AGENT.folder}/evaluations/`. Read the `.component-map.json`
 to understand parent→child relationships (entries with
 `parentbotcomponentid` are children).
 

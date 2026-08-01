@@ -32,7 +32,7 @@ Record anonymous usage telemetry (best-effort, non-blocking — no user-facing
 message, and it never fails the step): `python scripts/emit_capability.py troubleshoot`
 
 Read `.local/config.json` to determine:
-- Which agent is active (the `agent.folder` field)
+- Which agent is active (the `ACTIVE_AGENT.folder` field)
 - Which integrations are configured
 
 Ask the user which integration is failing if it's not obvious from their

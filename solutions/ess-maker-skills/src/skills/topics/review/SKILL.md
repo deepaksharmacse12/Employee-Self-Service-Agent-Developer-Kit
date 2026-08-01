@@ -11,7 +11,7 @@ publishing.
 
 - Do NOT modify the topic. This skill only reads, reports, and writes its findings catalog/ledger under
   `.local/`; it never edits the topic.
-- Operate on the authored `.mcs.yml` in the maker's agent folder (`{agent.folder}/topics/`), i.e. the
+- Operate on the authored `.mcs.yml` in the maker's agent folder (`{ACTIVE_AGENT.folder}/topics/`), i.e. the
   topic **before publish**. Do not require the published `samples/` copy.
 - **Run the analysis silently.** Steps 3–8 are internal: run the detectors, read the reference docs, and
   persist the catalog **without narrating them**. Do not rephrase, add commentary, or tell the maker what
@@ -97,7 +97,7 @@ Decide whether the maker wants **one topic** or a **module scope** (all topics f
   ServiceNow HRSD", "review everything") → **scoped review**: resolve the module id, then jump to the
   **Scoped review** section at the end of this skill (do not run Steps 2–9 directly).
 - If it is ambiguous, read `.local/config.json` for the agent folder, list the module prefixes present in
-  `{agent.folder}/topics/` (the leading `servicenow-hrsd`, `servicenow-itsm`, `workday`, … segment), and ask
+  `{ACTIVE_AGENT.folder}/topics/` (the leading `servicenow-hrsd`, `servicenow-itsm`, `workday`, … segment), and ask
   the maker whether they want one topic or a whole module.
 
 For a single-topic review, state the full path of the file you are about to review.

@@ -741,9 +741,14 @@ def _cache_environment_sku(sku):
         config_path = os.path.join(".local", "config.json")
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if data.get("environmentSku") == sku:
+        target = (
+            data.setdefault("common", {})
+            if data.get("configVersion") == 2
+            else data
+        )
+        if target.get("environmentSku") == sku:
             return
-        data["environmentSku"] = sku
+        target["environmentSku"] = sku
         _atomic_write_text(config_path, json.dumps(data, indent=2))
     except Exception:  # noqa: BLE001 — caching is best-effort only
         pass

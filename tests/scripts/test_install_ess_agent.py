@@ -63,6 +63,27 @@ def test_installation_config_has_collision_safe_composite_keys():
     }) == 4
 
 
+def test_installation_options_are_single_picker_in_da_then_cea_order():
+    import install_ess_agent
+
+    options = install_ess_agent.build_installation_options(
+        install_ess_agent.load_installation_config()
+    )
+
+    assert [option["label"] for option in options] == [
+        "DA : Employee Self-Service HR",
+        "DA : Employee Self-Service IT",
+        "CEA : Employee Self-Service HR",
+        "CEA : Employee Self-Service IT",
+    ]
+    assert [option["configKey"] for option in options] == [
+        "da.esshr",
+        "da.essit",
+        "cea.esshr",
+        "cea.essit",
+    ]
+
+
 def test_installation_config_rejects_mismatched_composite_key(tmp_path: Path):
     import install_ess_agent
 
@@ -104,9 +125,16 @@ def test_installation_config_rejects_catalog_drift(tmp_path: Path):
 
 
 class FakePPAdminClient:
-    def __init__(self, tenant_id, environment_id="env-123"):
+    def __init__(self, tenant_id, environment_id="env-123", connections=None):
         self.tenant_id = tenant_id
         self.environment_id = environment_id
+        self.connections = connections if connections is not None else [{
+            "name": "alchemy-connection",
+            "properties": {
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_alchemy",
+                "statuses": [{"status": "Connected"}],
+            },
+        }]
         self.authenticated = False
 
     def authenticate(self, *, include_flow=True):
@@ -115,6 +143,10 @@ class FakePPAdminClient:
 
     def find_environment_id_by_dataverse_url(self, _env_url):
         return self.environment_id
+
+    def get_connections(self, environment_id):
+        assert environment_id == self.environment_id
+        return self.connections
 
 
 class FakePowerPlatformClient:
@@ -197,6 +229,84 @@ def test_install_resolves_environment_and_polls_api(
     assert "Installation status (poll 1, 0s elapsed): Succeeded" in (
         capsys.readouterr().out
     )
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_it_install_refuses_to_start_without_required_connection(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    pp_admin = FakePPAdminClient("tenant-123", connections=[])
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[{
+            "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT",
+            "state": "None",
+        }],
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires an active Microsoft 365 Self-Help",
+    ):
+        install_ess_agent.install_agent(
+            "https://org.crm.dynamics.com",
+            "da",
+            "it",
+            pp_admin_client_factory=lambda _tenant: pp_admin,
+            powerplatform_client_factory=lambda _tenant: powerplatform,
+        )
+
+    assert powerplatform.authenticated is False
+    assert powerplatform.install_calls == []
+
+
+def test_solution_catalog_uses_power_apps_connector_names():
+    import install_ess_agent
+
+    catalog = install_ess_agent.CATALOG_PATH.read_text(encoding="utf-8")
+
+    assert "| Logical name | Connector |" not in catalog
+    assert "| Child schema | Connector | Flow usage |" in catalog
+    for friendly_name in (
+        "Microsoft 365 Self-Help",
+        "ServiceNow",
+        "Microsoft Dataverse",
+        "SAP OData",
+        "Workday",
+    ):
+        assert f"Name: `{friendly_name}`" in catalog
+    assert "Logical name: `new_sharedworkdaysoap_ff0df`" in catalog
+
+
+def test_it_install_requires_selection_when_multiple_connections_exist():
+    import install_ess_agent
+
+    installation = install_ess_agent.load_installation_config()["installations"][
+        "cea.it"
+    ]
+    connections = [
+        {
+            "name": name,
+            "properties": {
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_alchemy",
+                "statuses": [{"status": "Connected"}],
+            },
+        }
+        for name in ("alchemy-one", "alchemy-two")
+    ]
+
+    with pytest.raises(RuntimeError, match="Multiple connected instances"):
+        install_ess_agent.validate_required_connection(
+            installation,
+            connections,
+        )
+    assert install_ess_agent.validate_required_connection(
+        installation,
+        connections,
+        "alchemy-two",
+    ) == "alchemy-two"
 
 
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")

@@ -34,6 +34,10 @@ VERTICAL_PACKAGE = {
     "hr": "Employee Self-Service HR",
     "it": "Employee Self-Service IT",
 }
+VERTICAL_CONFIG_SECTION = {
+    "hr": "esshr",
+    "it": "essit",
+}
 
 
 def load_parent_schemas(catalog_path: Path = CATALOG_PATH) -> dict[tuple[str, str], str]:
@@ -141,6 +145,20 @@ def load_installation_config(
                 )
             display_orders.add(display_order)
 
+    experience_short_labels: set[str] = set()
+    for key, metadata in experiences.items():
+        short_label = metadata.get("shortLabel")
+        if not isinstance(short_label, str) or not short_label.strip():
+            raise ValueError(
+                f"experiences.{key} must define a non-empty shortLabel."
+            )
+        normalized_short_label = short_label.casefold()
+        if normalized_short_label in experience_short_labels:
+            raise ValueError(
+                f"experiences contains duplicate shortLabel '{short_label}'."
+            )
+        experience_short_labels.add(normalized_short_label)
+
     expected_keys = {
         f"{experience_key}.{vertical_key}"
         for experience_key in experiences
@@ -153,20 +171,37 @@ def load_installation_config(
         )
 
     application_names: set[str] = set()
+    config_keys: set[str] = set()
     catalog_schemas = load_parent_schemas(catalog_path)
     for installation_key, installation in installations.items():
         experience_key = installation.get("experienceKey")
         vertical_key = installation.get("verticalKey")
+        config_key = installation.get("configKey")
         expected_key = f"{experience_key}.{vertical_key}"
         if installation_key != expected_key:
             raise ValueError(
                 f"Installation key '{installation_key}' does not match its "
                 f"experienceKey and verticalKey ('{expected_key}')."
             )
+        expected_config_key = (
+            f"{experience_key}.{VERTICAL_CONFIG_SECTION[vertical_key]}"
+        )
+        if config_key != expected_config_key:
+            raise ValueError(
+                f"Installation '{installation_key}' must use configKey "
+                f"'{expected_config_key}'."
+            )
+        if config_key in config_keys:
+            raise ValueError(
+                f"Installation configKey '{config_key}' is assigned more "
+                "than once."
+            )
+        config_keys.add(config_key)
 
         application = installation.get("marketplaceApplication") or {}
         solution = installation.get("solution") or {}
         catalog_match = installation.get("catalogMatch") or {}
+        required_connection = installation.get("requiredConnection")
         unique_name = application.get("uniqueName")
         parent_unique_name = solution.get("parentUniqueName")
         if not unique_name or not parent_unique_name:
@@ -198,7 +233,87 @@ def load_installation_config(
                 f"schema '{catalog_schema}' in solution-catalog.md."
             )
 
+        if vertical_key == "hr":
+            if required_connection is not None:
+                raise ValueError(
+                    f"Installation '{installation_key}' must not require a "
+                    "parent connection."
+                )
+        else:
+            required_fields = (
+                "displayName",
+                "connectorApiName",
+                "referenceLogicalName",
+                "creationGuidance",
+            )
+            if not isinstance(required_connection, dict) or any(
+                not isinstance(required_connection.get(field), str)
+                or not required_connection[field].strip()
+                for field in required_fields
+            ):
+                raise ValueError(
+                    f"Installation '{installation_key}' must define complete "
+                    "requiredConnection metadata."
+                )
+            if required_connection["connectorApiName"] != "shared_alchemy":
+                raise ValueError(
+                    f"Installation '{installation_key}' must use the "
+                    "shared_alchemy connector."
+                )
+            expected_reference_prefix = parent_unique_name.casefold()
+            if not required_connection["referenceLogicalName"].casefold().startswith(
+                expected_reference_prefix
+            ):
+                raise ValueError(
+                    f"Installation '{installation_key}' connection reference "
+                    "does not match its parent solution."
+                )
+
     return config
+
+
+def build_installation_options(config: dict) -> list[dict]:
+    """Build the single ordered DA/CEA × HR/IT installation picker."""
+    experiences = config["experiences"]
+    verticals = config["verticals"]
+
+    options = []
+    for key, installation in config["installations"].items():
+        experience_key = installation["experienceKey"]
+        vertical_key = installation["verticalKey"]
+        experience = experiences[experience_key]
+        vertical = verticals[vertical_key]
+        options.append({
+            "key": key,
+            "configKey": installation["configKey"],
+            "experience": experience_key,
+            "vertical": vertical_key,
+            "label": (
+                f"{experience['shortLabel']} : {vertical['label']}"
+            ),
+            "description": (
+                f"{experience['description']} {vertical['description']}"
+            ),
+            "schemaName": installation["solution"]["parentUniqueName"],
+            "requiredConnection": installation.get("requiredConnection"),
+        })
+
+    return sorted(
+        options,
+        key=lambda option: (
+            experiences[option["experience"]]["displayOrder"],
+            verticals[option["vertical"]]["displayOrder"],
+        ),
+    )
+
+
+def find_installation_by_schema(config: dict, schema_name: str) -> dict | None:
+    """Return the configured installation whose solution schema matches."""
+    target = schema_name.casefold()
+    for option in build_installation_options(config):
+        if option["schemaName"].casefold() == target:
+            return option
+    return None
 
 
 INSTALLED_STATES = {"Installed", "TemplateInstalled"}
@@ -223,6 +338,57 @@ class InstallationTimeoutError(RuntimeError):
             f"{timeout_seconds // 60} minutes."
         )
 
+
+def _connector_api_name(value: str | None) -> str:
+    return (value or "").rstrip("/").rsplit("/", 1)[-1].casefold()
+
+
+def validate_required_connection(
+    installation: dict,
+    connections: list[dict],
+    selected_connection_name: str | None = None,
+) -> str | None:
+    """Hard-gate installation on its required connected connector instance."""
+    requirement = installation.get("requiredConnection")
+    if requirement is None:
+        return None
+
+    matches = []
+    expected_connector = requirement["connectorApiName"].casefold()
+    for connection in connections:
+        properties = connection.get("properties") or {}
+        statuses = properties.get("statuses") or []
+        status = (
+            statuses[0].get("status")
+            if statuses and isinstance(statuses[0], dict)
+            else None
+        )
+        if (
+            connection.get("name")
+            and _connector_api_name(properties.get("apiId")) == expected_connector
+            and str(status or "").casefold() == "connected"
+        ):
+            matches.append(connection["name"])
+
+    if not matches:
+        raise RuntimeError(
+            f"This ESS agent requires an active {requirement['displayName']} "
+            "connection. Create it in the selected environment before "
+            "installation."
+        )
+    if selected_connection_name:
+        if selected_connection_name not in matches:
+            raise RuntimeError(
+                "The selected required connection is not connected or does not "
+                f"use {requirement['connectorApiName']}."
+            )
+        return selected_connection_name
+    if len(matches) > 1:
+        raise RuntimeError(
+            "Multiple connected instances of the required connector exist. "
+            "Select one during connection preflight before installation."
+        )
+    return matches[0]
 
 def _find_package(packages: list[dict], schema_name: str) -> dict | None:
     """Find the entitled application whose unique name matches the catalog."""
@@ -354,6 +520,7 @@ def install_agent(
     experience: str,
     vertical: str,
     *,
+    connection_name: str | None = None,
     config_path: Path = CONFIG_PATH,
     catalog_path: Path = CATALOG_PATH,
     pp_admin_client_factory=PPAdminClient,
@@ -380,6 +547,12 @@ def install_agent(
         raise RuntimeError(
             "Could not resolve the selected environment's Power Platform ID."
         )
+
+    validate_required_connection(
+        installation,
+        pp_admin.get_connections(environment_id),
+        connection_name,
+    )
 
     client = powerplatform_client_factory(tenant_id)
     client.authenticate()
@@ -451,6 +624,10 @@ def main() -> None:
         choices=sorted(VERTICAL_PACKAGE),
         help="Agent vertical: hr or it",
     )
+    parser.add_argument(
+        "--connection-name",
+        help="Required connection selected by connection preflight",
+    )
     args = parser.parse_args()
 
     try:
@@ -458,6 +635,7 @@ def main() -> None:
             args.url,
             args.experience,
             args.vertical,
+            connection_name=args.connection_name,
         )
     except InstallationTimeoutError as error:
         result = {

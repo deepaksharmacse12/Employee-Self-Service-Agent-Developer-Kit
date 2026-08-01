@@ -24,10 +24,10 @@ take effect. **NEVER stop after editing only the local file.**
 
 ## Step 1: Identify the Topic
 
-Read `.local/config.json` to get `agent.folder` and `agent.slug`.
+Read `.local/config.json` to get `ACTIVE_AGENT.folder` and `ACTIVE_AGENT.slug`.
 
 If the user named a specific topic, find the matching file in
-`{agent.folder}/topics/`. Match by filename, `componentName`, trigger phrases,
+`{ACTIVE_AGENT.folder}/topics/`. Match by filename, `componentName`, trigger phrases,
 or `modelDescription`.
 
 If the match is ambiguous, list available topics and ask the user to pick.

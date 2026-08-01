@@ -18,7 +18,7 @@ are calling.
 ## Start
 
 Read `.local/config.json` to confirm setup is complete and get the
-`dataverseEndpoint`.
+`common.dataverseEndpoint`.
 
 If setup is not complete, show:
 
@@ -83,7 +83,7 @@ Capture the selection as `{BACKUP_PATH}`.
 
 Read the chosen backup file to inspect `metadata.envUrl`, `metadata.capturedAt`,
 `metadata.recordCount`, and `metadata.agentsDetected`. Also read the current
-`dataverseEndpoint` from `.local/config.json`.
+`common.dataverseEndpoint` from `.local/config.json`.
 
 Build the summary:
 
@@ -105,7 +105,7 @@ catalog values in `msdyn_value`, so a full overwrite is the intended
 behaviour - your customisations win.
 ```
 
-If `metadata.envUrl` (in the backup) does NOT match `dataverseEndpoint`
+If `metadata.envUrl` (in the backup) does NOT match `common.dataverseEndpoint`
 (in the current config), show one additional line in the summary:
 
 ```

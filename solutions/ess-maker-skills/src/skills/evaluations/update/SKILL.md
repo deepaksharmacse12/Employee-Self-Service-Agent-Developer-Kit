@@ -21,9 +21,9 @@ file.**
 
 ## Step 1: Identify the Test Set / Test Cases
 
-Read `.local/config.json` to get `agent.folder`.
+Read `.local/config.json` to get `ACTIVE_AGENT.folder`.
 
-List all files in `{agent.folder}/evaluations/`. Two kinds exist:
+List all files in `{ACTIVE_AGENT.folder}/evaluations/`. Two kinds exist:
 
 - **EvaluationSet** files contain `kind: EvaluationSet` — these are parent
   records that define the test set and grader.

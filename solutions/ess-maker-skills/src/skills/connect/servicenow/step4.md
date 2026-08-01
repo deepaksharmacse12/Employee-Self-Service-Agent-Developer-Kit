@@ -7,8 +7,8 @@ Do not rephrase, add commentary, or tell the user what tools you are calling.
 display text like "ENV_URL = ..." or "BOT_ID = ..." in chat.
 
 Read `.local/connect/servicenow/config.json` for INSTANCE_NAME, SNOW_USAGE, etc.
-Read `.local/config.json` for the agent details (dataverseEndpoint, agent.botId,
-agent.name, agent.schemaName, agent.isManaged).
+Read `.local/config.json` for the agent details (common.dataverseEndpoint, ACTIVE_AGENT.botId,
+ACTIVE_AGENT.name, ACTIVE_AGENT.schemaName, ACTIVE_AGENT.isManaged).
 
 ---
 
@@ -22,11 +22,11 @@ This takes about 10–20 seconds...
 **End message.**
 
 Read `.local/config.json` to get the agent details. Set:
-- ENV_URL = `dataverseEndpoint`
-- BOT_ID = `agent.botId`
-- BOT_NAME = `agent.name`
-- SCHEMA_NAME = `agent.schemaName`
-- IS_MANAGED = `agent.isManaged`
+- ENV_URL = `common.dataverseEndpoint`
+- BOT_ID = `ACTIVE_AGENT.botId`
+- BOT_NAME = `ACTIVE_AGENT.name`
+- SCHEMA_NAME = `ACTIVE_AGENT.schemaName`
+- IS_MANAGED = `ACTIVE_AGENT.isManaged`
 
 Run this command in the terminal:
 

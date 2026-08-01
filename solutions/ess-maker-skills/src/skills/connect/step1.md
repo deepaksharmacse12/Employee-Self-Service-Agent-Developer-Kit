@@ -111,7 +111,7 @@ value. Set `status` to `"in-progress"`. Reset all pack statuses in
 Update `.local/connect/servicenow/tasks.md` — reset steps 2, 3, and 4 from
 `- [x]` to `- [ ]`.
 
-Update `.local/config.json` — remove the `connections.ServiceNow` entry (it
+Update `.local/config.json` — remove the `common.connections.ServiceNow` entry (it
 will be re-created by step 4 with the new auth type after verification).
 
 **Message:**

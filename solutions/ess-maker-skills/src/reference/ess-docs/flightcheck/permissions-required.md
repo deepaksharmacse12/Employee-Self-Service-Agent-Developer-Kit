@@ -66,11 +66,11 @@ WD-SEC-003 Personal Data write-permission runtime probe.
 1. **Environment variables** — if already set (e.g., from a CI pipeline)
 2. **`.vscode/mcp.json`** — base URL and tenant are read directly (they're
    not secrets). Username/password use `${input:...}` so they can't be read.
-3. **`.local/config.json`** → `connections.Workday` — tenant and base URL from
+3. **`.local/config.json`** → `common.connections.Workday` — tenant and base URL from
    the `/connect workday` setup
 4. **Interactive prompt** — if creds still missing, prompts for ISU username
    and password at runtime. **Never saved to disk.**
-5. **`.local/config.json`** → `workdayTestEmployeeId` — cached after first prompt
+5. **`.local/config.json`** → `common.workdayTestEmployeeId` — cached after first prompt
    so you only enter it once
 
 Environment variables needed (if not auto-resolved):

@@ -38,6 +38,10 @@ import sys
 from datetime import date
 
 from auth import EXPECTED_CONFIG_VERSION
+from install_ess_agent import (
+    find_installation_by_schema,
+    load_installation_config,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -495,11 +499,21 @@ def write_config(agent_info, slug, output_dir, template_configs_discovered,
     crash mid-write cannot leave a corrupted half-JSON file that bricks
     the kit (the file gates every subsequent kit operation).
 
-    Supports multiple agents: maintains an `agents` array with all discovered
-    agents, `activeAgent` pointing to the current slug, and a backward-compat
-    `agent` field that mirrors the active agent.
+    Supports multiple agents using nested stable sections such as
+    `agents.da.esshr`, with shared environment settings under `common`.
     """
     bot_id = agent_info["botId"]
+    installation = find_installation_by_schema(
+        load_installation_config(),
+        agent_info["schema"],
+    )
+    if installation is None:
+        raise ValueError(
+            f"Agent schema '{agent_info['schema']}' is not mapped in the "
+            "ESS installation configuration."
+        )
+    config_key = installation["configKey"]
+    experience_key, agent_section = config_key.split(".", 1)
     agent_entry = {
         "name": agent_info["name"],
         "botId": bot_id,
@@ -507,6 +521,16 @@ def write_config(agent_info, slug, output_dir, template_configs_discovered,
         "isManaged": agent_info["managed"],
         "slug": slug,
         "folder": output_dir.replace("\\", "/"),
+        "installation": {
+            "status": "installed",
+        },
+        "extraction": {
+            "status": "complete",
+            "templateConfigsDiscovered": template_configs_discovered,
+            "templateConfigCount": template_config_count,
+            "workflowCount": workflow_count,
+            "evaluationCount": evaluation_count,
+        },
     }
 
     # Load existing config to preserve other agents and connections
@@ -532,33 +556,72 @@ def write_config(agent_info, slug, output_dir, template_configs_discovered,
             f"updating to v{EXPECTED_CONFIG_VERSION}."
         )
 
-    # Build or update agents array
-    agents = existing.get("agents", [])
+    if existing.get("configVersion") == 2:
+        agents = existing.get("agents") or {}
+        common = existing.get("common") or {}
+    else:
+        agents = {}
+        common = {}
+        legacy_agents = existing.get("agents") or []
+        if not legacy_agents and isinstance(existing.get("agent"), dict):
+            legacy_agents = [existing["agent"]]
+        for legacy_agent in legacy_agents:
+            legacy_schema = legacy_agent.get("schemaName")
+            if not legacy_schema:
+                continue
+            legacy_installation = find_installation_by_schema(
+                load_installation_config(),
+                legacy_schema,
+            )
+            if legacy_installation:
+                legacy_key = legacy_installation["configKey"]
+                legacy_experience, legacy_section = legacy_key.split(".", 1)
+            else:
+                legacy_experience = "legacy"
+                legacy_section = legacy_agent.get("slug", "agent")
+            migrated_agent = dict(legacy_agent)
+            migrated_agent["installation"] = {"status": "installed"}
+            migrated_agent["extraction"] = {"status": "complete"}
+            if legacy_agent.get("slug") == existing.get("activeAgent"):
+                migrated_agent["extraction"].update({
+                    key: existing[key]
+                    for key in (
+                        "templateConfigsDiscovered",
+                        "templateConfigCount",
+                        "workflowCount",
+                        "evaluationCount",
+                    )
+                    if key in existing
+                })
+            agents.setdefault(legacy_experience, {})[
+                legacy_section
+            ] = migrated_agent
+        for key, value in existing.items():
+            if key not in {
+                "configVersion",
+                "setup",
+                "agent",
+                "activeAgent",
+                "agents",
+                "dataverseEndpoint",
+                "templateConfigsDiscovered",
+                "templateConfigCount",
+                "workflowCount",
+                "evaluationCount",
+            }:
+                common[key] = value
+        if existing.get("dataverseEndpoint"):
+            common["dataverseEndpoint"] = existing["dataverseEndpoint"]
 
-    # Remove existing entry for this slug if present (update case)
-    agents = [a for a in agents if a.get("slug") != slug]
-    agents.append(agent_entry)
-
-    # Sort by name for consistent ordering
-    agents.sort(key=lambda a: a.get("name", ""))
-
+    agents.setdefault(experience_key, {})[agent_section] = agent_entry
+    common["dataverseEndpoint"] = agent_info["url"]
     config = {
         "configVersion": EXPECTED_CONFIG_VERSION,  # gated by auth.load_config
         "setup": "complete",
-        "agent": agent_entry,             # backward compat: active agent
-        "activeAgent": slug,              # slug of the active agent
-        "agents": agents,                 # all discovered agents
-        "dataverseEndpoint": agent_info["url"],
-        "templateConfigsDiscovered": template_configs_discovered,
-        "templateConfigCount": template_config_count,
-        "workflowCount": workflow_count,
-        "evaluationCount": evaluation_count,
+        "activeAgent": config_key,
+        "common": common,
+        "agents": agents,
     }
-
-    # Preserve existing connections and other user-set fields
-    for key in ("connections", "workdayTestEmployeeId", "referenceSource", "environmentSku"):
-        if key in existing and key not in config:
-            config[key] = existing[key]
 
     os.makedirs(local_dir, exist_ok=True)
     tmp_path = config_path + ".tmp"

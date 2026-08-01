@@ -2,12 +2,14 @@
   "schemaVersion": 1,
   "experiences": {
     "da": {
+      "shortLabel": "DA",
       "label": "ESS as DA (Recommended)",
       "description": "Install the declarative agent experience.",
       "displayOrder": 1,
       "recommended": true
     },
     "cea": {
+      "shortLabel": "CEA",
       "label": "ESS as CEA",
       "description": "Install the custom engine agent experience.",
       "displayOrder": 2,
@@ -28,6 +30,7 @@
   },
   "installations": {
     "da.hr": {
+      "configKey": "da.esshr",
       "experienceKey": "da",
       "verticalKey": "hr",
       "marketplaceApplication": {
@@ -36,12 +39,14 @@
       "solution": {
         "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceDAHR"
       },
+      "requiredConnection": null,
       "catalogMatch": {
         "parentPackage": "Employee Self-Service HR",
         "status": "Active (DA bundle)"
       }
     },
     "da.it": {
+      "configKey": "da.essit",
       "experienceKey": "da",
       "verticalKey": "it",
       "marketplaceApplication": {
@@ -50,12 +55,19 @@
       "solution": {
         "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT"
       },
+      "requiredConnection": {
+        "displayName": "Microsoft 365 Self-Help",
+        "connectorApiName": "shared_alchemy",
+        "referenceLogicalName": "msdyn_copilotforemployeeselfservicedait.shared_alchemy.shared-alchemy-8262076a-e778-450b-8a35-5ae815712319",
+        "creationGuidance": "In make.powerapps.com, select the target environment, open Connections, choose New connection, search for Microsoft 365 Self-Help, and create the connection."
+      },
       "catalogMatch": {
         "parentPackage": "Employee Self-Service IT",
         "status": "Active (DA bundle)"
       }
     },
     "cea.hr": {
+      "configKey": "cea.esshr",
       "experienceKey": "cea",
       "verticalKey": "hr",
       "marketplaceApplication": {
@@ -64,12 +76,14 @@
       "solution": {
         "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceHR"
       },
+      "requiredConnection": null,
       "catalogMatch": {
         "parentPackage": "Employee Self-Service HR",
         "status": "Active (CEA bundle)"
       }
     },
     "cea.it": {
+      "configKey": "cea.essit",
       "experienceKey": "cea",
       "verticalKey": "it",
       "marketplaceApplication": {
@@ -77,6 +91,12 @@
       },
       "solution": {
         "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceIT"
+      },
+      "requiredConnection": {
+        "displayName": "Microsoft 365 Self-Help",
+        "connectorApiName": "shared_alchemy",
+        "referenceLogicalName": "msdyn_copilotforemployeeselfserviceit.shared_alchemy.shared-alchemy-8262076a-e778-450b-8a35-5ae815712319",
+        "creationGuidance": "In make.powerapps.com, select the target environment, open Connections, choose New connection, search for Microsoft 365 Self-Help, and create the connection."
       },
       "catalogMatch": {
         "parentPackage": "Employee Self-Service IT",

@@ -52,7 +52,8 @@ LOCAL_STATE_DIR = ".local"
 # load_config() below. Bump this when the on-disk schema changes in a way
 # old consumers can't tolerate, AND update setup.py to migrate or rewrite
 # config.json on the next run.
-EXPECTED_CONFIG_VERSION = 1
+EXPECTED_CONFIG_VERSION = 2
+SUPPORTED_CONFIG_VERSIONS = {1, 2}
 
 HEADERS_BASE = {
     "Accept": "application/json",
@@ -600,25 +601,73 @@ def delete_record(env_url, token, entity_set, record_id):
     return True
 
 
-def load_config():
+def normalize_config(cfg):
+    """Return a backward-compatible runtime view of config schema v1 or v2."""
+    if cfg.get("configVersion") != 2:
+        return cfg
+
+    common = cfg.get("common") or {}
+    grouped_agents = cfg.get("agents") or {}
+    agents = []
+    agents_by_key = {}
+    if isinstance(grouped_agents, dict):
+        for experience, experience_agents in grouped_agents.items():
+            if not isinstance(experience_agents, dict):
+                continue
+            for agent_section, agent in experience_agents.items():
+                if not isinstance(agent, dict):
+                    continue
+                config_key = f"{experience}.{agent_section}"
+                normalized_agent = {
+                    **agent,
+                    "configKey": config_key,
+                    "experience": experience,
+                    "agentSection": agent_section,
+                }
+                agents.append(normalized_agent)
+                agents_by_key[config_key] = normalized_agent
+
+    active_key = cfg.get("activeAgent")
+    active_agent = agents_by_key.get(active_key)
+    if active_agent is None and agents:
+        active_agent = agents[0]
+        active_key = active_agent["configKey"]
+
+    runtime = {
+        **cfg,
+        **common,
+        "common": common,
+        "agentsByKey": agents_by_key,
+        "agents": agents,
+        "activeAgentKey": active_key,
+    }
+    if active_agent:
+        runtime["agent"] = active_agent
+        runtime["activeAgent"] = active_agent.get("slug", active_key)
+        extraction = active_agent.get("extraction") or {}
+        runtime.update(extraction)
+    return runtime
+
+
+def load_config(*, required=True):
     """Load .local/config.json. Returns the parsed dict or exits on error.
 
-    Gates on `configVersion`: if the on-disk version doesn't match
-    `EXPECTED_CONFIG_VERSION`, exits with a clear instruction to re-run
-    setup. This catches the case where a kit upgrade changed the schema
-    and a downstream script would otherwise KeyError on a missing field.
+    Gates on supported `configVersion` values and normalizes schema v2 into a
+    backward-compatible runtime view for existing command implementations.
     """
     config_path = os.path.join(LOCAL_STATE_DIR, "config.json")
     if not os.path.exists(config_path):
+        if not required:
+            return {}
         print(f"ERROR: {config_path} not found. Run /setup first.")
         sys.exit(1)
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     ver = cfg.get("configVersion", 0)
-    if ver != EXPECTED_CONFIG_VERSION:
+    if ver not in SUPPORTED_CONFIG_VERSIONS:
         print(
-            f"ERROR: {config_path} is schema v{ver}, expected "
-            f"v{EXPECTED_CONFIG_VERSION}. Run `/setup --refresh` to migrate."
+            f"ERROR: {config_path} is schema v{ver}; supported versions are "
+            f"{sorted(SUPPORTED_CONFIG_VERSIONS)}. Run `/setup` to migrate."
         )
         sys.exit(1)
-    return cfg
+    return normalize_config(cfg)

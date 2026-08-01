@@ -15,10 +15,10 @@ This skill scans a cloned ESS agent for compile errors and walks the user throug
 ## Step 1: Read Config
 
 Read `.local/config.json` to get the agent details:
-- `agent.folder` — the name of the cloned agent folder (e.g., `Employee Self-Service HR`)
-- `agent.slug` — the slugified name (e.g., `employee-self-service-hr`)
+- `ACTIVE_AGENT.folder` — the name of the cloned agent folder (e.g., `Employee Self-Service HR`)
+- `ACTIVE_AGENT.slug` — the slugified name (e.g., `employee-self-service-hr`)
 
-If `.local/config.json` doesn't exist or doesn't have `agent.folder`, tell the user: "I can't find your agent configuration. Run `/setup` first." Then STOP.
+If `.local/config.json` doesn't exist or doesn't have `ACTIVE_AGENT.folder`, tell the user: "I can't find your agent configuration. Run `/setup` first." Then STOP.
 
 ## Step 2: Quick Scan (before checkpoint)
 
@@ -53,8 +53,8 @@ When confirmed:
 
 Gather errors from TWO sources and combine them into a single list:
 
-1. **VS Code Problems panel** — Use the error/diagnostics tool with NO file path filter (get all errors across the workspace). Filter the results to only include errors from files inside `{agent.folder}/`.
-2. **Agent folder scan** — Use the error/diagnostics tool specifically on `{agent.folder}/`.
+1. **VS Code Problems panel** — Use the error/diagnostics tool with NO file path filter (get all errors across the workspace). Filter the results to only include errors from files inside `{ACTIVE_AGENT.folder}/`.
+2. **Agent folder scan** — Use the error/diagnostics tool specifically on `{ACTIVE_AGENT.folder}/`.
 
 Merge both lists and deduplicate (the same error may appear in both). Use the combined list for the rest of this flow.
 
@@ -75,7 +75,7 @@ After scanning, group the errors into these categories:
 ### Category 3: Missing Dialog Reference
 **Error message**: `Dialog with id '{schema}.topic.{name}' not found`
 **What it means**: The topic references another topic using a `BeginDialog` action, but the schema name in the reference is wrong. Common cause: truncated schema name (e.g., `msdyn_copilotforemployeeselfservice` instead of `msdyn_copilotforemployeeselfservicehr`).
-**Fix**: Look at the incorrect dialog reference. Read `.local/config.json` to get the correct `agent.schemaName`. Replace the wrong schema prefix with the correct one. For example, if the error says `msdyn_copilotforemployeeselfservice.topic.WorkdayManagerCheck` and the correct schemaName is `msdyn_copilotforemployeeselfservicehr`, replace `msdyn_copilotforemployeeselfservice` with `msdyn_copilotforemployeeselfservicehr` in the file.
+**Fix**: Look at the incorrect dialog reference. Read `.local/config.json` to get the correct `ACTIVE_AGENT.schemaName`. Replace the wrong schema prefix with the correct one. For example, if the error says `msdyn_copilotforemployeeselfservice.topic.WorkdayManagerCheck` and the correct schemaName is `msdyn_copilotforemployeeselfservicehr`, replace `msdyn_copilotforemployeeselfservice` with `msdyn_copilotforemployeeselfservicehr` in the file.
 
 ### Unknown Errors
 If you find errors that don't match any of the above categories, list them separately and tell the user: "I found some errors I don't have an automatic fix for. Here's what they are:" Then list them and suggest the user check the Copilot Studio documentation.
@@ -116,7 +116,7 @@ For each file with errors:
 - Show the user the proposed new description and its character count.
 
 ### Missing Dialog Reference
-- Show the incorrect reference and what it should be (using `agent.schemaName` from config).
+- Show the incorrect reference and what it should be (using `ACTIVE_AGENT.schemaName` from config).
 - If the file has multiple bad references, include all of them in the same proposal.
 
 ### Missing CloudFlow

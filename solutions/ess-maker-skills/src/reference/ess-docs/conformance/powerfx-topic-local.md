@@ -11,7 +11,7 @@ the one `.mcs.yml` file, needing only the topic itself.
 
 ## How to run this lens
 
-You are invoked with the path to one authored topic (`{agent.folder}/topics/{Name}.mcs.yml`). Read the
+You are invoked with the path to one authored topic (`{ACTIVE_AGENT.folder}/topics/{Name}.mcs.yml`). Read the
 whole file. Walk every Power Fx expression (any value beginning with `=`, and expression bodies inside
 `AdaptiveCardPrompt.card` / `AdaptiveCardTemplate.cardContent`). Evaluate each against the heuristics
 below. This is a **judgment lens**, not a closed rule set — each heuristic is a starting question; the

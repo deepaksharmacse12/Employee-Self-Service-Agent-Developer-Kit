@@ -23,10 +23,10 @@ file.**
 
 ## Step 1: Identify the Topic
 
-Read `.local/config.json` to get `agent.folder` and `agent.slug`.
+Read `.local/config.json` to get `ACTIVE_AGENT.folder` and `ACTIVE_AGENT.slug`.
 
 If the user named a specific topic, find the matching file in
-`{agent.folder}/topics/`. Match by:
+`{ACTIVE_AGENT.folder}/topics/`. Match by:
 - Filename (e.g., "submit it support ticket" → `submititsupportticket.mcs.yml`)
 - Display name inside the file (`componentName` field)
 - Trigger phrases (`triggerQueries`)
@@ -70,7 +70,7 @@ non-blocking); it needs no user-facing message and never fails the step.
 
 ## Step 4: Delete the Local File
 
-Delete the topic file from `{agent.folder}/topics/{filename}.mcs.yml`.
+Delete the topic file from `{ACTIVE_AGENT.folder}/topics/{filename}.mcs.yml`.
 
 Verify the file is gone by listing the topics directory.
 

@@ -20,12 +20,13 @@ There are **two distinct** files. Keep them separate.
 | File | Owner | Purpose |
 |------|-------|---------|
 | `.local/connect/workday/config.json` | the connect + setup skills | Workday connection state — URLs, tenant, Entra app, OAuth client, per-skill status. **This schema.** |
-| `.local/config.json` | onboarding + flightcheck | Agent identity + `dataverseEndpoint`. `scripts/flightcheck/cli.py` reads this for the Dataverse endpoint and agent list. **Not this schema.** |
+| `.local/config.json` | onboarding + flightcheck | Shared environment state under `common` and nested agent identity under `agents.da.esshr`, `agents.da.essit`, `agents.cea.esshr`, or `agents.cea.essit`. **Not this schema.** |
 
 Never write Workday connection fields into `.local/config.json`, and never write
-agent identity / `dataverseEndpoint` into `.local/connect/workday/config.json`.
+agent identity / `common.dataverseEndpoint` into `.local/connect/workday/config.json`.
 The only crossover is read-only: a setup skill may *read* `.local/config.json`
-for `dataverseEndpoint` / `agent.botId` when it needs them (see skill-5,
+for `common.dataverseEndpoint` and the active agent's `botId` when it needs
+them (resolve `activeAgent` under `agents`; see skill-5,
 `workday/install-workday-extension-pack.md`).
 
 ---

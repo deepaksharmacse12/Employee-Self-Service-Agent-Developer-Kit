@@ -425,43 +425,58 @@ The file `.local/config.json` stores the user's setup state and agent details:
 
 ```json
 {
+  "configVersion": 2,
   "setup": "complete",
-  "agent": {
-    "name": "Employee Self-Service HR",
-    "botId": "...",
-    "schemaName": "msdyn_copilotforemployeeselfservicehr",
-    "isManaged": true,
-    "slug": "employee-self-service-hr",
-    "folder": "workspace/agents/employee-self-service-hr"
+  "activeAgent": "da.esshr",
+  "common": {
+    "dataverseEndpoint": "https://org.crm.dynamics.com",
+    "environmentSku": "Sandbox"
   },
-  "activeAgent": "employee-self-service-hr",
-  "agents": [
-    {
-      "name": "Employee Self-Service HR",
-      "botId": "...",
-      "schemaName": "msdyn_copilotforemployeeselfservicehr",
-      "isManaged": true,
-      "slug": "employee-self-service-hr",
-      "folder": "workspace/agents/employee-self-service-hr"
-    },
-    {
-      "name": "Employee Self-Service IT",
-      "botId": "...",
-      "schemaName": "msdyn_copilotforemployeeselfserviceit",
-      "isManaged": true,
-      "slug": "employee-self-service-it",
-      "folder": "workspace/agents/employee-self-service-it"
+  "agents": {
+    "da": {
+      "esshr": {
+        "name": "Employee Self-Service HR",
+        "botId": "...",
+        "schemaName": "msdyn_copilotforemployeeselfservicedahr",
+        "isManaged": true,
+        "slug": "employee-self-service-hr",
+        "folder": "workspace/agents/employee-self-service-hr",
+        "extraction": {
+          "templateConfigsDiscovered": true,
+          "templateConfigCount": 42,
+          "workflowCount": 3,
+          "evaluationCount": 0
+        }
+      },
+      "essit": {
+        "name": "Employee Self-Service IT",
+        "botId": "...",
+        "schemaName": "msdyn_copilotforemployeeselfservicedait",
+        "isManaged": true,
+        "slug": "employee-self-service-it",
+        "folder": "workspace/agents/employee-self-service-it",
+        "extraction": {
+          "templateConfigsDiscovered": true,
+          "templateConfigCount": 37,
+          "workflowCount": 2,
+          "evaluationCount": 0
+        }
+      }
     }
-  ],
-  "dataverseEndpoint": "https://org.crm.dynamics.com",
-  "templateConfigsDiscovered": true,
-  "templateConfigCount": 42,
-  "workflowCount": 3
+  }
 }
 ```
 
-The `agent` field is a backward-compatible copy of whichever agent is active
-(pointed to by `activeAgent` slug). All discovered agents are in the `agents`
-array. When setup runs for a new agent, it's added to `agents` and set as
-active. Skills read `agent.*` for the current agent; FlightCheck scans all
-agents under `workspace/agents/` regardless of which is active.
+`common` stores environment-wide values once. `activeAgent` is a dotted path:
+split it at `.` and resolve the active section under `agents` (for example,
+`da.esshr` resolves to `agents.da.esshr`). Agent identity and extraction
+metadata belong only in that section. The supported sections are
+`da.esshr`, `da.essit`, `cea.esshr`, and `cea.essit`.
+
+Call the resolved object `ACTIVE_AGENT` while following skill instructions.
+When any skill says to read the active agent's folder, slug, schema, or bot ID,
+resolve the section through `activeAgent`; do not expect a top-level `agent`
+copy. Shared values such as the environment URL are under
+`common.dataverseEndpoint`. Python commands that call `auth.load_config()`
+receive a compatibility runtime view, but skill instructions reading the JSON
+directly must use the persisted v2 paths above.

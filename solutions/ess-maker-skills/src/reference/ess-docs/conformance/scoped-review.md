@@ -11,7 +11,7 @@ The scope is a **module id** — a filename prefix shared by a backend's topics 
 `servicenow-itsm`, `workday`).
 
 **Resolve the in-scope set once, by prefix, and use that exact set for everything.** The in-scope topics are
-`{agent.folder}/topics/{module-id}*.mcs.yml` — a **prefix** match (the same `startswith` the detectors'
+`{ACTIVE_AGENT.folder}/topics/{module-id}*.mcs.yml` — a **prefix** match (the same `startswith` the detectors'
 `--module` uses), never a substring match. List them and let **N = that count**; both the review loop and the
 S-4 "N topics" figure must come from this one enumerated set, so the reported count always equals what was
 actually reviewed. A broad or non-canonical term can resolve to more than one backend — e.g. `servicenow`

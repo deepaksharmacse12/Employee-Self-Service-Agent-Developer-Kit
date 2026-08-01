@@ -18,7 +18,7 @@ are calling.
 ## Start
 
 Read `.local/config.json` to confirm setup is complete and get the
-`dataverseEndpoint`.
+`common.dataverseEndpoint`.
 
 If setup is not complete, show:
 
@@ -92,7 +92,7 @@ agent flavours are installed).
 
 **End message.**
 
-Run in the terminal, passing the `dataverseEndpoint` value from
+Run in the terminal, passing the `common.dataverseEndpoint` value from
 `.local/config.json` as `--url`:
 
 ```

@@ -21,16 +21,9 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from auth import load_config
+
 EXCLUDE_DIRS = {".baseline", ".checkpoints"}
-
-
-def load_config():
-    config_path = os.path.join(".local", "config.json")
-    if not os.path.exists(config_path):
-        print("ERROR: .local/config.json not found. Run /setup first.")
-        sys.exit(1)
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def get_agent_dir(config):

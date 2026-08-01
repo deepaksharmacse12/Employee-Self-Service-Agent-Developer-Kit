@@ -9,7 +9,7 @@ via Dataverse. Test cases are stored as `botcomponent` records with
 
 - ALWAYS read `.local/config.json` to get the agent folder name and slug.
 - ALWAYS read all topic files in the agent folder to understand what the agent does before generating tests.
-- Write evaluation files to `{agent.folder}/evaluations/` as `.mcs.yml` YAML files.
+- Write evaluation files to `{ACTIVE_AGENT.folder}/evaluations/` as `.mcs.yml` YAML files.
 - Use the existing starter test sets in `src/examples/ess-samples/ESSEvaluationSamples/StarterTestSets/` as exemplar patterns for each test category.
 - Follow the standard mutation pipeline: **checkpoint → write files → scan → dry run → push → verify**.
 - **TRACK PROGRESS**: Use the todo list tool to track your progress through this skill's steps. Create a todo list at the start with all the steps, mark each in-progress as you start it, and mark completed when done.
@@ -18,8 +18,8 @@ via Dataverse. Test cases are stored as `botcomponent` records with
 
 ## Step 1: Read Agent Context
 
-1. Read `.local/config.json` to get `agent.folder` and `agent.slug`.
-2. Read ALL topic files in `{agent.folder}/topics/` — every `.mcs.yml` file.
+1. Read `.local/config.json` to get `ACTIVE_AGENT.folder` and `ACTIVE_AGENT.slug`.
+2. Read ALL topic files in `{ACTIVE_AGENT.folder}/topics/` — every `.mcs.yml` file.
 3. Classify each topic:
 
 | Trigger type | Classification | Use in test generation |
@@ -66,7 +66,7 @@ via Dataverse. Test cases are stored as `botcomponent` records with
 
 ### 2a. Scan for existing evaluation sets
 
-Before asking the user what to generate, scan `{agent.folder}/evaluations/` for
+Before asking the user what to generate, scan `{ACTIVE_AGENT.folder}/evaluations/` for
 existing EvaluationSet parent files. The known categories and their folder names are:
 
 | Category | Folder name |
@@ -161,7 +161,7 @@ Also ask: "Does your agent have **knowledge sources** loaded (documents, SharePo
 
 ### File format
 
-Evaluation test sets are stored as `.mcs.yml` files in `{agent.folder}/evaluations/`.
+Evaluation test sets are stored as `.mcs.yml` files in `{ACTIVE_AGENT.folder}/evaluations/`.
 There are two kinds:
 
 **EvaluationSet (parent)** — one per test category. Defines the graders.

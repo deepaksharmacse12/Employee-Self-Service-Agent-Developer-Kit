@@ -24,9 +24,9 @@ files.**
 
 ## Step 1: Identify the Workflow
 
-Read `.local/config.json` to get `agent.folder` and `agent.slug`.
+Read `.local/config.json` to get `ACTIVE_AGENT.folder` and `ACTIVE_AGENT.slug`.
 
-List the workflow folders in `{agent.folder}/workflows/`. Each workflow is a
+List the workflow folders in `{ACTIVE_AGENT.folder}/workflows/`. Each workflow is a
 folder containing `metadata.yml` and `workflow.json`.
 
 If the user named a specific workflow, find the matching folder by:
@@ -39,7 +39,7 @@ and ask the user to pick one.
 ## Step 2: Check for Topic References
 
 Before deleting, check if any topics reference this workflow's ID. Search
-all topic files in `{agent.folder}/topics/` for the workflow's GUID (from
+all topic files in `{ACTIVE_AGENT.folder}/topics/` for the workflow's GUID (from
 `metadata.yml` → `workflowId`).
 
 If topics reference this workflow, warn the user:
@@ -82,7 +82,7 @@ non-blocking); it needs no user-facing message and never fails the step.
 
 ## Step 5: Delete the Local Files
 
-Delete the entire workflow folder: `{agent.folder}/workflows/{folder-name}/`
+Delete the entire workflow folder: `{ACTIVE_AGENT.folder}/workflows/{folder-name}/`
 
 If the user also chose to delete referencing topics (from Step 2), delete
 those topic files as well.

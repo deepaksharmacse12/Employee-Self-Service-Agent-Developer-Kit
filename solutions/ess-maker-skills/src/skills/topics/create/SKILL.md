@@ -5,9 +5,9 @@ This skill guides the user through creating a new Copilot Studio topic.
 ## Rules
 
 - Do NOT run terminal commands or scripts. Use built-in file reading and writing tools only.
-- ALWAYS read existing topic files in the user's agent folder (`{agent.folder}/topics/`) as schema examples before generating any YAML.
+- ALWAYS read existing topic files in the user's agent folder (`{ACTIVE_AGENT.folder}/topics/`) as schema examples before generating any YAML.
 - ALWAYS read `.local/config.json` to get the agent folder name and schema name.
-- Write the new topic file to `{agent.folder}/topics/{TopicName}.mcs.yml`.
+- Write the new topic file to `{ACTIVE_AGENT.folder}/topics/{TopicName}.mcs.yml`.
 - After writing the file, check for errors using the diagnostics tool on the new file.
 - **PRESERVE THE AUTHORING INVARIANTS**: follow [`authoring-invariants.md`](src/reference/ess-docs/customization/authoring-invariants.md) — the generated topic MUST delegate the backend call to the shared system topic, render backend data with the standard parse → iterate → table pattern, and let failures flow through the shared error path.
 - **TEMPLATE CONFIG IS THE DEFAULT**: For any scenario that calls an ESS-orchestrated backend (ServiceNow, Workday, or SAP SuccessFactors), use the **Template Config + Shared Flow** pattern. This is the official ESS extensibility pattern. The topic calls the existing shared system topic (e.g., `ServiceNowHRSDSystemGetCommonExecution`), which invokes the shared orchestrator flow. Do NOT create standalone cloud flows for these connectors.
@@ -114,11 +114,11 @@ For any scenario that involves data collection + external system calls, think th
 
 ## Step 4: Check for Existing Patterns
 
-Read the agent snapshot at `workspace/agents/{agent.slug}/topics.md` to see if similar topics already exist. If a similar pattern exists:
+Read the agent snapshot at `workspace/agents/{ACTIVE_AGENT.slug}/topics.md` to see if similar topics already exist. If a similar pattern exists:
 - Tell the user: "I found a similar topic ({name}) that does {X}. I'll use its pattern as a reference."
 - Read the existing topic file to understand the action chain.
 
-If the topic calls a workflow, check `workspace/agents/{agent.slug}/workflows.md` to see if a suitable workflow already exists. If not, tell the user they'll also need a workflow and offer to create one after the topic.
+If the topic calls a workflow, check `workspace/agents/{ACTIVE_AGENT.slug}/workflows.md` to see if a suitable workflow already exists. If not, tell the user they'll also need a workflow and offer to create one after the topic.
 
 ## Step 5: Generate the Topic YAML
 
@@ -210,8 +210,8 @@ its steps. The user should not have to manage the dependency chain manually.
 
 ### 6.3 — Write the topic file
 
-1. Read `.local/config.json` to get `agent.folder`.
-2. Write the topic file to `{agent.folder}/topics/{filename}.mcs.yml`.
+1. Read `.local/config.json` to get `ACTIVE_AGENT.folder`.
+2. Write the topic file to `{ACTIVE_AGENT.folder}/topics/{filename}.mcs.yml`.
 
 ### 6.4 — Scan for errors
 

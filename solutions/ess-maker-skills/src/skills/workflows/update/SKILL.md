@@ -22,9 +22,9 @@ to take effect. **NEVER stop after editing only the local file.**
 
 ## Step 1: Identify the Workflow
 
-Read `.local/config.json` to get `agent.folder` and `agent.slug`.
+Read `.local/config.json` to get `ACTIVE_AGENT.folder` and `ACTIVE_AGENT.slug`.
 
-List workflow folders in `{agent.folder}/workflows/`. Each contains
+List workflow folders in `{ACTIVE_AGENT.folder}/workflows/`. Each contains
 `metadata.yml` and `workflow.json`.
 
 Match the user's request to a workflow by folder name or display name in
