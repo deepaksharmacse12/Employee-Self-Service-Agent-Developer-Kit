@@ -22,6 +22,12 @@ reference names, and runtime sources from packaged workflow definitions.
 
 ## Parents
 
+> [!IMPORTANT]
+>
+> `scripts/install_ess_agent.py` resolves Marketplace applications from the
+> **Parent package**, **Parent schema name**, and **Status** values below.
+> Keep those values stable when editing this catalog.
+
 | # | Parent package | Parent schema name | Status | Parent connection reference (logical name — connector) |
 | --- | --- | --- | --- | --- |
 | 1 | Employee Self-Service HR | `msdyn_CopilotForEmployeeSelfServiceHR` | Active (CEA bundle) | _(none)_ |

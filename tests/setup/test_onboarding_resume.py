@@ -72,3 +72,19 @@ def test_readiness_check_requires_explicit_manual_opt_in():
         in normalized_step3
     )
     assert 'Only if they explicitly choose "Yes' in step3
+
+
+def test_no_agent_path_offers_installation_and_resumes_discovery():
+    step1b = (_ONBOARDING / "step1b.md").read_text(encoding="utf-8")
+    normalized = " ".join(step1b.split())
+
+    assert "ESS as DA (Recommended)" in step1b
+    assert '"label": "ESS as CEA"' in step1b
+    assert "ESS as CEA (Recommended)" not in step1b
+    assert "Employee Self-Service HR" in step1b
+    assert "Employee Self-Service IT" in step1b
+    assert "install_ess_agent.py" in step1b
+    assert "src/reference/solution-catalog.md" in step1b
+    assert "Return to step 1.4 and run discovery again" in normalized
+    assert "without reinstalling the package" in normalized
+    assert "Do not rerun the installation command" in normalized

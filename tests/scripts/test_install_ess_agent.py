@@ -1,0 +1,235 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""Tests for the Employee Self-Service Marketplace application installer."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+
+def test_catalog_resolves_all_parent_schema_combinations():
+    import install_ess_agent
+
+    mappings = install_ess_agent.load_parent_schemas()
+
+    assert mappings == {
+        ("cea", "hr"): "msdyn_CopilotForEmployeeSelfServiceHR",
+        ("cea", "it"): "msdyn_CopilotForEmployeeSelfServiceIT",
+        ("da", "hr"): "msdyn_CopilotForEmployeeSelfServiceDAHR",
+        ("da", "it"): "msdyn_CopilotForEmployeeSelfServiceDAIT",
+    }
+
+
+def test_catalog_requires_all_four_parent_mappings(tmp_path: Path):
+    import install_ess_agent
+
+    catalog = tmp_path / "solution-catalog.md"
+    catalog.write_text(
+        """
+## Parents
+
+| # | Parent package | Parent schema name | Status | Reference |
+| --- | --- | --- | --- | --- |
+| 1 | Employee Self-Service HR | `schema` | Active (DA bundle) | _(none)_ |
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing parent schema mappings"):
+        install_ess_agent.load_parent_schemas(catalog)
+
+
+class FakePPAdminClient:
+    def __init__(self, tenant_id, environment_id="env-123"):
+        self.tenant_id = tenant_id
+        self.environment_id = environment_id
+        self.authenticated = False
+
+    def authenticate(self, *, include_flow=True):
+        self.authenticated = True
+        self.include_flow = include_flow
+
+    def find_environment_id_by_dataverse_url(self, _env_url):
+        return self.environment_id
+
+
+class FakePowerPlatformClient:
+    def __init__(
+        self,
+        tenant_id,
+        *,
+        packages,
+        install_result=None,
+        statuses=None,
+    ):
+        self.tenant_id = tenant_id
+        self.packages = list(packages)
+        self.install_result = install_result or {}
+        self.statuses = list(statuses or [])
+        self.authenticated = False
+        self.install_calls = []
+
+    def authenticate(self):
+        self.authenticated = True
+
+    def list_environment_application_packages(self, _environment_id):
+        if self.packages and isinstance(self.packages[0], list):
+            return self.packages.pop(0)
+        return self.packages
+
+    def install_application_package(self, environment_id, unique_name):
+        self.install_calls.append((environment_id, unique_name))
+        return self.install_result
+
+    def get_application_package_install_status(
+        self,
+        _environment_id,
+        _operation_id,
+    ):
+        return self.statuses.pop(0)
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_resolves_environment_and_polls_api(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    pp_admin = FakePPAdminClient("tenant-123")
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[{
+            "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT",
+            "state": "None",
+        }],
+        install_result={
+            "lastOperation": {
+                "state": "InstallRequested",
+                "operationId": "operation-123",
+            },
+            "_operationId": "operation-123",
+        },
+        statuses=[{"status": "Succeeded"}],
+    )
+
+    schema = install_ess_agent.install_agent(
+        "https://org.crm.dynamics.com/",
+        "da",
+        "it",
+        pp_admin_client_factory=lambda _tenant: pp_admin,
+        powerplatform_client_factory=lambda _tenant: powerplatform,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert schema == "msdyn_CopilotForEmployeeSelfServiceDAIT"
+    assert pp_admin.authenticated
+    assert pp_admin.include_flow is False
+    assert powerplatform.authenticated
+    assert powerplatform.install_calls == [
+        ("env-123", "msdyn_CopilotForEmployeeSelfServiceDAIT")
+    ]
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_skips_request_when_application_is_already_installed(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[{
+            "uniqueName": "msdyn_CopilotForEmployeeSelfServiceHR",
+            "state": "Installed",
+        }],
+    )
+
+    schema = install_ess_agent.install_agent(
+        "https://org.crm.dynamics.com",
+        "cea",
+        "hr",
+        pp_admin_client_factory=FakePPAdminClient,
+        powerplatform_client_factory=lambda _tenant: powerplatform,
+    )
+
+    assert schema == "msdyn_CopilotForEmployeeSelfServiceHR"
+    assert powerplatform.install_calls == []
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_falls_back_to_package_state_when_operation_id_is_absent(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    schema_name = "msdyn_CopilotForEmployeeSelfServiceIT"
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[
+            [{"uniqueName": schema_name, "state": "None"}],
+            [{"uniqueName": schema_name, "state": "Installing"}],
+            [{"uniqueName": schema_name, "state": "Installed"}],
+        ],
+        install_result={"_async": True, "_operationId": None},
+    )
+
+    schema = install_ess_agent.install_agent(
+        "https://org.crm.dynamics.com",
+        "cea",
+        "it",
+        pp_admin_client_factory=FakePPAdminClient,
+        powerplatform_client_factory=lambda _tenant: powerplatform,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert schema == schema_name
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_reports_missing_marketplace_entitlement(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    powerplatform = FakePowerPlatformClient("tenant-123", packages=[])
+
+    with pytest.raises(RuntimeError, match="not available"):
+        install_ess_agent.install_agent(
+            "https://org.crm.dynamics.com",
+            "da",
+            "hr",
+            pp_admin_client_factory=FakePPAdminClient,
+            powerplatform_client_factory=lambda _tenant: powerplatform,
+        )
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_reports_application_install_permission_failure(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    schema_name = "msdyn_CopilotForEmployeeSelfServiceDAHR"
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[{"uniqueName": schema_name, "state": "None"}],
+        install_result={
+            "_error": "insufficient_permissions",
+            "_status": 403,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="cannot install"):
+        install_ess_agent.install_agent(
+            "https://org.crm.dynamics.com",
+            "da",
+            "hr",
+            pp_admin_client_factory=FakePPAdminClient,
+            powerplatform_client_factory=lambda _tenant: powerplatform,
+        )

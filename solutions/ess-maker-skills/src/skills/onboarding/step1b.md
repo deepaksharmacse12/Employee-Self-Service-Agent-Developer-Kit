@@ -37,7 +37,10 @@ A browser window will open for sign-in. Wait for the script to finish.
 **Check the terminal output:**
 
 - **Script printed a table of agents → go to step 1.5.**
-- **Script printed "No agents found" → go to step 1.8.**
+- **Script printed "No agents found" and no installation completed during this
+  setup run → go to step 1.8.**
+- **Script printed "No agents found" after installation completed during this
+  setup run → go to step 1.8b.**
 - **Script failed with an auth/connection error → go to step 1.9.**
 
 ---
@@ -111,16 +114,115 @@ Now read `src/skills/onboarding/step2.md` and follow it.
 
 ## 1.8 — No agents found
 
-**Message:**
+Use the `vscode_askQuestions` tool and wait for the user's response:
 
-✅ Connected to Dataverse, but no agents found in this environment. Make sure
-your ESS agent is installed in Copilot Studio before running setup.
+```json
+[
+  {
+    "header": "Select experience",
+    "question": "Which Employee Self-Service experience do you want to install?",
+    "options": [
+      {
+        "label": "ESS as DA (Recommended)",
+        "description": "Install the declarative agent experience."
+      },
+      {
+        "label": "ESS as CEA",
+        "description": "Install the custom engine agent experience."
+      }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
 
-Once installed, run `/setup` again.
+Map **ESS as DA (Recommended)** to EXPERIENCE=`da` and
+**ESS as CEA** to EXPERIENCE=`cea`.
+
+After the user answers, use the `vscode_askQuestions` tool and wait for the
+second response:
+
+```json
+[
+  {
+    "header": "Select vertical",
+    "question": "Which Employee Self-Service vertical do you want to install?",
+    "options": [
+      {
+        "label": "Employee Self-Service HR",
+        "description": "Install the Human Resources agent."
+      },
+      {
+        "label": "Employee Self-Service IT",
+        "description": "Install the Information Technology agent."
+      }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+Map **Employee Self-Service HR** to VERTICAL=`hr` and
+**Employee Self-Service IT** to VERTICAL=`it`.
+
+The installer resolves the selected application's schema name from
+`src/reference/solution-catalog.md`. Do not hard-code a schema name in the
+onboarding instructions.
+
+**Message (do NOT wait for user response — continue immediately):**
+
+Installing the selected Employee Self-Service agent in your environment.
+A browser window may open for Power Platform administrator sign-in.
+Installation can take several minutes...
 
 **End message.**
 
-**STOP. Do not continue.**
+Run this command in the terminal:
+
+```
+python scripts/install_ess_agent.py --url "{ENV_URL}" --experience {EXPERIENCE} --vertical {VERTICAL}
+```
+
+- If the command prints `INSTALLED_ESS_AGENT_JSON:`, continue immediately.
+- If the command fails, go to step 1.8a.
+
+**Message (do NOT wait for user response — continue immediately):**
+
+✅ Employee Self-Service installation completed. Discovering the new agent...
+
+**End message.**
+
+Return to step 1.4 and run discovery again. Remember that installation
+completed during this setup run so a delayed agent registration does not
+trigger another installation.
+
+### 1.8a — Installation failed
+
+**Message:**
+
+The Employee Self-Service agent could not be installed automatically. Review
+the terminal error, confirm your account is a Power Platform or Dynamics 365
+administrator who can install applications in this environment, and type
+**retry** to try again.
+
+**End message.**
+
+Wait for the user. When they say retry, rerun the installation command with
+the same ENV_URL, EXPERIENCE, and VERTICAL. Do not repeat either selection
+question.
+
+### 1.8b — Installed agent is not discoverable yet
+
+**Message:**
+
+The installation completed, but the new agent is not discoverable yet.
+Provisioning can take a few minutes. Type **retry** to check again without
+reinstalling the package.
+
+**End message.**
+
+Wait for the user. When they say retry, return to step 1.4. Do not rerun the
+installation command or repeat either selection question.
 
 ---
 

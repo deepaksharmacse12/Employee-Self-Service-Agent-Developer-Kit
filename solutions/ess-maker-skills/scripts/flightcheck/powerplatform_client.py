@@ -4,8 +4,9 @@
 """
 ESS Maker Kit — Power Platform API (Licensing / Billing Policy) Client
 
-Provides authenticated read access to the Power Platform API billing-policy
-surface for FlightCheck PRE-005 (Pay-As-You-Go binding detection).
+Provides authenticated access to documented Power Platform API surfaces:
+billing-policy reads for FlightCheck and Marketplace application management
+for onboarding.
 
 This is a DIFFERENT host and audience from the BAP admin client in
 ``pp_admin_client.py``:
@@ -18,9 +19,8 @@ This is a DIFFERENT host and audience from the BAP admin client in
 Authentication reuses the same MSAL token cache as auth.py /
 graph_client.py / pp_admin_client.py (``.local/.token_cache.bin``).
 
-API contract tier: ``documented`` — see the "API tier registry" in
-``tests/fixtures/cassettes/INDEX.md``. Response shapes verified against
-the MS Learn references cited on each method.
+API contract tier: ``documented``. Response shapes are verified against the
+Microsoft Learn references cited on each method.
 """
 
 import os
@@ -58,7 +58,8 @@ PP_API_SCOPE = "https://api.powerplatform.com/.default"
 API_VERSION = "2024-10-01"
 
 # Module-level session with bounded retry-with-backoff for 429/5xx, mirroring
-# pp_admin_client.py. Read-only verbs only; FlightCheck never mutates state.
+# pp_admin_client.py. Only read-only verbs are retried; application installation
+# POSTs are issued once so a lost response cannot trigger duplicate requests.
 _RETRY = Retry(
     total=3,
     backoff_factor=1,
@@ -232,3 +233,86 @@ class PowerPlatformClient:
         resp.raise_for_status()
         data = resp.json()
         return data.get("currencyAllocations", []) or []
+
+    def list_environment_application_packages(
+        self,
+        environment_id: str,
+    ) -> list | dict:
+        """List Marketplace application packages available to an environment.
+
+        MS Learn (documented tier):
+        https://learn.microsoft.com/rest/api/power-platform/appmanagement/applications/get-environment-application-package
+        """
+        return self._get_all(
+            f"/appmanagement/environments/{environment_id}/applicationPackages",
+            params={"api-version": API_VERSION},
+        )
+
+    def install_application_package(
+        self,
+        environment_id: str,
+        unique_name: str,
+    ) -> dict:
+        """Start installing a Marketplace application package.
+
+        MS Learn (documented tier):
+        https://learn.microsoft.com/rest/api/power-platform/appmanagement/applications/install-application-package
+        """
+        url = (
+            f"{PP_API_BASE}/appmanagement/environments/{environment_id}"
+            f"/applicationPackages/{unique_name}/install"
+        )
+        resp = _SESSION.post(
+            url,
+            headers={**self.headers, "Content-Type": "application/json"},
+            params={"api-version": API_VERSION},
+            json={"payloadValue": ""},
+            timeout=60,
+        )
+        if resp.status_code in (401, 403):
+            return {
+                "_error": "insufficient_permissions",
+                "_status": resp.status_code,
+            }
+        if resp.status_code not in (200, 202):
+            resp.raise_for_status()
+
+        data = resp.json() if resp.content else {}
+        operation_id = (
+            data.get("lastOperation", {}).get("operationId")
+            if isinstance(data, dict)
+            else None
+        )
+        return {
+            **data,
+            "_async": resp.status_code == 202,
+            "_operationId": operation_id,
+        }
+
+    def get_application_package_install_status(
+        self,
+        environment_id: str,
+        operation_id: str,
+    ) -> dict:
+        """Get progress for a Marketplace application installation.
+
+        MS Learn (documented tier):
+        https://learn.microsoft.com/rest/api/power-platform/appmanagement/applications/get-application-package-install-status
+        """
+        url = (
+            f"{PP_API_BASE}/appmanagement/environments/{environment_id}"
+            f"/operations/{operation_id}"
+        )
+        resp = _SESSION.get(
+            url,
+            headers=self.headers,
+            params={"api-version": API_VERSION},
+            timeout=60,
+        )
+        if resp.status_code in (401, 403):
+            return {
+                "_error": "insufficient_permissions",
+                "_status": resp.status_code,
+            }
+        resp.raise_for_status()
+        return resp.json()
