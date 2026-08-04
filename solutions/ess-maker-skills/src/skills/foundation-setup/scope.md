@@ -4,15 +4,120 @@
 Use `vscode_askQuestions` to collect one target environment and one or more ESS
 products.
 
-1. Run `python scripts/discover.py --list-environments`.
-2. Present the returned environments with name, URL, and platform type.
-3. Ask the maker to classify the selected target as Dev, Test, or Prod.
-4. Present these four products in this order:
+1. First ask how the maker wants to provide the environment:
+
+   ```json
+   [
+     {
+       "header": "Environment setup",
+       "question": "How would you like to choose your Power Platform environment?",
+       "options": [
+         {
+           "label": "Yes, list my environments",
+           "description": "Sign in and browse available environments"
+         },
+         {
+           "label": "No, I'll enter the URL manually",
+           "description": "I already know my environment URL"
+         },
+         {
+           "label": "Create a new environment",
+           "description": "Create an environment with Dataverse in the Power Platform admin center"
+         }
+       ],
+       "allowFreeformInput": false
+     }
+   ]
+   ```
+
+2. If the maker chooses to list environments:
+   - Run `python scripts/discover.py --list-environments`.
+   - Present the returned environments with name, URL, and platform type.
+   - Ask the maker to select one.
+   - Run `python scripts/discover.py --list-environments --select {NUMBER}`.
+   - Parse `SELECTED_ENV_JSON:` for the environment ID, name, type, and URL.
+
+3. If the maker chooses manual entry, ask:
+
+   ```json
+   [
+     {
+       "header": "Environment URL",
+       "question": "What's your Power Platform environment URL? Example: `https://yourorg.crm.dynamics.com`. Find it in the Power Platform admin center."
+     }
+   ]
+   ```
+
+   Strip the trailing slash from the supplied URL.
+
+4. If the maker chooses to create an environment, explain that a Power Platform
+   or Dynamics 365 administrator and at least 1 GB of available database
+   capacity are required. Then show:
+
+   1. Open the [Power Platform admin center](https://admin.powerplatform.microsoft.com).
+   2. Select `Manage` → `Environments`.
+   3. Select `New`.
+   4. Enter the environment name, region, type, and purpose.
+   5. Set `Add a Dataverse data store` to `Yes`.
+   6. Keep the release cycle standard by not enabling early features.
+   7. Select `Next`, then choose the language, unique URL, currency, and security
+      group.
+   8. Select `Save` and wait until provisioning finishes.
+   9. In the new environment, open `Settings` → `Users + permissions` →
+      `Users`, select the setup user, and assign both **Environment Maker** and
+      **System Administrator**.
+
+   Link to the
+   [Microsoft environment creation instructions](https://learn.microsoft.com/power-platform/admin/create-environment?tabs=new#create-an-environment-with-a-database).
+   After the maker confirms creation is complete, run
+   `python scripts/discover.py --list-environments`, present the returned
+   environments, ask them to select the newly created environment, and run
+   `python scripts/discover.py --list-environments --select {NUMBER}`. Parse
+   `SELECTED_ENV_JSON:` for its ID, name, type, and URL. Never assume creation
+   succeeded without rediscovering the environment.
+
+5. As soon as an environment URL is selected, entered, or obtained after
+   creation, verify the maker's
+   role in that environment:
+
+   ```text
+   python scripts/check_environment_roles.py --url "{ENVIRONMENT_URL}"
+   ```
+
+   Parse `ENVIRONMENT_ROLE_ACCESS_JSON:`:
+
+   - When `eligible` is true, continue immediately without asking for
+     confirmation.
+   - When `eligible` is false, do not lock the environment. Show:
+
+     Your account needs both the **Environment Maker** and **System
+     Administrator** roles in **{environment name}** to use this environment for
+     ESS setup. Missing roles: **{missing role names}**. Ask your Power Platform
+     administrator to assign the missing roles, or select a different
+     environment.
+
+     Then return to environment selection.
+   - If the command fails, show the exact error and stop. Do not treat an
+     unavailable role result as successful access.
+
+   The check must include roles assigned directly and through team membership.
+6. For manual entry, resolve the environment metadata without displaying the
+   tenant's environment list:
+
+   ```text
+   python scripts/discover.py \
+     --resolve-environment-url "{ENVIRONMENT_URL}"
+   ```
+
+   Parse `SELECTED_ENV_JSON:` for the environment ID, name, type, and URL. If
+   the URL cannot be resolved, show the exact error and stop.
+7. Ask the maker to classify the selected target as Dev, Test, or Prod.
+8. Present these four products in this order:
    - **DA: Employee Self-Service HR (Recommended)**
    - **DA: Employee Self-Service IT (Recommended)**
    - **CEA: Employee Self-Service HR**
    - **CEA: Employee Self-Service IT**
-5. Let the maker select one or more products. Persist the catalog IDs exactly as
+9. Let the maker select one or more products. Persist the catalog IDs exactly as
    `da.esshr`, `da.essit`, `cea.esshr`, and `cea.essit`.
 
 Do not collapse the choices into HR, IT, or both. DA and CEA are separate

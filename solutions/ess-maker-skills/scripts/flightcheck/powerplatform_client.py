@@ -163,6 +163,13 @@ class PowerPlatformClient:
             params = None
         return items
 
+    def list_environments_for_user(self) -> list | dict:
+        """List environments available to the authenticated user."""
+        return self._get_all(
+            "/environmentmanagement/environments",
+            params={"api-version": API_VERSION},
+        )
+
     def list_billing_policies(self) -> list | dict:
         """List all billing policies for the tenant.
 

@@ -78,6 +78,24 @@ class TestListEnvironments:
 
         assert dv_envs[0]["instanceUrl"] == "https://org.crm.dynamics.com"
 
+    def test_finds_environment_by_url_hostname(self):
+        import list_environments
+
+        environments = [
+            {
+                "id": "env-001",
+                "displayName": "Target",
+                "instanceUrl": "https://org.crm.dynamics.com",
+            },
+        ]
+
+        selected = list_environments.find_environment_by_url(
+            environments,
+            "https://ORG.crm.dynamics.com/",
+        )
+
+        assert selected == environments[0]
+
     @patch("list_environments.PPAdminClient")
     def test_exits_on_permission_error(self, mock_cls):
         """get_environments returning an error dict causes sys.exit."""
@@ -269,6 +287,98 @@ class TestDiscoverListEnvironmentsMode:
         with pytest.raises(SystemExit) as exc_info:
             discover.main()
         assert exc_info.value.code == 1
+
+    @patch("list_environments.PowerPlatformClient")
+    def test_resolve_environment_url_outputs_selected_json(
+        self,
+        mock_cls,
+        capsys,
+        monkeypatch,
+    ):
+        mock_instance = mock_cls.return_value
+        mock_instance.authenticate.return_value = "token"
+        monkeypatch.setattr(
+            "list_environments.discover_tenant",
+            lambda _url: "tenant-id",
+        )
+        mock_instance.list_environments_for_user.return_value = [
+            {
+                "id": "env-000",
+                "displayName": "Test Environment 0",
+                "type": "Sandbox",
+                "state": "Ready",
+                "url": "https://org000.crm.dynamics.com/",
+            },
+            {
+                "id": "env-001",
+                "displayName": "Test Environment 1",
+                "type": "Sandbox",
+                "state": "Ready",
+                "url": "https://org001.crm.dynamics.com/",
+            },
+        ]
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "discover.py",
+                "--resolve-environment-url",
+                "https://org001.crm.dynamics.com/",
+            ],
+        )
+
+        import discover
+
+        discover.main()
+
+        output = capsys.readouterr().out
+        assert "Environment Name" not in output
+        json_line = [
+            line
+            for line in output.splitlines()
+            if line.startswith("SELECTED_ENV_JSON:")
+        ][0]
+        payload = json.loads(json_line.split("SELECTED_ENV_JSON:", 1)[1])
+        assert payload["id"] == "env-001"
+        assert payload["displayName"] == "Test Environment 1"
+
+    @patch("list_environments.PowerPlatformClient")
+    def test_resolve_environment_url_rejects_unknown_url(
+        self,
+        mock_cls,
+        capsys,
+        monkeypatch,
+    ):
+        mock_instance = mock_cls.return_value
+        mock_instance.authenticate.return_value = "token"
+        monkeypatch.setattr(
+            "list_environments.discover_tenant",
+            lambda _url: "tenant-id",
+        )
+        mock_instance.list_environments_for_user.return_value = [
+            {
+                "id": "env-000",
+                "displayName": "Test Environment 0",
+                "type": "Sandbox",
+                "state": "Ready",
+                "domainName": "org000.crm.dynamics.com",
+            },
+        ]
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "discover.py",
+                "--resolve-environment-url",
+                "https://unknown.crm.dynamics.com",
+            ],
+        )
+
+        import discover
+
+        with pytest.raises(SystemExit) as exc_info:
+            discover.main()
+
+        assert exc_info.value.code == 1
+        assert "did not match" in capsys.readouterr().out
 
 
 class TestEssAgentInventory:

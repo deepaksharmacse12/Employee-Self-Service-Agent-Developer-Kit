@@ -117,9 +117,26 @@ def main():
                         help="Power Platform environment URL")
     parser.add_argument("--list-environments", action="store_true",
                         help="List all environments in the tenant (no URL needed)")
+    parser.add_argument(
+        "--resolve-environment-url",
+        help="Resolve one environment URL to its Power Platform metadata",
+    )
     parser.add_argument("--select", type=int, default=None,
                         help="Select agent by number and output JSON")
     args = parser.parse_args()
+
+    if args.resolve_environment_url:
+        from list_environments import resolve_environment_for_user
+
+        selected = resolve_environment_for_user(args.resolve_environment_url)
+        if selected is None:
+            print(
+                "ERROR: The provided URL did not match a Dataverse-linked "
+                "Power Platform environment available to the signed-in account."
+            )
+            sys.exit(1)
+        print(f"SELECTED_ENV_JSON:{json.dumps(selected)}")
+        return
 
     # --- Environment listing mode ---
     if args.list_environments:

@@ -51,13 +51,17 @@ _UI_FORMATTING_GUIDELINES = (
 _WORKDAY = _SOLUTION / "src" / "skills" / "setup" / "SKILL.md"
 _CONNECT_STEP1 = _SOLUTION / "src" / "skills" / "connect" / "step1.md"
 _INSTRUCTIONS = _SOLUTION / ".github" / "copilot-instructions.md"
+_SETUP_PROMPT = _SOLUTION / ".github" / "prompts" / "setup.prompt.md"
 _PATH_RE = re.compile(r"`(src/skills/[^`]+?\.md)`")
 
 
 def test_public_setup_routes_to_foundation_module() -> None:
     instructions = _INSTRUCTIONS.read_text(encoding="utf-8")
+    prompt = _SETUP_PROMPT.read_text(encoding="utf-8")
 
     assert "src/skills/foundation-setup/SKILL.md" in instructions
+    assert "src/skills/foundation-setup/SKILL.md" in prompt
+    assert "Do not route directly to `src/skills/onboarding/SKILL.md`" in prompt
 
 
 def test_workday_routing_remains_unchanged() -> None:
@@ -102,6 +106,58 @@ def test_foundation_does_not_prompt_for_non_decisions() -> None:
     assert "ask the maker to confirm resuming" not in router
     assert "Picking up at:" not in router
     assert "Confirm that this run covers" not in scope
+
+
+def test_selected_environment_requires_approved_maker_role() -> None:
+    scope = _SCOPE.read_text(encoding="utf-8")
+    normalized = " ".join(scope.split())
+
+    assert "scripts/check_environment_roles.py" in scope
+    assert "ENVIRONMENT_ROLE_ACCESS_JSON:" in scope
+    assert "When `eligible` is true, continue immediately" in scope
+    assert "do not lock the environment" in scope
+    assert (
+        "both the **Environment Maker** and **System Administrator** roles"
+        in normalized
+    )
+    assert "Missing roles: **{missing role names}**." in normalized
+    assert "directly and through team membership" in scope
+
+
+def test_scope_asks_how_to_provide_environment_before_discovery() -> None:
+    scope = _SCOPE.read_text(encoding="utf-8")
+
+    prompt_index = scope.index(
+        "How would you like to choose your Power Platform environment?"
+    )
+    list_index = scope.index("python scripts/discover.py --list-environments")
+
+    assert prompt_index < list_index
+    assert "Yes, list my environments" in scope
+    assert "No, I'll enter the URL manually" in scope
+    assert "Create a new environment" in scope
+    assert "What's your Power Platform environment URL?" in scope
+    assert "--resolve-environment-url" in scope
+
+
+def test_scope_guides_and_verifies_new_environment_creation() -> None:
+    scope = _SCOPE.read_text(encoding="utf-8")
+    normalized = " ".join(scope.split())
+
+    assert "Power Platform or Dynamics 365 administrator" in normalized
+    assert "at least 1 GB of available database capacity" in normalized
+    assert "Set `Add a Dataverse data store` to `Yes`." in scope
+    assert "Keep the release cycle standard" in scope
+    assert (
+        "assign both **Environment Maker** and **System Administrator**"
+        in normalized
+    )
+    assert "create-an-environment-with-a-database" in scope
+    assert "Never assume creation succeeded" in normalized
+    assert (
+        scope.index("Create a new environment")
+        < scope.index("scripts/check_environment_roles.py")
+    )
 
 
 def test_dataverse_mcp_enablement_is_checked_automatically() -> None:
