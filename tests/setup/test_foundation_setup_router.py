@@ -25,6 +25,15 @@ _ONBOARDING_STEP1 = _SOLUTION / "src" / "skills" / "onboarding" / "step1.md"
 _ONBOARDING_STEP1B = (
     _SOLUTION / "src" / "skills" / "onboarding" / "step1b.md"
 )
+_ONBOARDING_STEP2 = (
+    _SOLUTION / "src" / "skills" / "onboarding" / "step2.md"
+)
+_ONBOARDING_TASKS = (
+    _SOLUTION / "src" / "skills" / "onboarding" / "tasks.md"
+)
+_ONBOARDING_STEP3 = (
+    _SOLUTION / "src" / "skills" / "onboarding" / "step3-flightcheck.md"
+)
 _ONBOARDING = _SOLUTION / "src" / "skills" / "onboarding" / "SKILL.md"
 _INSTALL_STARTERS = (
     _SOLUTION
@@ -155,6 +164,26 @@ def test_onboarding_offers_install_or_customize_for_existing_agents() -> None:
     assert "setup_state.py add-product" in discovery
     assert "Installed: **{agent 1 name}**; **{agent 2 name}**" in discovery
     assert "Do not render installed agent names as plain text." in normalized
+
+
+def test_onboarding_does_not_offer_legacy_optional_readiness_check() -> None:
+    router = _ONBOARDING.read_text(encoding="utf-8")
+    normalized_router = " ".join(router.split())
+    discovery = _ONBOARDING_STEP1B.read_text(encoding="utf-8")
+    extraction = _ONBOARDING_STEP2.read_text(encoding="utf-8")
+    tasks = _ONBOARDING_TASKS.read_text(encoding="utf-8")
+
+    assert "delete only that row" in router
+    assert (
+        "legacy optional FlightCheck is no longer part"
+        in normalized_router
+    )
+    assert "Readiness check (optional)" not in router
+    assert "Readiness check (optional)" not in discovery
+    assert "Readiness check (optional)" not in extraction
+    assert "Readiness check" not in tasks
+    assert "pre-deployment readiness check when needed" in extraction
+    assert not _ONBOARDING_STEP3.exists()
 
 
 def test_onboarding_guidance_uses_precise_markdown_formatting() -> None:

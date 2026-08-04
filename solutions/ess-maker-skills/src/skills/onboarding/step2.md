@@ -47,7 +47,6 @@ work with your environment going forward.
 | 2 | Agent discovered | ✅ |
 | 3 | Agent extracted | ✅ |
 | 4 | MCP server started | ⬜ |
-| 5 | Readiness check (optional) | ⬜ |
 
 **End message.**
 
@@ -87,10 +86,18 @@ Update `workspace/onboarding/tasks.md` — change step 4 from `- [ ]` to `- [x]`
 | 2 | Agent discovered | ✅ |
 | 3 | Agent extracted | ✅ |
 | 4 | MCP server started | ✅ |
-| 5 | Readiness check (optional) | ⬜ |
 
-One optional step left — a quick environment readiness check.
+You can now customize your agent or connect an integration.
+
+| Command | What it does |
+|---------|-------------|
+| `/create` | Create a new topic or workflow |
+| `/connect` | Set up ServiceNow or Workday integration |
+| `/scan` | Scan for compile errors |
+| `/flightcheck` | Run a pre-deployment readiness check when needed |
+| `/menu` | See all commands |
 
 **End message.**
 
-Now read `src/skills/onboarding/step3-flightcheck.md` and follow it.
+Onboarding is complete. Return to
+`src/skills/foundation-setup/SKILL.md` so it can show the completed handoff.

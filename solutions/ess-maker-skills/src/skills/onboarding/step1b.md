@@ -141,7 +141,6 @@ Update `workspace/onboarding/tasks.md` — change both step 1 and step 2 from
 | 2 | Agent discovered | ✅ |
 | 3 | Agent extracted | ⬜ |
 | 4 | MCP server started | ⬜ |
-| 5 | Readiness check (optional) | ⬜ |
 
 Extracting your agent now. This takes a few seconds...
 
