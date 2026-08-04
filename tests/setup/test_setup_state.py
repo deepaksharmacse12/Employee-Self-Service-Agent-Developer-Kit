@@ -21,6 +21,7 @@ from setup_state import (
     SetupStateService,
     SetupWorkflow,
     StepStatus,
+    ValidationRecord,
     ValidationMode,
     ValidationStatus,
 )
@@ -376,6 +377,59 @@ def test_alm_solution_metadata_cannot_be_incomplete() -> None:
             publisher_prefix="",
             version="1.0.0.0",
         )
+
+
+def test_adding_product_reopens_only_dependent_foundation_steps() -> None:
+    state = SetupState()
+    state.environment = {"locked": True}
+    state.selected_products = [ProductId.DA_ESSHR]
+    state.products[ProductId.DA_ESSHR].selected = True
+    state.products[ProductId.DA_ESSHR].installation_status = (
+        InstallationStatus.BOUND
+    )
+    state.products[ProductId.DA_ESSHR].ready = True
+    for record in state.steps.values():
+        record.state = StepStatus.DONE
+    state.active_step = "SETUP-07"
+    state.connect_ready = True
+    state.completed_at = "2026-08-04T00:00:00+00:00"
+    state.validations["SETUP-INSTALL-001"] = ValidationRecord(
+        check_id="SETUP-INSTALL-001",
+        status=ValidationStatus.PASS,
+        mode=ValidationMode.AUTOMATED,
+    )
+    state.validations["SETUP-FINAL-001"] = ValidationRecord(
+        check_id="SETUP-FINAL-001",
+        status=ValidationStatus.PASS,
+        mode=ValidationMode.AUTOMATED,
+    )
+
+    SetupWorkflow.add_products(state, (ProductId.CEA_ESSIT,))
+
+    assert state.selected_products == ["da.esshr", "cea.essit"]
+    assert state.products["da.esshr"].installation_status == "bound"
+    assert state.products["da.esshr"].ready is True
+    assert state.products["cea.essit"].installation_status == "pending"
+    assert state.steps["SETUP-04"].state == "done"
+    assert state.steps["SETUP-05"].state == "pending"
+    assert state.steps["SETUP-06"].state == "pending"
+    assert state.steps["SETUP-07"].state == "pending"
+    assert state.active_step == "SETUP-05"
+    assert state.connect_ready is False
+    assert state.completed_at is None
+    assert "SETUP-INSTALL-001" not in state.validations
+    assert "SETUP-FINAL-001" not in state.validations
+    assert state.validations["SETUP-SCOPE-002"].evidence[
+        "scope_extended"
+    ] is True
+
+
+def test_product_cannot_be_added_before_foundation_completes() -> None:
+    state = SetupState()
+    state.environment = {"locked": True}
+
+    with pytest.raises(SetupStateError, match="only after foundation"):
+        SetupWorkflow.add_products(state, (ProductId.DA_ESSHR,))
 
 
 def test_finalize_requires_all_prior_steps() -> None:

@@ -270,6 +270,76 @@ class TestDiscoverListEnvironmentsMode:
             discover.main()
         assert exc_info.value.code == 1
 
+
+class TestEssAgentInventory:
+    def test_excludes_installed_product_and_unrelated_bots(self):
+        import discover
+        import install_ess_agent
+
+        inventory = discover.build_ess_agent_inventory(
+            [
+                {
+                    "botid": "ess",
+                    "name": "ESS HR",
+                    "schemaname": "msdyn_CopilotForEmployeeSelfServiceDAHR",
+                    "ismanaged": True,
+                },
+                {
+                    "botid": "other",
+                    "name": "Unrelated",
+                    "schemaname": "new_unrelated",
+                    "ismanaged": False,
+                },
+            ],
+            install_ess_agent.load_installation_config(),
+        )
+
+        assert [agent["botid"] for agent in inventory["agents"]] == ["ess"]
+        assert inventory["installedInstallationKeys"] == ["da.hr"]
+        assert [
+            option["configKey"]
+            for option in inventory["availableInstallations"]
+        ] == ["da.essit", "cea.esshr", "cea.essit"]
+
+    @patch("discover.load_installation_config")
+    @patch("discover.discover_agents")
+    @patch("discover.authenticate")
+    def test_cli_emits_inventory_for_onboarding_choice(
+        self,
+        authenticate,
+        discover_agents,
+        load_config,
+        capsys,
+        monkeypatch,
+    ):
+        import discover
+        import install_ess_agent
+
+        authenticate.return_value = "token"
+        load_config.return_value = install_ess_agent.load_installation_config()
+        discover_agents.return_value = [{
+            "botid": "ess",
+            "name": "ESS HR",
+            "schemaname": "msdyn_CopilotForEmployeeSelfServiceDAHR",
+            "ismanaged": True,
+        }]
+        monkeypatch.setattr(
+            "sys.argv",
+            ["discover.py", "--url", "https://org.crm.dynamics.com"],
+        )
+
+        discover.main()
+
+        output = capsys.readouterr().out
+        marker = next(
+            line
+            for line in output.splitlines()
+            if line.startswith("ESS_AGENT_DISCOVERY_JSON:")
+        )
+        payload = json.loads(marker.split(":", 1)[1])
+        assert len(payload["agents"]) == 1
+        assert len(payload["availableInstallations"]) == 3
+
     def test_url_required_without_list_environments(self, monkeypatch):
         """Without --list-environments, --url is required."""
         monkeypatch.setattr("sys.argv", ["discover.py"])

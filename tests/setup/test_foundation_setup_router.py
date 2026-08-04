@@ -19,6 +19,9 @@ _PREREQUISITES = (
     _SOLUTION / "src" / "skills" / "foundation-setup" / "prerequisites.md"
 )
 _ONBOARDING_STEP1 = _SOLUTION / "src" / "skills" / "onboarding" / "step1.md"
+_ONBOARDING_STEP1B = (
+    _SOLUTION / "src" / "skills" / "onboarding" / "step1b.md"
+)
 _WORKDAY = _SOLUTION / "src" / "skills" / "setup" / "SKILL.md"
 _CONNECT_STEP1 = _SOLUTION / "src" / "skills" / "connect" / "step1.md"
 _INSTRUCTIONS = _SOLUTION / ".github" / "copilot-instructions.md"
@@ -91,3 +94,11 @@ def test_onboarding_reuses_locked_foundation_environment() -> None:
     assert "python scripts/setup_state.py show" in onboarding
     assert "environment.tenant_endpoint" in onboarding
     assert "Do not list environments" in onboarding
+
+
+def test_onboarding_offers_install_or_customize_for_existing_agents() -> None:
+    discovery = _ONBOARDING_STEP1B.read_text(encoding="utf-8")
+
+    assert "install another ESS agent or customize" in discovery
+    assert "Customize an installed agent" in discovery
+    assert "setup_state.py add-product" in discovery

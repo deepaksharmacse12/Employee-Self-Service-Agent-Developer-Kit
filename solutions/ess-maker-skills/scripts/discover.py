@@ -32,6 +32,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from auth import authenticate, query_all
 from http_errors import APIError
+from install_ess_agent import (
+    build_installation_options,
+    load_installation_config,
+)
 
 
 def discover_agents(env_url, token):
@@ -50,6 +54,41 @@ def discover_agents(env_url, token):
             "ismanaged": r.get("ismanaged", False),
         })
     return agents
+
+
+def build_ess_agent_inventory(agents, config):
+    """Classify supported ESS bots and list products that remain installable."""
+    options = build_installation_options(config)
+    options_by_schema = {
+        option["schemaName"].casefold(): option
+        for option in options
+    }
+    ess_agents = []
+    installed_keys = set()
+
+    for agent in agents:
+        schema_name = agent.get("schemaname")
+        if not isinstance(schema_name, str):
+            continue
+        option = options_by_schema.get(schema_name.casefold())
+        if option is None:
+            continue
+        ess_agents.append({
+            **agent,
+            "installationKey": option["key"],
+            "configKey": option["configKey"],
+        })
+        installed_keys.add(option["key"])
+
+    return {
+        "agents": ess_agents,
+        "installedInstallationKeys": sorted(installed_keys),
+        "availableInstallations": [
+            option
+            for option in options
+            if option["key"] not in installed_keys
+        ],
+    }
 
 
 def print_agent_table(agents):
@@ -126,17 +165,25 @@ def main():
 
     print("Discovering agents...")
     try:
-        agents = discover_agents(env_url, token)
+        inventory = build_ess_agent_inventory(
+            discover_agents(env_url, token),
+            load_installation_config(),
+        )
     except APIError as e:
         print(e.format_for_terminal())
         sys.exit(1)
-
-    if not agents:
-        print("No agents found in this environment.")
-        print("Make sure your ESS agent is installed in Copilot Studio.")
+    except (OSError, ValueError) as e:
+        print(f"ERROR: Could not load ESS installation catalog: {e}")
         sys.exit(1)
 
-    print(f"Found {len(agents)} agent(s):")
+    print(f"ESS_AGENT_DISCOVERY_JSON:{json.dumps(inventory)}")
+    agents = inventory["agents"]
+
+    if not agents:
+        print("No supported ESS agents found in this environment.")
+        sys.exit(1)
+
+    print(f"Found {len(agents)} supported ESS agent(s):")
     print_agent_table(agents)
 
     if args.select is not None:

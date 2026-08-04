@@ -794,6 +794,66 @@ class SetupWorkflow:
         state.updated_at = state.alm["updated_at"]
 
     @staticmethod
+    def add_products(
+        state: SetupState,
+        product_ids: tuple[ProductId, ...],
+    ) -> None:
+        """Extend a completed foundation scope and reopen dependent steps."""
+        if not state.environment.get("locked"):
+            raise SetupStateError(
+                "Cannot add products before the environment is locked"
+            )
+        if not state.connect_ready or not SetupWorkflow.is_complete(state):
+            raise SetupStateError(
+                "Products can be added only after foundation setup is complete"
+            )
+        requested = {ProductId(product_id).value for product_id in product_ids}
+        additions = requested - set(state.selected_products)
+        if not additions:
+            return
+
+        state.selected_products = [
+            product_id.value
+            for product_id in ProductId
+            if (
+                product_id.value in state.selected_products
+                or product_id.value in additions
+            )
+        ]
+        for product_id in additions:
+            record = state.products[product_id]
+            record.selected = True
+            record.installation_status = InstallationStatus.PENDING
+            record.ready = False
+            record.failure_cause = None
+            record.updated_at = utc_now()
+
+        for step_id in ("SETUP-05", "SETUP-06", "SETUP-07"):
+            state.steps[step_id] = StepRecord()
+        for check_id in tuple(state.validations):
+            if check_id.startswith((
+                "SETUP-INSTALL-",
+                "SETUP-READINESS-",
+                "SETUP-HANDOFF-",
+                "SETUP-FINAL-",
+            )):
+                del state.validations[check_id]
+        SetupWorkflow.record_validation(
+            state,
+            "SETUP-SCOPE-002",
+            ValidationStatus.PASS,
+            ValidationMode.AUTOMATED,
+            {
+                "selected_products": state.selected_products,
+                "scope_extended": True,
+            },
+            [],
+        )
+        state.connect_ready = False
+        state.completed_at = None
+        SetupWorkflow.refresh_active_step(state)
+
+    @staticmethod
     def is_complete(state: SetupState) -> bool:
         return all(
             record.state == StepStatus.DONE
@@ -1056,6 +1116,15 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
     )
 
+    add_product = commands.add_parser("add-product")
+    add_product.add_argument(
+        "--product",
+        required=True,
+        action="append",
+        choices=[item.value for item in ProductId],
+        dest="products",
+    )
+
     commands.add_parser("finalize")
     return parser
 
@@ -1132,6 +1201,12 @@ def main() -> int:
                 state,
                 ProductId(args.product),
                 args.ready,
+            )
+            service.save(state)
+        elif args.command == "add-product":
+            SetupWorkflow.add_products(
+                state,
+                tuple(ProductId(product_id) for product_id in args.products),
             )
             service.save(state)
         elif args.command == "finalize":
