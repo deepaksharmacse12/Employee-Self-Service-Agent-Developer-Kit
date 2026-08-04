@@ -15,6 +15,10 @@ _FOUNDATION = (
     _SOLUTION / "src" / "skills" / "foundation-setup" / "SKILL.md"
 )
 _SCOPE = _SOLUTION / "src" / "skills" / "foundation-setup" / "scope.md"
+_PREREQUISITES = (
+    _SOLUTION / "src" / "skills" / "foundation-setup" / "prerequisites.md"
+)
+_ONBOARDING_STEP1 = _SOLUTION / "src" / "skills" / "onboarding" / "step1.md"
 _WORKDAY = _SOLUTION / "src" / "skills" / "setup" / "SKILL.md"
 _CONNECT_STEP1 = _SOLUTION / "src" / "skills" / "connect" / "step1.md"
 _INSTRUCTIONS = _SOLUTION / ".github" / "copilot-instructions.md"
@@ -69,3 +73,21 @@ def test_foundation_does_not_prompt_for_non_decisions() -> None:
     assert "ask the maker to confirm resuming" not in router
     assert "Picking up at:" not in router
     assert "Confirm that this run covers" not in scope
+
+
+def test_dataverse_mcp_enablement_is_checked_automatically() -> None:
+    prerequisites = _PREREQUISITES.read_text(encoding="utf-8")
+    onboarding = _ONBOARDING_STEP1.read_text(encoding="utf-8")
+
+    assert "scripts/check_dataverse_mcp.py" in prerequisites
+    assert "scripts/check_dataverse_mcp.py" in onboarding
+    assert "without asking the maker anything" in prerequisites
+    assert "Type **done**" not in onboarding
+
+
+def test_onboarding_reuses_locked_foundation_environment() -> None:
+    onboarding = _ONBOARDING_STEP1.read_text(encoding="utf-8")
+
+    assert "python scripts/setup_state.py show" in onboarding
+    assert "environment.tenant_endpoint" in onboarding
+    assert "Do not list environments" in onboarding

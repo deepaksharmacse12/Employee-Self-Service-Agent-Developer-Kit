@@ -5,6 +5,25 @@ Do not rephrase, add commentary, or tell the user what tools you are calling.
 
 ---
 
+## 0.9 — Reuse the foundation environment
+
+Run:
+
+```text
+python scripts/setup_state.py show
+```
+
+Parse the printed state. If `connect_ready` is true and `environment.locked` is
+true:
+
+1. Set ENV_URL to `environment.tenant_endpoint`, stripping any trailing slash.
+2. Do not list environments, ask how to provide an environment, or ask the
+   maker to select it again.
+3. Continue directly to section 1.2.
+
+Only continue to section 1.0 when no completed foundation state with a locked
+environment exists.
+
 ## 1.0 — Ask how to provide the environment
 
 Use the `vscode_askQuestions` tool:
@@ -133,24 +152,25 @@ Create `.vscode/mcp.json` with this exact content (replace the entire
 }
 ```
 
-Then immediately show:
+Check the server-side Allowed MCP Client record:
 
-**Message:**
+```text
+python scripts/check_dataverse_mcp.py --url "{ENV_URL}"
+```
 
-Done. Now there's a one-time admin step to enable the Dataverse connector:
+Parse `DATAVERSE_MCP_STATUS_JSON:`:
 
-1. Go to [Power Platform admin center](https://admin.powerplatform.microsoft.com/environments)
-   → your environment → **Settings** → **Product** → **Features**
-2. Turn on **"Allow MCP clients to interact with Dataverse MCP server
-   (GA version)"** and click **Save**
-3. Click **"Go to Advanced Settings"** → find **"Microsoft GitHub Copilot"**
-   → set **Is Enabled** to **Yes** → **Save & Close**
-
-Type **done** when that's set up, or **skip** if it's already enabled.
-
-**End message.**
-
-Wait for the user.
+- If `status` is `enabled`, continue immediately to section 1.3 without asking
+  the user.
+- If `status` is `disabled` or `missing`, show the Power Platform admin center
+  steps below and ask only whether to **Check again**:
+  1. Open the environment → **Settings** → **Product** → **Features**.
+  2. Turn on **Allow MCP clients to interact with Dataverse MCP server**.
+  3. Open **Advanced Settings** → **Microsoft GitHub Copilot** and set
+     **Is Enabled** to **Yes**.
+  4. Save, then choose **Check again**.
+- If the command fails, show its exact error and stop. Do not ask the user to
+  attest that the setting is enabled.
 
 ## 1.3 — Proceed to agent discovery
 

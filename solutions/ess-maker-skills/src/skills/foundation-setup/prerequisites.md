@@ -27,6 +27,29 @@ in both Power Platform and Copilot Studio. Record:
 Use `mode=automated` when the command proves the result; otherwise require explicit
 manual attestation after showing the exact portal verification steps.
 
+## Dataverse MCP client
+
+Check the documented Allowed MCP Client record for Microsoft GitHub Copilot:
+
+```text
+python scripts/check_dataverse_mcp.py --url "{ENVIRONMENT_URL}"
+```
+
+Parse `DATAVERSE_MCP_STATUS_JSON:`:
+
+- `enabled`: record `SETUP-PREREQ-MCP-001` as `pass` with the application ID,
+  record ID, and active/enabled flags as automated evidence. Continue
+  immediately without asking the maker anything.
+- `disabled` or `missing`: record `SETUP-PREREQ-MCP-001` as `fail`, show the
+  exact Power Platform admin center steps to turn on **Allow MCP clients to
+  interact with Dataverse MCP server** and enable **Microsoft GitHub Copilot**,
+  then offer **Check again**. Rerun the command when selected.
+- command failure: show the exact error and stop. Do not replace an unavailable
+  API result with manual attestation.
+
+The setup must not ask whether MCP is already enabled. Dataverse is the source
+of truth.
+
 ## Capacity and billing
 
 Run:
@@ -57,7 +80,7 @@ If any mandatory prerequisite failed or remains unknown:
 2. Set `SETUP-02` to `blocked` with one normalized cause per missing item.
 3. Show the missing items and stop.
 
-If all four prerequisite checks pass, record `SETUP-PREREQ-BLOCK-001` as `pass`
+If all five prerequisite checks pass, record `SETUP-PREREQ-BLOCK-001` as `pass`
 with evidence that no mandatory item remains, then complete the step:
 
 ```text

@@ -53,6 +53,7 @@ def test_step_updates_advance_to_first_incomplete_step() -> None:
         "SETUP-PREREQ-DV-001",
         "SETUP-PREREQ-CAP-001",
         "SETUP-PREREQ-GOV-001",
+        "SETUP-PREREQ-MCP-001",
         "SETUP-PREREQ-BLOCK-001",
     ):
         SetupWorkflow.record_validation(
@@ -196,6 +197,7 @@ def test_steps_cannot_complete_out_of_order() -> None:
         "SETUP-PREREQ-DV-001",
         "SETUP-PREREQ-CAP-001",
         "SETUP-PREREQ-GOV-001",
+        "SETUP-PREREQ-MCP-001",
         "SETUP-PREREQ-BLOCK-001",
     ):
         SetupWorkflow.record_validation(
@@ -403,6 +405,7 @@ def test_finalize_marks_connect_ready() -> None:
             "SETUP-PREREQ-DV-001",
             "SETUP-PREREQ-CAP-001",
             "SETUP-PREREQ-GOV-001",
+            "SETUP-PREREQ-MCP-001",
             "SETUP-PREREQ-BLOCK-001",
         ),
         (

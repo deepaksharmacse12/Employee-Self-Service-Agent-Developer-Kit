@@ -41,8 +41,10 @@ If `connect_ready` is true, inspect `.local/config.json`:
 - If its `setup` value is `"complete"`, show that foundation and workspace setup
   are complete and direct the maker to `/connect`.
 - Otherwise read `src/skills/onboarding/SKILL.md` and follow it to initialize the
-  local ADK workspace from the installed starter. When onboarding completes, return
-  here and show the completed handoff.
+  local ADK workspace from the installed starter. Onboarding must reuse
+  `environment.tenant_endpoint` from this locked foundation state and must not
+  ask the maker to select the environment again. When onboarding completes,
+  return here and show the completed handoff.
 
 Render the checklist from `src/skills/foundation-setup/tasks.md` using the states returned by
 the command:
@@ -57,7 +59,7 @@ the command:
 Here's your ESS foundation setup:
 
 - {marker} Choose and lock the target environment and ESS products
-- {marker} Confirm access, capacity, billing, and governance prerequisites
+- {marker} Confirm access, MCP, capacity, billing, and governance prerequisites
 - {marker} Verify the environment and Dataverse
 - {marker} Configure the preferred unmanaged solution
 - {marker} Install and bind the selected ESS products
