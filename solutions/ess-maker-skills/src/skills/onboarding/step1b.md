@@ -162,14 +162,18 @@ again**. Rerun step 1.4 when selected; do not reinstall any package.
 
 The discovery script couldn't connect. Let's troubleshoot:
 
-1. Check that the environment URL is correct
-   (`https://yourorg.crm.dynamics.com`, not `.api.` or `make.powerapps.com`).
-2. Confirm the admin steps: MCP feature flag **ON** in Power Platform admin
-   center, and **Microsoft GitHub Copilot** client **enabled** in Advanced
-   Settings.
-3. Make sure your account has read access to the environment.
+1. Confirm the environment URL is
+   `https://yourorg.crm.dynamics.com`—not an `.api.` URL or
+   `make.powerapps.com`.
+2. Open [Power Platform admin center](https://admin.powerplatform.microsoft.com/environments).
+3. Select the `{ENVIRONMENT_NAME}` environment.
+4. Open `Settings` → `Product` → `Features` and confirm
+   **Dataverse MCP** is on.
+5. Open `Advanced Settings` → **Microsoft GitHub Copilot** and confirm
+   `Is Enabled` is `Yes`.
+6. Confirm your account has read access to `{ENVIRONMENT_NAME}`.
 
-Type **retry** when ready, or run `/setup` again after fixing.
+Type `retry` when ready, or run `/setup` again after fixing.
 
 **End message.**
 

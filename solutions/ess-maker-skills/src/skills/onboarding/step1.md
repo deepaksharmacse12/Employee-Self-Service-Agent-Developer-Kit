@@ -123,7 +123,7 @@ Use the `vscode_askQuestions` tool:
 [
   {
     "header": "Environment URL",
-    "question": "What's your Power Platform environment URL? (e.g. https://yourorg.crm.dynamics.com — find it in the Power Platform admin center)"
+    "question": "What's your Power Platform environment URL? Example: `https://yourorg.crm.dynamics.com`. Find it in the Power Platform admin center."
   }
 ]
 ```
@@ -164,11 +164,13 @@ Parse `DATAVERSE_MCP_STATUS_JSON:`:
   the user.
 - If `status` is `disabled` or `missing`, show the Power Platform admin center
   steps below and ask only whether to **Check again**:
-  1. Open the environment → **Settings** → **Product** → **Features**.
-  2. Turn on **Allow MCP clients to interact with Dataverse MCP server**.
-  3. Open **Advanced Settings** → **Microsoft GitHub Copilot** and set
-     **Is Enabled** to **Yes**.
-  4. Save, then choose **Check again**.
+  1. Open [Power Platform admin center](https://admin.powerplatform.microsoft.com/environments).
+  2. Select the `{ENVIRONMENT_NAME}` environment.
+  3. Open `Settings` → `Product` → `Features`.
+  4. Turn on **Allow MCP clients to interact with Dataverse MCP server**.
+  5. Open `Advanced Settings`.
+  6. Open **Microsoft GitHub Copilot** and set `Is Enabled` to `Yes`.
+  7. Choose `Save & Close`, then select **Check again** here.
 - If the command fails, show its exact error and stop. Do not ask the user to
   attest that the setting is enabled.
 

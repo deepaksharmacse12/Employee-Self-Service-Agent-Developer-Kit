@@ -59,7 +59,7 @@
         "displayName": "Microsoft 365 Self-Help",
         "connectorApiName": "shared_alchemy",
         "referenceLogicalName": "msdyn_copilotforemployeeselfservicedait.shared_alchemy.shared-alchemy-8262076a-e778-450b-8a35-5ae815712319",
-        "creationGuidance": "In make.powerapps.com, select the target environment, open Connections, choose New connection, search for Microsoft 365 Self-Help, and create the connection."
+        "creationGuidance": "Open [Power Apps](https://make.powerapps.com), select the configured environment, open `Connections`, choose `New connection`, and create a **Microsoft 365 Self-Help** connection."
       },
       "catalogMatch": {
         "parentPackage": "Employee Self-Service IT",
@@ -96,7 +96,7 @@
         "displayName": "Microsoft 365 Self-Help",
         "connectorApiName": "shared_alchemy",
         "referenceLogicalName": "msdyn_copilotforemployeeselfserviceit.shared_alchemy.shared-alchemy-8262076a-e778-450b-8a35-5ae815712319",
-        "creationGuidance": "In make.powerapps.com, select the target environment, open Connections, choose New connection, search for Microsoft 365 Self-Help, and create the connection."
+        "creationGuidance": "Open [Power Apps](https://make.powerapps.com), select the configured environment, open `Connections`, choose `New connection`, and create a **Microsoft 365 Self-Help** connection."
       },
       "catalogMatch": {
         "parentPackage": "Employee Self-Service IT",

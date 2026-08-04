@@ -33,10 +33,18 @@ Parse `ESS_CONNECTION_PREFLIGHT_JSON:`:
 - `ready`: retain `selectedConnection.name` and mark the product `ready`.
 - `selection-required`: ask the maker to select one returned connected
   connection, retain its stable `name`, then mark the product `ready`.
-- `missing`: mark the product `connection-required`, show `creationGuidance`,
-  and ask the maker to create the connection in the locked environment. Rerun
-  preflight when they choose **Check again**. Do not start installation until
-  validation succeeds.
+- `missing`: mark the product `connection-required` and show:
+
+  1. Open [Power Apps](https://make.powerapps.com).
+  2. Select the `{ENVIRONMENT_NAME}` environment.
+  3. Open `Connections`.
+  4. Choose `New connection`.
+  5. Search for **{displayName}**.
+  6. Create the connection, then select **Check again** here.
+
+  Rerun preflight when they choose **Check again**. Do not start installation
+  until validation succeeds. Do not show `creationGuidance` as one dense
+  sentence.
 
 Persist preflight state independently:
 

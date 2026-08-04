@@ -38,7 +38,7 @@ change step 3 from `- [ ]` to `- [x]`.
 
 {paste the script's summary output here}
 
-One more step — we need to start the Dataverse MCP server so the kit can
+One more step — we need to start the **Dataverse MCP** server so the kit can
 work with your environment going forward.
 
 | # | Task | Status |
@@ -57,13 +57,15 @@ work with your environment going forward.
 
 **Message:**
 
-Start the Dataverse MCP server:
+Start the **Dataverse MCP** server:
 
-1. Press **Ctrl+Shift+P** → type **MCP: List Servers** → select it
-2. Click **Dataverse** → click **Start**
-3. Sign in with your Microsoft account when the browser opens
+1. Press `Ctrl+Shift+P`.
+2. Run `MCP: List Servers`.
+3. Select `Dataverse`.
+4. Choose `Start`.
+5. Sign in with your Microsoft account when the browser opens.
 
-Type **done** when Dataverse shows as Running.
+Type `done` when `Dataverse` shows `Running`.
 
 **End message.**
 

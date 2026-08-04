@@ -25,9 +25,17 @@ entry in `solutions`:
 Do not ask the maker to type a solution ID, unique name, publisher prefix, or
 version. These values come from Dataverse.
 
-If `solutions` is empty, guide the maker to create an unmanaged solution with a
-custom publisher in Power Apps, then offer **Check again**. This is the only
-manual creation path.
+If `solutions` is empty, show:
+
+1. Open [Power Apps](https://make.powerapps.com).
+2. Select the `{ENVIRONMENT_NAME}` environment.
+3. Open `Solutions`.
+4. Choose `New solution`.
+5. Enter a `Display name`, `Name`, and `Version`.
+6. Select or create a custom `Publisher`.
+7. Choose `Create`, then select **Check again** here.
+
+This is the only manual creation path.
 
 After the maker selects a solution, configure it:
 

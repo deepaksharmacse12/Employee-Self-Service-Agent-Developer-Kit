@@ -10,10 +10,11 @@ python scripts/setup_state.py show
 
 For each selected installed starter:
 
-1. Open it in Copilot Studio.
-2. Confirm it can be edited.
-3. Confirm **Configure** and **Topics** are reachable.
-4. Confirm the agent shell and starter content footprint are present.
+1. Open [Copilot Studio](https://copilotstudio.microsoft.com).
+2. Select the `{AGENT_NAME}` agent in the `{ENVIRONMENT_NAME}` environment.
+3. Confirm the agent can be edited.
+4. Confirm `Configure` and `Topics` are reachable.
+5. Confirm the agent shell and starter content footprint are present.
 
 Use automation when available. Otherwise show these exact checks and require explicit
 manual attestation for each starter. A listed starter that cannot be opened is a

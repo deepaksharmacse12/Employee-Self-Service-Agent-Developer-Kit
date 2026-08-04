@@ -22,6 +22,20 @@ _ONBOARDING_STEP1 = _SOLUTION / "src" / "skills" / "onboarding" / "step1.md"
 _ONBOARDING_STEP1B = (
     _SOLUTION / "src" / "skills" / "onboarding" / "step1b.md"
 )
+_ONBOARDING = _SOLUTION / "src" / "skills" / "onboarding" / "SKILL.md"
+_INSTALL_STARTERS = (
+    _SOLUTION
+    / "src"
+    / "skills"
+    / "foundation-setup"
+    / "install-starters.md"
+)
+_INSTALLATION_CATALOG = (
+    _SOLUTION / "src" / "reference" / "ess-agent-installation" / "config.json"
+)
+_UI_FORMATTING_GUIDELINES = (
+    _SOLUTION / "src" / "reference" / "ui-formatting-guidelines.md"
+)
 _WORKDAY = _SOLUTION / "src" / "skills" / "setup" / "SKILL.md"
 _CONNECT_STEP1 = _SOLUTION / "src" / "skills" / "connect" / "step1.md"
 _INSTRUCTIONS = _SOLUTION / ".github" / "copilot-instructions.md"
@@ -102,3 +116,23 @@ def test_onboarding_offers_install_or_customize_for_existing_agents() -> None:
     assert "install another ESS agent or customize" in discovery
     assert "Customize an installed agent" in discovery
     assert "setup_state.py add-product" in discovery
+
+
+def test_onboarding_guidance_uses_precise_markdown_formatting() -> None:
+    router = _ONBOARDING.read_text(encoding="utf-8")
+    foundation = _FOUNDATION.read_text(encoding="utf-8")
+    installation = _INSTALL_STARTERS.read_text(encoding="utf-8")
+    catalog = _INSTALLATION_CATALOG.read_text(encoding="utf-8")
+    guidelines = _UI_FORMATTING_GUIDELINES.read_text(encoding="utf-8")
+
+    assert "src/reference/ui-formatting-guidelines.md" in router
+    assert "src/reference/ui-formatting-guidelines.md" in foundation
+    assert "Use a numbered list for any sequence of UI actions." in guidelines
+    assert "Do not use bold for portal controls" in guidelines
+    assert "Never show unresolved placeholders" in guidelines
+    assert "[Power Apps](https://make.powerapps.com)" in installation
+    assert "`Connections`" in installation
+    assert "`New connection`" in installation
+    assert "**{displayName}**" in installation
+    assert "Select the `{ENVIRONMENT_NAME}` environment." in installation
+    assert "In make.powerapps.com, select the target environment" not in catalog

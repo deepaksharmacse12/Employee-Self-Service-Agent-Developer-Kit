@@ -4,6 +4,10 @@
 Every **Message** block is exact user-facing text. Do not expose internal step IDs,
 checkpoint IDs, state paths, or tool narration.
 
+Follow `src/reference/ui-formatting-guidelines.md` for every user-facing
+instruction in this flow. Resolve its examples with the actual environment,
+agent, product, and connector names before displaying them.
+
 This is the single integration-neutral `/setup` entry point. It owns only:
 
 - Power Platform and Copilot Studio prerequisites;

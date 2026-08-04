@@ -41,9 +41,17 @@ Parse `DATAVERSE_MCP_STATUS_JSON:`:
   record ID, and active/enabled flags as automated evidence. Continue
   immediately without asking the maker anything.
 - `disabled` or `missing`: record `SETUP-PREREQ-MCP-001` as `fail`, show the
-  exact Power Platform admin center steps to turn on **Allow MCP clients to
-  interact with Dataverse MCP server** and enable **Microsoft GitHub Copilot**,
-  then offer **Check again**. Rerun the command when selected.
+  following guidance, then offer **Check again**:
+
+  1. Open [Power Platform admin center](https://admin.powerplatform.microsoft.com/environments).
+  2. Select the `{ENVIRONMENT_NAME}` environment.
+  3. Open `Settings` → `Product` → `Features`.
+  4. Turn on **Allow MCP clients to interact with Dataverse MCP server**.
+  5. Open `Advanced Settings`.
+  6. Open **Microsoft GitHub Copilot** and set `Is Enabled` to `Yes`.
+  7. Choose `Save & Close`, then select **Check again** here.
+
+  Rerun the command when selected.
 - command failure: show the exact error and stop. Do not replace an unavailable
   API result with manual attestation.
 

@@ -4,6 +4,10 @@ Every **Message** block is the exact text to show the user. Copy it verbatim.
 Do not rephrase, add commentary, or tell the user what tools you are calling
 or what files you are reading.
 
+Follow `src/reference/ui-formatting-guidelines.md` for every user-facing
+instruction in this flow. Resolve its examples with the actual environment,
+agent, product, and connector names before displaying them.
+
 ---
 
 ## Start
