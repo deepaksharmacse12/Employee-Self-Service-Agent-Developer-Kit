@@ -189,7 +189,7 @@ def test_bind_updates_exact_solution_reference_and_persists_s_states(
     assert result["status"] == "bound"
     assert result["attestationRequired"] is True
     assert result["connectionSettingsUrl"] == (
-        "https://copilotstudio.preview.microsoft.com/environments/"
+        "https://copilotstudio.microsoft.com/environments/"
         "environment-id/copilots/"
         "33333333-3333-3333-3333-333333333333/settings/connectionSettings"
     )
@@ -244,6 +244,6 @@ def test_connection_settings_url_escapes_path_segments():
         "environment/id",
         "agent id",
     ) == (
-        "https://copilotstudio.preview.microsoft.com/environments/"
+        "https://copilotstudio.microsoft.com/environments/"
         "environment%2Fid/copilots/agent%20id/settings/connectionSettings"
     )

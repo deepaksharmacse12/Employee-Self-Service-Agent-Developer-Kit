@@ -148,10 +148,13 @@ def test_onboarding_reuses_locked_foundation_environment() -> None:
 
 def test_onboarding_offers_install_or_customize_for_existing_agents() -> None:
     discovery = _ONBOARDING_STEP1B.read_text(encoding="utf-8")
+    normalized = " ".join(discovery.split())
 
     assert "install another ESS agent or customize" in discovery
     assert "Customize an installed agent" in discovery
     assert "setup_state.py add-product" in discovery
+    assert "Installed: **{agent 1 name}**; **{agent 2 name}**" in discovery
+    assert "Do not render installed agent names as plain text." in normalized
 
 
 def test_onboarding_guidance_uses_precise_markdown_formatting() -> None:

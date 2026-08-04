@@ -40,7 +40,15 @@ A browser window will open for sign-in. Wait for the script to finish.
 
 ## 1.4a — Choose whether to install or customize
 
-Show the installed agent names from `DISCOVERY.agents`.
+Build an installed-agent summary from `DISCOVERY.agents`. Format every agent
+name in bold and keep each agent distinct:
+
+```text
+Installed: **{agent 1 name}**; **{agent 2 name}**
+```
+
+Place this summary directly after the question text. Do not render installed
+agent names as plain text.
 
 Use `vscode_askQuestions`. Add one option for each entry in
 `DISCOVERY.availableInstallations`, preserving catalog order, followed by the

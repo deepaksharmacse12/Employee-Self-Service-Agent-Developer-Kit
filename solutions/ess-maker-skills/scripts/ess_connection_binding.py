@@ -225,7 +225,7 @@ def _installed_agent(
 def connection_settings_url(environment_id: str, agent_id: str) -> str:
     """Build the direct Copilot Studio connection-settings URL."""
     return (
-        "https://copilotstudio.preview.microsoft.com/environments/"
+        "https://copilotstudio.microsoft.com/environments/"
         f"{quote(environment_id, safe='')}/copilots/"
         f"{quote(agent_id, safe='')}/settings/connectionSettings"
     )

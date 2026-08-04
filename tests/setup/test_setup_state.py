@@ -376,7 +376,7 @@ def test_invoker_connection_requires_maker_attestation_before_bound() -> None:
         agent_id="agent-id",
         agent_name="Employee Self-Service IT",
         connection_settings_url=(
-            "https://copilotstudio.preview.microsoft.com/environments/"
+            "https://copilotstudio.microsoft.com/environments/"
             "env-1/copilots/agent-id/settings/connectionSettings"
         ),
     )
