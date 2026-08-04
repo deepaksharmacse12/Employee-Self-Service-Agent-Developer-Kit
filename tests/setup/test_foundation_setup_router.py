@@ -14,6 +14,7 @@ _SOLUTION = _REPO_ROOT / "solutions" / "ess-maker-skills"
 _FOUNDATION = (
     _SOLUTION / "src" / "skills" / "foundation-setup" / "SKILL.md"
 )
+_SCOPE = _SOLUTION / "src" / "skills" / "foundation-setup" / "scope.md"
 _WORKDAY = _SOLUTION / "src" / "skills" / "setup" / "SKILL.md"
 _CONNECT_STEP1 = _SOLUTION / "src" / "skills" / "connect" / "step1.md"
 _INSTRUCTIONS = _SOLUTION / ".github" / "copilot-instructions.md"
@@ -59,3 +60,12 @@ def test_foundation_router_paths_resolve() -> None:
     ]
 
     assert not missing
+
+
+def test_foundation_does_not_prompt_for_non_decisions() -> None:
+    router = _FOUNDATION.read_text(encoding="utf-8")
+    scope = _SCOPE.read_text(encoding="utf-8")
+
+    assert "ask the maker to confirm resuming" not in router
+    assert "Picking up at:" not in router
+    assert "Confirm that this run covers" not in scope

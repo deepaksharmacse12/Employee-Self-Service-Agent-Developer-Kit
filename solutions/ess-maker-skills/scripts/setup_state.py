@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_STATE_PATH = Path(".local/setup/config.json")
 DEFAULT_LEGACY_WORKDAY_PATH = Path(".local/connect/workday/config.json")
 SETUP_INTENT = "prereqs + base ESS install only"
@@ -91,10 +91,23 @@ class StepStatus(StrEnum):
     DONE = "done"
 
 
-class StarterScope(StrEnum):
-    HR = "HR"
-    IT = "IT"
-    BOTH = "both"
+class ProductId(StrEnum):
+    DA_ESSHR = "da.esshr"
+    DA_ESSIT = "da.essit"
+    CEA_ESSHR = "cea.esshr"
+    CEA_ESSIT = "cea.essit"
+
+
+class InstallationStatus(StrEnum):
+    NOT_SELECTED = "not-selected"
+    PENDING = "pending"
+    CONNECTION_REQUIRED = "connection-required"
+    READY = "ready"
+    INSTALLING = "installing"
+    MANUAL_REQUIRED = "manual-required"
+    INSTALLED = "installed"
+    BOUND = "bound"
+    FAILED = "failed"
 
 
 class EnvironmentType(StrEnum):
@@ -131,17 +144,34 @@ class ValidationRecord:
 
 
 @dataclass
+class ProductInstallationRecord:
+    selected: bool = False
+    installation_status: str = InstallationStatus.NOT_SELECTED
+    connection_name: str | None = None
+    schema_name: str | None = None
+    ready: bool = False
+    failure_cause: str | None = None
+    updated_at: str | None = None
+
+
+def _default_products() -> dict[str, ProductInstallationRecord]:
+    return {
+        product_id.value: ProductInstallationRecord()
+        for product_id in ProductId
+    }
+
+
+@dataclass
 class SetupState:
     schema_version: int = SCHEMA_VERSION
     intent: str = SETUP_INTENT
     environment: dict[str, Any] = field(default_factory=dict)
-    starter_scope: str | None = None
+    selected_products: list[str] = field(default_factory=list)
     prerequisites: dict[str, Any] = field(default_factory=dict)
     alm: dict[str, Any] = field(default_factory=dict)
-    starters: dict[str, Any] = field(default_factory=lambda: {
-        "HR": {"installed": False, "ready": False},
-        "IT": {"installed": False, "ready": False},
-    })
+    products: dict[str, ProductInstallationRecord] = field(
+        default_factory=_default_products
+    )
     steps: dict[str, StepRecord] = field(default_factory=lambda: {
         step_id: StepRecord() for step_id in STEP_ORDER
     })
@@ -180,13 +210,13 @@ class SetupState:
             schema_version=raw["schema_version"],
             intent=raw.get("intent", SETUP_INTENT),
             environment=raw.get("environment", {}),
-            starter_scope=raw.get("starter_scope"),
+            selected_products=list(raw.get("selected_products", [])),
             prerequisites=raw.get("prerequisites", {}),
             alm=raw.get("alm", {}),
-            starters=raw.get("starters", {
-                "HR": {"installed": False, "ready": False},
-                "IT": {"installed": False, "ready": False},
-            }),
+            products={
+                product_id: ProductInstallationRecord(**record)
+                for product_id, record in raw.get("products", {}).items()
+            },
             steps=steps,
             validations=validations,
             active_step=raw.get("active_step", STEP_ORDER[0]),
@@ -299,7 +329,7 @@ class LegacyWorkdayStateMigrator:
             "note": (
                 "Legacy evidence is retained for fast re-verification but does "
                 "not complete new setup steps because environment identity and "
-                "HR/IT starter scope are not proven."
+                "selected ESS products are not proven."
             ),
         }
         SetupWorkflow.refresh_active_step(state)
@@ -322,8 +352,11 @@ class SetupWorkflow:
             raise SetupStateError("Setup intent cannot include integration work")
         if set(state.steps) != set(STEP_ORDER):
             raise SetupStateError("Setup state must contain every canonical step")
-        if set(state.starters) != {"HR", "IT"}:
-            raise SetupStateError("Setup state must contain HR and IT starter records")
+        expected_products = {product_id.value for product_id in ProductId}
+        if set(state.products) != expected_products:
+            raise SetupStateError(
+                "Setup state must contain every supported ESS product record"
+            )
 
         in_progress = [
             step_id
@@ -341,13 +374,35 @@ class SetupWorkflow:
                     f"Invalid state for {step_id}: {record.state!r}"
                 ) from exc
 
-        if state.starter_scope is not None:
+        if len(state.selected_products) != len(set(state.selected_products)):
+            raise SetupStateError("Selected ESS products must be unique")
+        for product_id in state.selected_products:
             try:
-                StarterScope(state.starter_scope)
+                ProductId(product_id)
             except ValueError as exc:
                 raise SetupStateError(
-                    f"Invalid starter scope: {state.starter_scope!r}"
+                    f"Invalid ESS product: {product_id!r}"
                 ) from exc
+        selected = set(state.selected_products)
+        for product_id, record in state.products.items():
+            try:
+                InstallationStatus(record.installation_status)
+            except ValueError as exc:
+                raise SetupStateError(
+                    f"Invalid installation status for {product_id}: "
+                    f"{record.installation_status!r}"
+                ) from exc
+            if record.selected != (product_id in selected):
+                raise SetupStateError(
+                    f"Product selection flag is inconsistent for {product_id}"
+                )
+            if not record.selected and (
+                record.installation_status != InstallationStatus.NOT_SELECTED
+            ):
+                raise SetupStateError(
+                    f"Unselected product {product_id} cannot have installation "
+                    "progress"
+                )
 
         if state.active_step not in STEP_ORDER:
             raise SetupStateError(f"Invalid active step: {state.active_step!r}")
@@ -382,8 +437,12 @@ class SetupWorkflow:
         environment_name: str,
         environment_type: EnvironmentType,
         tenant_endpoint: str,
-        starter_scope: StarterScope,
+        selected_products: tuple[ProductId, ...],
     ) -> None:
+        if not selected_products:
+            raise SetupStateError("Select at least one ESS product")
+        if len(selected_products) != len(set(selected_products)):
+            raise SetupStateError("Selected ESS products must be unique")
         proposed_environment = {
             "id": environment_id,
             "name": environment_name,
@@ -407,14 +466,27 @@ class SetupWorkflow:
                     "Setup scope is locked; start a new setup run to change "
                     "the environment"
                 )
-            if state.starter_scope != starter_scope:
+            if state.selected_products != [
+                product_id.value for product_id in selected_products
+            ]:
                 raise SetupStateError(
                     "Setup scope is locked; start a new setup run to change "
-                    "the starter scope"
+                    "the selected products"
                 )
 
         state.environment = proposed_environment
-        state.starter_scope = starter_scope
+        state.selected_products = [
+            product_id.value for product_id in selected_products
+        ]
+        selected = set(state.selected_products)
+        for product_id, record in state.products.items():
+            record.selected = product_id in selected
+            record.installation_status = (
+                InstallationStatus.PENDING
+                if record.selected
+                else InstallationStatus.NOT_SELECTED
+            )
+            record.updated_at = utc_now()
         for check_id, evidence in (
             (
                 "SETUP-SCOPE-001",
@@ -425,7 +497,7 @@ class SetupWorkflow:
             ),
             (
                 "SETUP-SCOPE-002",
-                {"starter_scope": starter_scope},
+                {"selected_products": state.selected_products},
             ),
             (
                 "SETUP-SCOPE-003",
@@ -496,6 +568,29 @@ class SetupWorkflow:
             )
         if status == StepStatus.DONE:
             SetupWorkflow.ensure_required_checks_pass(state, step_id)
+            if step_id == "SETUP-05":
+                incomplete_products = [
+                    product_id
+                    for product_id in state.selected_products
+                    if state.products[product_id].installation_status
+                    != InstallationStatus.BOUND
+                ]
+                if incomplete_products:
+                    raise SetupStateError(
+                        "Cannot complete SETUP-05; products are not installed "
+                        f"and bound: {', '.join(incomplete_products)}"
+                    )
+            if step_id == "SETUP-06":
+                unready_products = [
+                    product_id
+                    for product_id in state.selected_products
+                    if not state.products[product_id].ready
+                ]
+                if unready_products:
+                    raise SetupStateError(
+                        "Cannot complete SETUP-06; products are not ready: "
+                        f"{', '.join(unready_products)}"
+                    )
         if status == StepStatus.IN_PROGRESS:
             for other_id, record in state.steps.items():
                 if (
@@ -564,10 +659,107 @@ class SetupWorkflow:
 
     @staticmethod
     def selected_starters(state: SetupState) -> tuple[str, ...]:
-        scope = StarterScope(state.starter_scope)
-        if scope == StarterScope.BOTH:
-            return (StarterScope.HR, StarterScope.IT)
-        return (scope,)
+        return tuple(state.selected_products)
+
+    @staticmethod
+    def update_product_installation(
+        state: SetupState,
+        product_id: ProductId,
+        status: InstallationStatus,
+        *,
+        connection_name: str | None = None,
+        schema_name: str | None = None,
+        failure_cause: str | None = None,
+    ) -> None:
+        product_id = ProductId(product_id)
+        status = InstallationStatus(status)
+        record = state.products[product_id.value]
+        if not record.selected:
+            raise SetupStateError(
+                f"Cannot update unselected product {product_id.value}"
+            )
+        current = InstallationStatus(record.installation_status)
+        allowed = {
+            InstallationStatus.PENDING: {
+                InstallationStatus.PENDING,
+                InstallationStatus.CONNECTION_REQUIRED,
+                InstallationStatus.READY,
+                InstallationStatus.INSTALLING,
+                InstallationStatus.INSTALLED,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.CONNECTION_REQUIRED: {
+                InstallationStatus.CONNECTION_REQUIRED,
+                InstallationStatus.READY,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.READY: {
+                InstallationStatus.READY,
+                InstallationStatus.INSTALLING,
+                InstallationStatus.INSTALLED,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.INSTALLING: {
+                InstallationStatus.INSTALLING,
+                InstallationStatus.INSTALLED,
+                InstallationStatus.MANUAL_REQUIRED,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.MANUAL_REQUIRED: {
+                InstallationStatus.MANUAL_REQUIRED,
+                InstallationStatus.INSTALLING,
+                InstallationStatus.INSTALLED,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.INSTALLED: {
+                InstallationStatus.INSTALLED,
+                InstallationStatus.BOUND,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.FAILED: {
+                InstallationStatus.PENDING,
+                InstallationStatus.CONNECTION_REQUIRED,
+                InstallationStatus.READY,
+                InstallationStatus.INSTALLING,
+                InstallationStatus.INSTALLED,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.BOUND: {InstallationStatus.BOUND},
+        }
+        if status not in allowed.get(current, set()):
+            raise SetupStateError(
+                f"Invalid installation transition for {product_id.value}: "
+                f"{current} -> {status}"
+            )
+        record.installation_status = status
+        if connection_name is not None:
+            record.connection_name = connection_name
+        if schema_name is not None:
+            record.schema_name = schema_name
+        record.failure_cause = failure_cause
+        record.updated_at = utc_now()
+        state.updated_at = record.updated_at
+
+    @staticmethod
+    def set_product_readiness(
+        state: SetupState,
+        product_id: ProductId,
+        ready: bool,
+    ) -> None:
+        product_id = ProductId(product_id)
+        record = state.products[product_id.value]
+        if not record.selected:
+            raise SetupStateError(
+                f"Cannot update unselected product {product_id.value}"
+            )
+        if ready and record.installation_status != InstallationStatus.BOUND:
+            raise SetupStateError(
+                f"Product {product_id.value} must be installed and bound "
+                "before readiness can pass"
+            )
+        record.ready = ready
+        record.updated_at = utc_now()
+        state.updated_at = record.updated_at
 
     @staticmethod
     def is_complete(state: SetupState) -> bool:
@@ -672,6 +864,29 @@ class SetupStateService:
         self._repository.save(state)
 
 
+def persist_product_installation_status(
+    product_id: str,
+    status: str,
+    *,
+    connection_name: str | None = None,
+    schema_name: str | None = None,
+    failure_cause: str | None = None,
+    state_path: Path = DEFAULT_STATE_PATH,
+) -> None:
+    """Persist one product lifecycle transition through the domain service."""
+    service = SetupStateService(JsonSetupStateRepository(state_path))
+    state = service.load()
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId(product_id),
+        InstallationStatus(status),
+        connection_name=connection_name,
+        schema_name=schema_name,
+        failure_cause=failure_cause,
+    )
+    service.save(state)
+
+
 def _parse_json_object(value: str) -> dict[str, Any]:
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
@@ -707,9 +922,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scope.add_argument("--tenant-endpoint", required=True)
     scope.add_argument(
-        "--starter-scope",
+        "--product",
         required=True,
-        choices=[item.value for item in StarterScope],
+        action="append",
+        choices=[item.value for item in ProductId],
+        dest="products",
     )
 
     step = commands.add_parser("update-step")
@@ -755,10 +972,36 @@ def build_parser() -> argparse.ArgumentParser:
     alm.add_argument("--publisher-prefix", required=True)
     alm.add_argument("--version", required=True)
 
-    starter = commands.add_parser("set-starter")
-    starter.add_argument("--starter", required=True, choices=("HR", "IT"))
-    starter.add_argument("--installed", action=argparse.BooleanOptionalAction)
-    starter.add_argument("--ready", action=argparse.BooleanOptionalAction)
+    product = commands.add_parser("set-product-status")
+    product.add_argument(
+        "--product",
+        required=True,
+        choices=[item.value for item in ProductId],
+    )
+    product.add_argument(
+        "--status",
+        required=True,
+        choices=[
+            item.value
+            for item in InstallationStatus
+            if item != InstallationStatus.NOT_SELECTED
+        ],
+    )
+    product.add_argument("--connection-name")
+    product.add_argument("--schema-name")
+    product.add_argument("--failure-cause")
+
+    readiness = commands.add_parser("set-product-readiness")
+    readiness.add_argument(
+        "--product",
+        required=True,
+        choices=[item.value for item in ProductId],
+    )
+    readiness.add_argument(
+        "--ready",
+        required=True,
+        action=argparse.BooleanOptionalAction,
+    )
 
     commands.add_parser("finalize")
     return parser
@@ -781,7 +1024,9 @@ def main() -> int:
                 environment_name=args.environment_name,
                 environment_type=EnvironmentType(args.environment_type),
                 tenant_endpoint=args.tenant_endpoint,
-                starter_scope=StarterScope(args.starter_scope),
+                selected_products=tuple(
+                    ProductId(product_id) for product_id in args.products
+                ),
             )
             service.save(state)
         elif args.command == "update-step":
@@ -820,13 +1065,22 @@ def main() -> int:
                 "updated_at": utc_now(),
             }
             service.save(state)
-        elif args.command == "set-starter":
-            record = state.starters[args.starter]
-            if args.installed is not None:
-                record["installed"] = args.installed
-            if args.ready is not None:
-                record["ready"] = args.ready
-            record["updated_at"] = utc_now()
+        elif args.command == "set-product-status":
+            SetupWorkflow.update_product_installation(
+                state,
+                ProductId(args.product),
+                InstallationStatus(args.status),
+                connection_name=args.connection_name,
+                schema_name=args.schema_name,
+                failure_cause=args.failure_cause,
+            )
+            service.save(state)
+        elif args.command == "set-product-readiness":
+            SetupWorkflow.set_product_readiness(
+                state,
+                ProductId(args.product),
+                args.ready,
+            )
             service.save(state)
         elif args.command == "finalize":
             try:

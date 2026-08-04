@@ -12,7 +12,7 @@ This is the canonical visible checklist for `/setup`. The durable source of trut
   <!-- id: SETUP-03 | status: pending | checks: SETUP-ENV-001, SETUP-ENV-002, SETUP-ENV-003 -->
 - [ ] **Configure the preferred unmanaged solution**
   <!-- id: SETUP-04 | status: pending | checks: SETUP-ALM-001, SETUP-ALM-002, SETUP-ALM-003 -->
-- [ ] **Install the selected ESS starter or starters**
+- [ ] **Install and bind the selected ESS products**
   <!-- id: SETUP-05 | status: pending | checks: SETUP-INSTALL-001, SETUP-INSTALL-002, SETUP-INSTALL-003 -->
 - [ ] **Verify baseline agent readiness**
   <!-- id: SETUP-06 | status: pending | checks: SETUP-READINESS-001, SETUP-READINESS-002, SETUP-READINESS-003 -->

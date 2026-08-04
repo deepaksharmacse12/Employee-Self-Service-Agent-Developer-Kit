@@ -232,3 +232,76 @@ class PowerPlatformClient:
         resp.raise_for_status()
         data = resp.json()
         return data.get("currencyAllocations", []) or []
+
+    def list_environment_application_packages(
+        self,
+        environment_id: str,
+    ) -> list | dict:
+        """List Marketplace application packages available to an environment."""
+        return self._get_all(
+            f"/appmanagement/environments/{environment_id}/applicationPackages",
+            params={"api-version": API_VERSION},
+        )
+
+    def install_application_package(
+        self,
+        environment_id: str,
+        unique_name: str,
+    ) -> dict:
+        """Start installing a Marketplace application package."""
+        url = (
+            f"{PP_API_BASE}/appmanagement/environments/{environment_id}"
+            f"/applicationPackages/{unique_name}/install"
+        )
+        resp = _SESSION.post(
+            url,
+            headers={**self.headers, "Content-Type": "application/json"},
+            params={"api-version": API_VERSION},
+            json={"payloadValue": ""},
+            timeout=60,
+        )
+        if resp.status_code in (401, 403):
+            return {
+                "_error": "insufficient_permissions",
+                "_status": resp.status_code,
+            }
+        if resp.status_code not in (200, 202):
+            resp.raise_for_status()
+
+        data = resp.json() if resp.content else {}
+        if not isinstance(data, dict):
+            data = {}
+        operation_id = (
+            data.get("lastOperation", {}).get("operationId")
+            if isinstance(data, dict)
+            else None
+        )
+        return {
+            **data,
+            "_async": resp.status_code == 202,
+            "_operationId": operation_id,
+        }
+
+    def get_application_package_install_status(
+        self,
+        environment_id: str,
+        operation_id: str,
+    ) -> dict:
+        """Get progress for a Marketplace application installation."""
+        url = (
+            f"{PP_API_BASE}/appmanagement/environments/{environment_id}"
+            f"/operations/{operation_id}"
+        )
+        resp = _SESSION.get(
+            url,
+            headers=self.headers,
+            params={"api-version": API_VERSION},
+            timeout=60,
+        )
+        if resp.status_code in (401, 403):
+            return {
+                "_error": "insufficient_permissions",
+                "_status": resp.status_code,
+            }
+        resp.raise_for_status()
+        return resp.json()

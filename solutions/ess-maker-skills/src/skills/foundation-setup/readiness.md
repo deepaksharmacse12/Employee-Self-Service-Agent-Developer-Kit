@@ -22,8 +22,8 @@ failure, not a partial pass.
 Persist readiness independently:
 
 ```text
-python scripts/setup_state.py set-starter \
-  --starter "{HR|IT}" --installed --ready
+python scripts/setup_state.py set-product-readiness \
+  --product "{da.esshr|da.essit|cea.esshr|cea.essit}" --ready
 ```
 
 Record:

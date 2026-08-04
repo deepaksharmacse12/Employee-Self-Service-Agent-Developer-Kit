@@ -12,13 +12,14 @@ import pytest
 
 from setup_state import (
     EnvironmentType,
+    InstallationStatus,
     JsonSetupStateRepository,
     LegacyWorkdayStateMigrator,
+    ProductId,
     SetupState,
     SetupStateError,
     SetupStateService,
     SetupWorkflow,
-    StarterScope,
     StepStatus,
     ValidationMode,
     ValidationStatus,
@@ -117,12 +118,23 @@ def test_json_repository_round_trips_atomically(tmp_path: Path) -> None:
     state_path = tmp_path / ".local" / "setup" / "config.json"
     repository = JsonSetupStateRepository(state_path)
     state = SetupState()
-    state.starter_scope = StarterScope.BOTH
+    state.selected_products = [
+        ProductId.DA_ESSHR,
+        ProductId.CEA_ESSIT,
+    ]
+    state.products[ProductId.DA_ESSHR].selected = True
+    state.products[ProductId.DA_ESSHR].installation_status = (
+        InstallationStatus.PENDING
+    )
+    state.products[ProductId.CEA_ESSIT].selected = True
+    state.products[ProductId.CEA_ESSIT].installation_status = (
+        InstallationStatus.PENDING
+    )
 
     repository.save(state)
     loaded = repository.load()
 
-    assert loaded.starter_scope == "both"
+    assert loaded.selected_products == ["da.esshr", "cea.essit"]
     assert loaded.active_step == "SETUP-01"
     assert not list(state_path.parent.glob("*.tmp"))
 
@@ -207,7 +219,7 @@ def test_locked_scope_cannot_drift() -> None:
         environment_name="Development",
         environment_type=EnvironmentType.DEV,
         tenant_endpoint="https://dev.crm.dynamics.com",
-        starter_scope=StarterScope.HR,
+        selected_products=(ProductId.DA_ESSHR,),
     )
 
     with pytest.raises(SetupStateError, match="scope is locked"):
@@ -217,8 +229,117 @@ def test_locked_scope_cannot_drift() -> None:
             environment_name="Production",
             environment_type=EnvironmentType.PROD,
             tenant_endpoint="https://prod.crm.dynamics.com",
-            starter_scope=StarterScope.HR,
+            selected_products=(ProductId.DA_ESSHR,),
         )
+
+
+def test_product_installation_states_are_independent() -> None:
+    state = SetupState()
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="env-1",
+        environment_name="Development",
+        environment_type=EnvironmentType.DEV,
+        tenant_endpoint="https://dev.crm.dynamics.com",
+        selected_products=(
+            ProductId.DA_ESSHR,
+            ProductId.CEA_ESSIT,
+        ),
+    )
+
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSHR,
+        InstallationStatus.INSTALLING,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSHR,
+        InstallationStatus.INSTALLED,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSHR,
+        InstallationStatus.BOUND,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.CEA_ESSIT,
+        InstallationStatus.CONNECTION_REQUIRED,
+    )
+
+    assert state.products["da.esshr"].installation_status == "bound"
+    assert (
+        state.products["cea.essit"].installation_status
+        == "connection-required"
+    )
+    assert state.products["da.essit"].installation_status == "not-selected"
+
+
+def test_unselected_product_cannot_be_updated() -> None:
+    state = SetupState()
+
+    with pytest.raises(SetupStateError, match="unselected product"):
+        SetupWorkflow.update_product_installation(
+            state,
+            ProductId.DA_ESSHR,
+            InstallationStatus.INSTALLING,
+        )
+
+
+def test_install_step_requires_every_selected_product_to_be_bound() -> None:
+    state = SetupState()
+    state.selected_products = [ProductId.DA_ESSHR]
+    state.products[ProductId.DA_ESSHR].selected = True
+    state.products[ProductId.DA_ESSHR].installation_status = (
+        InstallationStatus.INSTALLED
+    )
+    for step_id in ("SETUP-01", "SETUP-02", "SETUP-03", "SETUP-04"):
+        state.steps[step_id].state = StepStatus.DONE
+    state.active_step = "SETUP-05"
+    for check_id in (
+        "SETUP-INSTALL-001",
+        "SETUP-INSTALL-002",
+        "SETUP-INSTALL-003",
+    ):
+        SetupWorkflow.record_validation(
+            state,
+            check_id,
+            ValidationStatus.PASS,
+            ValidationMode.AUTOMATED,
+            {},
+            [],
+        )
+
+    with pytest.raises(SetupStateError, match="not installed and bound"):
+        SetupWorkflow.update_step(state, "SETUP-05", StepStatus.DONE)
+
+
+def test_installation_progress_updates_are_resumable() -> None:
+    state = SetupState()
+    state.selected_products = [ProductId.DA_ESSHR]
+    state.products[ProductId.DA_ESSHR].selected = True
+    state.products[ProductId.DA_ESSHR].installation_status = (
+        InstallationStatus.INSTALLING
+    )
+
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSHR,
+        InstallationStatus.INSTALLING,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSHR,
+        InstallationStatus.INSTALLED,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSHR,
+        InstallationStatus.INSTALLED,
+    )
+
+    assert state.products["da.esshr"].installation_status == "installed"
 
 
 def test_finalize_requires_all_prior_steps() -> None:

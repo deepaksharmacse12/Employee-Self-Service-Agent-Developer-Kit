@@ -58,6 +58,7 @@ class TestListEnvironments:
 
         dv_envs, excluded = list_environments.get_dataverse_environments()
 
+        mock_instance.authenticate.assert_called_once_with(include_flow=False)
         assert len(dv_envs) == 2
         assert excluded == 1
         assert all(e["instanceUrl"] for e in dv_envs)

@@ -67,7 +67,7 @@ def list_environments():
     print("A browser window will open for sign-in.")
     pp_admin = PPAdminClient("organizations")
     try:
-        pp_admin.authenticate()
+        pp_admin.authenticate(include_flow=False)
     except Exception as e:
         print(f"ERROR: Power Platform authentication failed - {e}")
         print("Ensure you have Power Platform environment access.")

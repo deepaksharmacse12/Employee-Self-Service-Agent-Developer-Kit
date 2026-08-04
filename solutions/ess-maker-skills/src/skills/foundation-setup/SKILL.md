@@ -56,21 +56,18 @@ the command:
 
 Here's your ESS foundation setup:
 
-- {marker} Choose and lock the target environment and starter scope
+- {marker} Choose and lock the target environment and ESS products
 - {marker} Confirm access, capacity, billing, and governance prerequisites
 - {marker} Verify the environment and Dataverse
 - {marker} Configure the preferred unmanaged solution
-- {marker} Install the selected ESS starter or starters
+- {marker} Install and bind the selected ESS products
 - {marker} Verify baseline agent readiness
 - {marker} Confirm the setup-to-connect handoff
 
-Picking up at: {title for active_step}.
-
 **End message.**
 
-If the active step is not `SETUP-01`, ask the maker to confirm resuming from the
-displayed step. On confirmation, dispatch below. If they decline, stop without
-changing state.
+The persisted `active_step` is authoritative. Dispatch to it immediately.
+Resumption does not require user input.
 
 ---
 
