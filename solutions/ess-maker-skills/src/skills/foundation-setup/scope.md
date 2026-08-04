@@ -111,7 +111,9 @@ products.
 
    Parse `SELECTED_ENV_JSON:` for the environment ID, name, type, and URL. If
    the URL cannot be resolved, show the exact error and stop.
-7. Ask the maker to classify the selected target as Dev, Test, or Prod.
+7. Use the environment type returned in `SELECTED_ENV_JSON:` as
+   `ENVIRONMENT_PLATFORM_TYPE`. Do not ask the maker to classify the
+   environment.
 8. Present these four products in this order:
    - **DA: Employee Self-Service HR (Recommended)**
    - **DA: Employee Self-Service IT (Recommended)**
@@ -129,7 +131,7 @@ Persist the locked scope:
 python scripts/setup_state.py set-scope \
   --environment-id "{ENVIRONMENT_ID}" \
   --environment-name "{ENVIRONMENT_NAME}" \
-  --environment-type "{Dev|Test|Prod}" \
+  --environment-type "{ENVIRONMENT_PLATFORM_TYPE}" \
   --tenant-endpoint "{ENVIRONMENT_URL}" \
   --product "{PRODUCT_ID}" [--product "{ANOTHER_PRODUCT_ID}" ...]
 ```
@@ -139,7 +141,6 @@ The command records `SETUP-SCOPE-001`, `SETUP-SCOPE-002`, and
 
 **Message:**
 
-Setup is locked to **{environment name}** ({environment type}) for the
-**{selected product labels}**.
+Setup is locked to **{environment name}** for the **{selected product labels}**.
 
 **End message.**

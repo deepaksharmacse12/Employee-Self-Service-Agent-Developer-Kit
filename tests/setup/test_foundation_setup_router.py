@@ -140,6 +140,16 @@ def test_scope_asks_how_to_provide_environment_before_discovery() -> None:
     assert "--resolve-environment-url" in scope
 
 
+def test_scope_uses_discovered_environment_type_without_prompting() -> None:
+    scope = _SCOPE.read_text(encoding="utf-8")
+    normalized = " ".join(scope.split())
+
+    assert "ENVIRONMENT_PLATFORM_TYPE" in scope
+    assert "Do not ask the maker to classify the environment." in normalized
+    assert "classify the selected target as Dev, Test, or Prod" not in scope
+    assert "{Dev|Test|Prod}" not in scope
+
+
 def test_scope_guides_and_verifies_new_environment_creation() -> None:
     scope = _SCOPE.read_text(encoding="utf-8")
     normalized = " ".join(scope.split())

@@ -472,7 +472,7 @@ class SetupWorkflow:
         *,
         environment_id: str,
         environment_name: str,
-        environment_type: EnvironmentType,
+        environment_type: str,
         tenant_endpoint: str,
         selected_products: tuple[ProductId, ...],
     ) -> None:
@@ -1214,7 +1214,6 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument(
         "--environment-type",
         required=True,
-        choices=[item.value for item in EnvironmentType],
     )
     scope.add_argument("--tenant-endpoint", required=True)
     scope.add_argument(
@@ -1334,7 +1333,7 @@ def main() -> int:
                 state,
                 environment_id=args.environment_id,
                 environment_name=args.environment_name,
-                environment_type=EnvironmentType(args.environment_type),
+                environment_type=args.environment_type,
                 tenant_endpoint=args.tenant_endpoint,
                 selected_products=tuple(
                     ProductId(product_id) for product_id in args.products

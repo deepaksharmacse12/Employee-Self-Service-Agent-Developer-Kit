@@ -236,6 +236,21 @@ def test_locked_scope_cannot_drift() -> None:
         )
 
 
+def test_scope_accepts_discovered_power_platform_environment_type() -> None:
+    state = SetupState()
+
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="environment-id",
+        environment_name="Developer Environment",
+        environment_type="Developer",
+        tenant_endpoint="https://dev.crm.dynamics.com",
+        selected_products=(ProductId.DA_ESSHR,),
+    )
+
+    assert state.environment["type"] == "Developer"
+
+
 def test_product_installation_states_are_independent() -> None:
     state = SetupState()
     SetupWorkflow.set_scope(
