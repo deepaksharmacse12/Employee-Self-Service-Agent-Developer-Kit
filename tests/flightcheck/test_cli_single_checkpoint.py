@@ -69,6 +69,14 @@ def _silence_output(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestGates:
+    def test_environment_checkpoints_accept_explicit_foundation_context(
+        self,
+    ) -> None:
+        for checkpoint in ("ENV-001", "ENV-002", "ENV-CAPACITY-001"):
+            plan = registry.transitive_requirements(checkpoint)
+            assert plan.requires_config is False
+            assert plan.requires_dataverse_endpoint is True
+
     def test_unknown_checkpoint_exits_2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

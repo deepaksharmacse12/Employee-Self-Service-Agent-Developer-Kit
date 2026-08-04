@@ -18,6 +18,9 @@ _SCOPE = _SOLUTION / "src" / "skills" / "foundation-setup" / "scope.md"
 _PREREQUISITES = (
     _SOLUTION / "src" / "skills" / "foundation-setup" / "prerequisites.md"
 )
+_ENVIRONMENT = (
+    _SOLUTION / "src" / "skills" / "foundation-setup" / "environment.md"
+)
 _ONBOARDING_STEP1 = _SOLUTION / "src" / "skills" / "onboarding" / "step1.md"
 _ONBOARDING_STEP1B = (
     _SOLUTION / "src" / "skills" / "onboarding" / "step1b.md"
@@ -100,6 +103,39 @@ def test_dataverse_mcp_enablement_is_checked_automatically() -> None:
     assert "scripts/check_dataverse_mcp.py" in onboarding
     assert "without asking the maker anything" in prerequisites
     assert "Type **done**" not in onboarding
+
+
+def test_environment_access_does_not_require_redundant_attestation() -> None:
+    prerequisites = _PREREQUISITES.read_text(encoding="utf-8")
+
+    assert "both Power Platform and Copilot Studio" not in prerequisites
+    assert "Do not ask whether the maker can" in prerequisites
+    assert "Record both checks in automated mode" in prerequisites
+    assert "do not replace failed automated evidence" in prerequisites
+
+
+def test_locked_environment_is_not_reconfirmed() -> None:
+    environment = _ENVIRONMENT.read_text(encoding="utf-8")
+    normalized = " ".join(environment.split())
+
+    assert "Do not ask whether it is still intended" in normalized
+    assert "do not show a confirmation popup" in normalized
+    assert "Ask the maker to confirm" not in environment
+    assert "ENVIRONMENT_DRIFT" in environment
+    assert environment.count('--environment-url "{ENVIRONMENT_URL}"') == 2
+    assert environment.count('--environment-id "{ENVIRONMENT_ID}"') == 2
+    assert "Do not read `.local/config.json`" in environment
+
+
+def test_foundation_flightchecks_use_locked_environment_context() -> None:
+    prerequisites = _PREREQUISITES.read_text(encoding="utf-8")
+
+    assert prerequisites.count(
+        '--environment-url "{ENVIRONMENT_URL}"'
+    ) == 2
+    assert prerequisites.count(
+        '--environment-id "{ENVIRONMENT_ID}"'
+    ) == 2
 
 
 def test_onboarding_reuses_locked_foundation_environment() -> None:

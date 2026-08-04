@@ -15,17 +15,23 @@ Run:
 
 ```text
 python scripts/discover.py --list-environments
-python scripts/flightcheck/cli.py --checkpoint ENV-002
+python scripts/flightcheck/cli.py \
+  --checkpoint ENV-002 \
+  --environment-url "{ENVIRONMENT_URL}" \
+  --environment-id "{ENVIRONMENT_ID}"
 ```
 
-The selected environment must be present and the maker must confirm they can open it
-in both Power Platform and Copilot Studio. Record:
+The selected environment must be present in environment discovery and `ENV-002`
+must pass. Record both checks in automated mode:
 
-- `SETUP-PREREQ-ACCESS-001`
-- `SETUP-PREREQ-DV-001`
+- `SETUP-PREREQ-ACCESS-001` — selected environment ID, name, and URL match the
+  discovered environment;
+- `SETUP-PREREQ-DV-001` — `ENV-002` confirms Dataverse is provisioned.
 
-Use `mode=automated` when the command proves the result; otherwise require explicit
-manual attestation after showing the exact portal verification steps.
+Continue immediately when both checks pass. Do not ask whether the maker can
+open the environment in Power Platform or Copilot Studio. If discovery or
+`ENV-002` fails, show the exact command error and block the prerequisite step;
+do not replace failed automated evidence with manual attestation.
 
 ## Dataverse MCP client
 
@@ -63,7 +69,10 @@ of truth.
 Run:
 
 ```text
-python scripts/flightcheck/cli.py --checkpoint ENV-CAPACITY-001
+python scripts/flightcheck/cli.py \
+  --checkpoint ENV-CAPACITY-001 \
+  --environment-url "{ENVIRONMENT_URL}" \
+  --environment-id "{ENVIRONMENT_ID}"
 ```
 
 Ask the maker to select exactly one approved model: `licensed users`, `PayG`, or
