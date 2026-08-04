@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 from auth import authenticate, discover_tenant, query_all, update_record
 from flightcheck.pp_admin_client import PPAdminClient, derive_environment_id
@@ -106,11 +107,20 @@ def _persist_setup_status(
 ) -> None:
     from setup_state import persist_product_installation_status
 
+    attestation_required = bool(binding_result.get("attestationRequired"))
     persist_product_installation_status(
         installation["configKey"],
-        "bound",
+        (
+            "connection-attestation-required"
+            if attestation_required
+            else "bound"
+        ),
         connection_name=binding_result.get("connectionName"),
         schema_name=installation["solution"]["parentUniqueName"],
+        requires_connection_attestation=attestation_required,
+        agent_id=binding_result.get("agentId"),
+        agent_name=binding_result.get("agentName"),
+        connection_settings_url=binding_result.get("connectionSettingsUrl"),
         state_path=state_path,
     )
 
@@ -184,6 +194,41 @@ def _assert_reference_in_solution(
             f"The required connection reference does not belong to solution "
             f"'{solution_unique_name}'."
         )
+
+
+def _installed_agent(
+    env_url: str,
+    token: str,
+    schema_name: str,
+) -> dict:
+    escaped_schema_name = schema_name.replace("'", "''")
+    agents = query_all(
+        env_url,
+        token,
+        "bots",
+        "botid,name,schemaname",
+        filter_expr=f"schemaname eq '{escaped_schema_name}'",
+    )
+    if len(agents) != 1:
+        raise RuntimeError(
+            "Expected exactly one installed agent for "
+            f"'{schema_name}', found {len(agents)}."
+        )
+    agent = agents[0]
+    if not agent.get("botid") or not agent.get("name"):
+        raise RuntimeError(
+            f"The installed agent '{schema_name}' is missing its ID or name."
+        )
+    return agent
+
+
+def connection_settings_url(environment_id: str, agent_id: str) -> str:
+    """Build the direct Copilot Studio connection-settings URL."""
+    return (
+        "https://copilotstudio.preview.microsoft.com/environments/"
+        f"{quote(environment_id, safe='')}/copilots/"
+        f"{quote(agent_id, safe='')}/settings/connectionSettings"
+    )
 
 
 def bind_connection(
@@ -287,6 +332,20 @@ def bind_connection(
             "reference did not retain the selected connection."
         )
 
+    attestation_required = requirement.get("runtimeSource") == "invoker"
+    agent = None
+    settings_url = None
+    if attestation_required:
+        agent = _installed_agent(
+            env_url,
+            token,
+            installation["solution"]["parentUniqueName"],
+        )
+        settings_url = connection_settings_url(
+            preflight["environmentId"],
+            agent["botid"],
+        )
+
     result = {
         "required": True,
         "status": "bound",
@@ -295,6 +354,10 @@ def bind_connection(
         "connectionAccountName": selected["accountName"],
         "referenceId": reference["connectionreferenceid"],
         "referenceLogicalName": requirement["referenceLogicalName"],
+        "attestationRequired": attestation_required,
+        "agentId": agent["botid"] if agent else None,
+        "agentName": agent["name"] if agent else None,
+        "connectionSettingsUrl": settings_url,
     }
     _persist_setup_status(installation, result, state_path)
     return result

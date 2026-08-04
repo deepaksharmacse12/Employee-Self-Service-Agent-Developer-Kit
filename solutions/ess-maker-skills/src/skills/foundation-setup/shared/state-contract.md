@@ -51,10 +51,15 @@ cea.essit
 
 `products` always contains an independent record for all four IDs. Selected
 products transition through `pending`, `connection-required`, `ready`,
-`installing`, `manual-required`, `installed`, `bound`, or `failed`. Unselected
-products remain `not-selected`.
+`installing`, `manual-required`, `installed`,
+`connection-attestation-required`, `bound`, or `failed`. Unselected products
+remain `not-selected`.
 
 Installation and binding commands may update only their own product record.
 Successful products must remain durable when another product is blocked or
 fails. Readiness can pass only after that product reaches `bound`; `bound`
 also covers products whose catalog declares that no connection is required.
+An `invoker` connection reaches `connection-attestation-required` after
+automatic binding and can reach `bound` only after the maker attests that the
+connection is connected and shared in the installed agent's Copilot Studio
+connection settings.

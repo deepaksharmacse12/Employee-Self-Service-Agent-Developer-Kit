@@ -58,6 +58,7 @@ REQUIRED_CHECKS_BY_STEP = {
         "SETUP-INSTALL-001",
         "SETUP-INSTALL-002",
         "SETUP-INSTALL-003",
+        "SETUP-INSTALL-004",
     ),
     "SETUP-06": (
         "SETUP-READINESS-001",
@@ -76,6 +77,7 @@ FINAL_BUNDLE_CHECKS = (
     "SETUP-ALM-002",
     "SETUP-INSTALL-001",
     "SETUP-INSTALL-002",
+    "SETUP-INSTALL-004",
     "SETUP-READINESS-001",
     "SETUP-READINESS-002",
     "SETUP-HANDOFF-002",
@@ -108,6 +110,7 @@ class InstallationStatus(StrEnum):
     INSTALLING = "installing"
     MANUAL_REQUIRED = "manual-required"
     INSTALLED = "installed"
+    CONNECTION_ATTESTATION_REQUIRED = "connection-attestation-required"
     BOUND = "bound"
     FAILED = "failed"
 
@@ -151,6 +154,11 @@ class ProductInstallationRecord:
     installation_status: str = InstallationStatus.NOT_SELECTED
     connection_name: str | None = None
     schema_name: str | None = None
+    requires_connection_attestation: bool = False
+    agent_id: str | None = None
+    agent_name: str | None = None
+    connection_settings_url: str | None = None
+    connection_attested_at: str | None = None
     ready: bool = False
     failure_cause: str | None = None
     updated_at: str | None = None
@@ -405,6 +413,33 @@ class SetupWorkflow:
                     f"Unselected product {product_id} cannot have installation "
                     "progress"
                 )
+            if (
+                record.installation_status
+                == InstallationStatus.CONNECTION_ATTESTATION_REQUIRED
+            ):
+                required_metadata = (
+                    record.connection_name,
+                    record.agent_id,
+                    record.agent_name,
+                    record.connection_settings_url,
+                )
+                if (
+                    not record.requires_connection_attestation
+                    or any(not value for value in required_metadata)
+                ):
+                    raise SetupStateError(
+                        f"Product {product_id} has incomplete connection "
+                        "attestation state"
+                    )
+            if (
+                record.installation_status == InstallationStatus.BOUND
+                and record.requires_connection_attestation
+                and not record.connection_attested_at
+            ):
+                raise SetupStateError(
+                    f"Product {product_id} is bound without required maker "
+                    "connection attestation"
+                )
 
         if state.active_step not in STEP_ORDER:
             raise SetupStateError(f"Invalid active step: {state.active_step!r}")
@@ -488,6 +523,15 @@ class SetupWorkflow:
                 if record.selected
                 else InstallationStatus.NOT_SELECTED
             )
+            record.connection_name = None
+            record.schema_name = None
+            record.requires_connection_attestation = False
+            record.agent_id = None
+            record.agent_name = None
+            record.connection_settings_url = None
+            record.connection_attested_at = None
+            record.ready = False
+            record.failure_cause = None
             record.updated_at = utc_now()
         for check_id, evidence in (
             (
@@ -671,6 +715,10 @@ class SetupWorkflow:
         *,
         connection_name: str | None = None,
         schema_name: str | None = None,
+        requires_connection_attestation: bool | None = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
+        connection_settings_url: str | None = None,
         failure_cause: str | None = None,
     ) -> None:
         product_id = ProductId(product_id)
@@ -715,6 +763,12 @@ class SetupWorkflow:
             },
             InstallationStatus.INSTALLED: {
                 InstallationStatus.INSTALLED,
+                InstallationStatus.CONNECTION_ATTESTATION_REQUIRED,
+                InstallationStatus.BOUND,
+                InstallationStatus.FAILED,
+            },
+            InstallationStatus.CONNECTION_ATTESTATION_REQUIRED: {
+                InstallationStatus.CONNECTION_ATTESTATION_REQUIRED,
                 InstallationStatus.BOUND,
                 InstallationStatus.FAILED,
             },
@@ -733,14 +787,128 @@ class SetupWorkflow:
                 f"Invalid installation transition for {product_id.value}: "
                 f"{current} -> {status}"
             )
+        if status == InstallationStatus.CONNECTION_ATTESTATION_REQUIRED:
+            required_metadata = {
+                "connection name": connection_name or record.connection_name,
+                "agent id": agent_id or record.agent_id,
+                "agent name": agent_name or record.agent_name,
+                "connection settings URL": (
+                    connection_settings_url or record.connection_settings_url
+                ),
+            }
+            missing = [
+                label for label, value in required_metadata.items()
+                if not isinstance(value, str) or not value.strip()
+            ]
+            if missing:
+                raise SetupStateError(
+                    "Connection attestation requires "
+                    f"{', '.join(missing)}"
+                )
+            if requires_connection_attestation is not True:
+                raise SetupStateError(
+                    "Connection attestation status requires an invoker connection"
+                )
+        if (
+            status == InstallationStatus.BOUND
+            and record.requires_connection_attestation
+            and not record.connection_attested_at
+        ):
+            raise SetupStateError(
+                f"Product {product_id.value} requires maker connection "
+                "attestation before it can be bound"
+            )
         record.installation_status = status
         if connection_name is not None:
             record.connection_name = connection_name
         if schema_name is not None:
             record.schema_name = schema_name
+        if requires_connection_attestation is not None:
+            record.requires_connection_attestation = (
+                requires_connection_attestation
+            )
+        if agent_id is not None:
+            record.agent_id = agent_id
+        if agent_name is not None:
+            record.agent_name = agent_name
+        if connection_settings_url is not None:
+            record.connection_settings_url = connection_settings_url
+        if status == InstallationStatus.INSTALLING:
+            record.requires_connection_attestation = False
+            record.agent_id = None
+            record.agent_name = None
+            record.connection_settings_url = None
+            record.connection_attested_at = None
         record.failure_cause = failure_cause
         record.updated_at = utc_now()
         state.updated_at = record.updated_at
+
+    @staticmethod
+    def attest_product_connection(
+        state: SetupState,
+        product_id: ProductId,
+    ) -> None:
+        """Record the maker's mandatory post-binding invoker attestation."""
+        product_id = ProductId(product_id)
+        record = state.products[product_id.value]
+        if (
+            record.installation_status
+            != InstallationStatus.CONNECTION_ATTESTATION_REQUIRED
+        ):
+            raise SetupStateError(
+                f"Product {product_id.value} is not awaiting connection "
+                "attestation"
+            )
+        if not record.requires_connection_attestation:
+            raise SetupStateError(
+                f"Product {product_id.value} does not require connection "
+                "attestation"
+            )
+
+        attested_at = utc_now()
+        record.connection_attested_at = attested_at
+        SetupWorkflow.update_product_installation(
+            state,
+            product_id,
+            InstallationStatus.BOUND,
+        )
+        check_id = (
+            "SETUP-INSTALL-CONNECTION-"
+            f"{product_id.value.upper().replace('.', '-')}"
+        )
+        SetupWorkflow.record_validation(
+            state,
+            check_id,
+            ValidationStatus.PASS,
+            ValidationMode.MANUAL_ATTESTED,
+            {
+                "product_id": product_id.value,
+                "agent_id": record.agent_id,
+                "agent_name": record.agent_name,
+                "connection_name": record.connection_name,
+                "connection_settings_url": record.connection_settings_url,
+                "attested_at": attested_at,
+            },
+            [],
+        )
+        attested_products = [
+            selected_product_id
+            for selected_product_id in state.selected_products
+            if (
+                state.products[
+                    selected_product_id
+                ].requires_connection_attestation
+                and state.products[selected_product_id].connection_attested_at
+            )
+        ]
+        SetupWorkflow.record_validation(
+            state,
+            "SETUP-INSTALL-004",
+            ValidationStatus.PASS,
+            ValidationMode.MANUAL_ATTESTED,
+            {"attested_products": attested_products},
+            [],
+        )
 
     @staticmethod
     def set_product_readiness(
@@ -824,6 +992,13 @@ class SetupWorkflow:
             record = state.products[product_id]
             record.selected = True
             record.installation_status = InstallationStatus.PENDING
+            record.connection_name = None
+            record.schema_name = None
+            record.requires_connection_attestation = False
+            record.agent_id = None
+            record.agent_name = None
+            record.connection_settings_url = None
+            record.connection_attested_at = None
             record.ready = False
             record.failure_cause = None
             record.updated_at = utc_now()
@@ -962,6 +1137,10 @@ def persist_product_installation_status(
     *,
     connection_name: str | None = None,
     schema_name: str | None = None,
+    requires_connection_attestation: bool | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+    connection_settings_url: str | None = None,
     failure_cause: str | None = None,
     state_path: Path = DEFAULT_STATE_PATH,
 ) -> None:
@@ -974,6 +1153,10 @@ def persist_product_installation_status(
         InstallationStatus(status),
         connection_name=connection_name,
         schema_name=schema_name,
+        requires_connection_attestation=requires_connection_attestation,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        connection_settings_url=connection_settings_url,
         failure_cause=failure_cause,
     )
     service.save(state)
@@ -1116,6 +1299,13 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
     )
 
+    attestation = commands.add_parser("attest-product-connection")
+    attestation.add_argument(
+        "--product",
+        required=True,
+        choices=[item.value for item in ProductId],
+    )
+
     add_product = commands.add_parser("add-product")
     add_product.add_argument(
         "--product",
@@ -1201,6 +1391,12 @@ def main() -> int:
                 state,
                 ProductId(args.product),
                 args.ready,
+            )
+            service.save(state)
+        elif args.command == "attest-product-connection":
+            SetupWorkflow.attest_product_connection(
+                state,
+                ProductId(args.product),
             )
             service.save(state)
         elif args.command == "add-product":

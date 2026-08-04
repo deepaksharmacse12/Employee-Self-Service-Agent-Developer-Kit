@@ -88,15 +88,69 @@ python scripts/ess_connection_binding.py bind \
 ```
 
 Continue only when `ESS_CONNECTION_BINDING_JSON:` reports `bound` or
-`not-required`. The command rereads Dataverse after binding and persists the
-product as `bound`. On failure, keep the product-specific error and stop that
-product without changing successful products.
+`not-required`. The command rereads Dataverse after binding.
+
+- For `not-required`, it persists the product as `bound` and continues without
+  asking for connection attestation.
+- For a bound connection whose catalog `runtimeSource` is not `invoker`, it
+  persists the product as `bound` and continues without attestation.
+- For a bound `invoker` connection, it persists the product as
+  `connection-attestation-required` and returns `agentName`,
+  `connectionDisplayName`, and `connectionSettingsUrl`. Show:
+
+  Connection binding is complete. Please verify that the connection is
+  available to the installed agent:
+
+  1. Open [connection settings for `{AGENT_NAME}`]({CONNECTION_SETTINGS_URL}).
+  2. Confirm the `{ENVIRONMENT_NAME}` environment is selected.
+  3. Confirm the `{AGENT_NAME}` agent is open.
+  4. In `Settings`, open `Connection settings`.
+  5. Locate **{CONNECTION_DISPLAY_NAME}**.
+  6. Confirm the connection is connected.
+  7. In the `Manage` column, choose `See details`.
+  8. Open `Connection parameters`.
+  9. If parameters are available, enable sharing for the parameters and choose
+     `Save`.
+
+  Ask exactly one question:
+
+  - Header: `Verify connection`
+  - Question: `Is **{CONNECTION_DISPLAY_NAME}** connected, with all required connection parameters shared with the \`{AGENT_NAME}\` agent?`
+  - Options:
+    - `Yes, it is connected and required parameters are shared`
+    - `No, it still needs attention`
+
+  When the maker selects
+  `Yes, it is connected and required parameters are shared`, persist the
+  mandatory manual attestation:
+
+  ```text
+  python scripts/setup_state.py attest-product-connection \
+    --product "{PRODUCT_ID}"
+  ```
+
+  Continue only after the command advances the product to `bound`. If the maker
+  selects `No, it still needs attention`, keep the product at
+  `connection-attestation-required`, repeat the navigation guidance, and stop
+  that product. There is no skip option.
+
+On failure, keep the product-specific error and stop that product without
+changing successful products. When resuming a product already at
+`connection-attestation-required`, use its persisted agent name and settings
+URL to show the same mandatory attestation; do not rerun installation or
+binding.
 
 Record:
 
 - `SETUP-INSTALL-001` — every selected starter appears;
 - `SETUP-INSTALL-002` — every selected starter opens;
 - `SETUP-INSTALL-003` — every selected product is independently `bound`.
+- `SETUP-INSTALL-004` — every selected `invoker` product has maker-attested
+  connection settings, or no selected product uses an `invoker` connection.
+
+The attestation command records `SETUP-INSTALL-004` in `manual-attested` mode.
+If no selected product uses an `invoker` connection, record it in `automated`
+mode with evidence `{"attestation_required": false}`.
 
 Automated verification may be supplemented by manual-attested starter-specific
 evidence because `ESS-SOLN-001` covers the solution family rather than uniquely

@@ -47,8 +47,14 @@ def test_installation_config_declares_only_it_connection_requirements():
     assert installations["da.it"]["requiredConnection"]["connectorApiName"] == (
         "shared_alchemy"
     )
+    assert installations["da.it"]["requiredConnection"]["runtimeSource"] == (
+        "invoker"
+    )
     assert installations["cea.it"]["requiredConnection"]["connectorApiName"] == (
         "shared_alchemy"
+    )
+    assert installations["cea.it"]["requiredConnection"]["runtimeSource"] == (
+        "invoker"
     )
 
 
@@ -137,6 +143,11 @@ def test_bind_updates_exact_solution_reference_and_persists_s_states(
             "connectionreferenceid": reference_id,
             "connectionid": "alchemy-connection",
         }],
+        [{
+            "botid": "33333333-3333-3333-3333-333333333333",
+            "name": "Employee Self-Service IT",
+            "schemaname": "msdyn_CopilotForEmployeeSelfServiceDAIT",
+        }],
     ])
     updates = []
     monkeypatch.setattr(ess_connection_binding, "discover_tenant", lambda url: "tenant")
@@ -176,11 +187,22 @@ def test_bind_updates_exact_solution_reference_and_persists_s_states(
     )
 
     assert result["status"] == "bound"
+    assert result["attestationRequired"] is True
+    assert result["connectionSettingsUrl"] == (
+        "https://copilotstudio.preview.microsoft.com/environments/"
+        "environment-id/copilots/"
+        "33333333-3333-3333-3333-333333333333/settings/connectionSettings"
+    )
     assert updates[0][-1] == {"connectionid": "alchemy-connection"}
     state = JsonSetupStateRepository(state_path).load()
     product = state.products["da.essit"]
-    assert product.installation_status == "bound"
+    assert (
+        product.installation_status
+        == "connection-attestation-required"
+    )
     assert product.connection_name == "alchemy-connection"
+    assert product.agent_name == "Employee Self-Service IT"
+    assert product.connection_settings_url == result["connectionSettingsUrl"]
 
 
 def test_hr_binding_marks_connection_not_required(tmp_path, monkeypatch):
@@ -212,3 +234,16 @@ def test_hr_binding_marks_connection_not_required(tmp_path, monkeypatch):
     assert result["status"] == "not-required"
     state = JsonSetupStateRepository(state_path).load()
     assert state.products["cea.esshr"].installation_status == "bound"
+    assert state.products["cea.esshr"].requires_connection_attestation is False
+
+
+def test_connection_settings_url_escapes_path_segments():
+    import ess_connection_binding
+
+    assert ess_connection_binding.connection_settings_url(
+        "environment/id",
+        "agent id",
+    ) == (
+        "https://copilotstudio.preview.microsoft.com/environments/"
+        "environment%2Fid/copilots/agent%20id/settings/connectionSettings"
+    )

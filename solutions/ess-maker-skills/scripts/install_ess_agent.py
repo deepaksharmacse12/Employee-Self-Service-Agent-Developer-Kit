@@ -244,6 +244,7 @@ def load_installation_config(
                 "displayName",
                 "connectorApiName",
                 "referenceLogicalName",
+                "runtimeSource",
                 "creationGuidance",
             )
             if not isinstance(required_connection, dict) or any(
@@ -259,6 +260,11 @@ def load_installation_config(
                 raise ValueError(
                     f"Installation '{installation_key}' must use the "
                     "shared_alchemy connector."
+                )
+            if required_connection["runtimeSource"] != "invoker":
+                raise ValueError(
+                    f"Installation '{installation_key}' must declare its "
+                    "connection runtimeSource as 'invoker'."
                 )
             expected_reference_prefix = parent_unique_name.casefold()
             if not required_connection["referenceLogicalName"].casefold().startswith(

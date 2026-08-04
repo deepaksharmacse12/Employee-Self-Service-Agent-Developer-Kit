@@ -26,6 +26,10 @@ Use formatting consistently according to what the text represents:
 Do not use bold for portal controls or code formatting for product names merely
 for emphasis. Formatting conveys meaning, not decoration.
 
+Apply the same semantics inside confirmation questions and picker labels. For
+example: `Is **Microsoft 365 Self-Help** connected and shared with the
+\`Employee Self-Service IT\` agent?`
+
 ## Procedural guidance
 
 1. Use a numbered list for any sequence of UI actions.
@@ -40,26 +44,22 @@ known environment as `ESS combined`, for example, rather than "the target
 environment." Never show unresolved placeholders such as
 `{ENVIRONMENT_NAME}` to the maker.
 
-## Examples
+## Authoring pattern
 
-### Create a connector connection
+Compose UI guidance from the runtime context rather than copying a stored
+walkthrough:
 
-1. Open [Power Apps](https://make.powerapps.com).
-2. Select the `ESS combined` environment.
-3. Open `Connections`.
-4. Choose `New connection`.
-5. Search for **Microsoft 365 Self-Help**.
-6. Create the connection, then select **Check again** here.
+1. Link directly to the closest available destination.
+2. Identify the selected environment, agent, or other scoped object.
+3. Name each UI control required to reach the target.
+4. Identify the product, connector, or service being acted on.
+5. Describe the required state or action.
+6. End with the save, confirmation, retry, or return action.
 
-### Enable Dataverse MCP
-
-1. Open [Power Platform admin center](https://admin.powerplatform.microsoft.com/environments).
-2. Select the `ESS combined` environment.
-3. Open `Settings` → `Product` → `Features`.
-4. Turn on **Allow MCP clients to interact with Dataverse MCP server**.
-5. Open `Advanced Settings`.
-6. Open **Microsoft GitHub Copilot** and set `Is Enabled` to `Yes`.
-7. Choose `Save & Close`, then select **Check again** here.
+The steps above describe structure, not text to display. Each owning skill must
+generate its instructions from the controls and values relevant to that
+workflow. Do not add complete popup messages or workflow walkthroughs to this
+document.
 
 ## Avoid
 
@@ -89,5 +89,5 @@ environment." Never show unresolved placeholders such as
 
 Add or refine rules here instead of duplicating them in individual skills.
 Skill files should reference this document and contain only guidance specific
-to their workflow. When this contract changes, update its examples and the
+to their workflow. When this contract changes, update its rules and the
 structural tests that protect required formatting.

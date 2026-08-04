@@ -130,9 +130,28 @@ def test_onboarding_guidance_uses_precise_markdown_formatting() -> None:
     assert "Use a numbered list for any sequence of UI actions." in guidelines
     assert "Do not use bold for portal controls" in guidelines
     assert "Never show unresolved placeholders" in guidelines
+    assert "Do not add complete popup messages" in guidelines
+    assert "Verify an installed agent connection" not in guidelines
     assert "[Power Apps](https://make.powerapps.com)" in installation
     assert "`Connections`" in installation
     assert "`New connection`" in installation
     assert "**{displayName}**" in installation
     assert "Select the `{ENVIRONMENT_NAME}` environment." in installation
+    assert "connection-attestation-required" in installation
+    assert "attest-product-connection" in installation
+    assert "connectionSettingsUrl" in installation
+    assert "There is no skip option." in installation
+    assert "`Connection settings`" in installation
+    assert (
+        "Is **{CONNECTION_DISPLAY_NAME}** connected"
+        in installation
+    )
+    assert r"\`{AGENT_NAME}\` agent?" in installation
+    assert "In the `Manage` column, choose `See details`." in installation
+    assert "Open `Connection parameters`." in installation
+    assert (
+        "If parameters are available, enable sharing for the parameters"
+        in installation
+    )
+    assert "`Save`." in installation
     assert "In make.powerapps.com, select the target environment" not in catalog

@@ -304,6 +304,7 @@ def test_install_step_requires_every_selected_product_to_be_bound() -> None:
         "SETUP-INSTALL-001",
         "SETUP-INSTALL-002",
         "SETUP-INSTALL-003",
+        "SETUP-INSTALL-004",
     ):
         SetupWorkflow.record_validation(
             state,
@@ -343,6 +344,62 @@ def test_installation_progress_updates_are_resumable() -> None:
     )
 
     assert state.products["da.esshr"].installation_status == "installed"
+
+
+def test_invoker_connection_requires_maker_attestation_before_bound() -> None:
+    state = SetupState()
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="env-1",
+        environment_name="Development",
+        environment_type=EnvironmentType.DEV,
+        tenant_endpoint="https://dev.crm.dynamics.com",
+        selected_products=(ProductId.DA_ESSIT,),
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSIT,
+        InstallationStatus.INSTALLING,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSIT,
+        InstallationStatus.INSTALLED,
+    )
+    SetupWorkflow.update_product_installation(
+        state,
+        ProductId.DA_ESSIT,
+        InstallationStatus.CONNECTION_ATTESTATION_REQUIRED,
+        connection_name="alchemy",
+        schema_name="msdyn_CopilotForEmployeeSelfServiceDAIT",
+        requires_connection_attestation=True,
+        agent_id="agent-id",
+        agent_name="Employee Self-Service IT",
+        connection_settings_url=(
+            "https://copilotstudio.preview.microsoft.com/environments/"
+            "env-1/copilots/agent-id/settings/connectionSettings"
+        ),
+    )
+
+    with pytest.raises(SetupStateError, match="requires maker connection"):
+        SetupWorkflow.update_product_installation(
+            state,
+            ProductId.DA_ESSIT,
+            InstallationStatus.BOUND,
+        )
+
+    SetupWorkflow.attest_product_connection(state, ProductId.DA_ESSIT)
+
+    product = state.products["da.essit"]
+    assert product.installation_status == "bound"
+    assert product.connection_attested_at is not None
+    assert (
+        state.validations["SETUP-INSTALL-004"].mode
+        == ValidationMode.MANUAL_ATTESTED
+    )
+    assert state.validations[
+        "SETUP-INSTALL-CONNECTION-DA-ESSIT"
+    ].evidence["agent_id"] == "agent-id"
 
 
 def test_verified_alm_solution_metadata_is_persisted() -> None:
@@ -476,6 +533,7 @@ def test_finalize_marks_connect_ready() -> None:
             "SETUP-INSTALL-001",
             "SETUP-INSTALL-002",
             "SETUP-INSTALL-003",
+            "SETUP-INSTALL-004",
         ),
         (
             "SETUP-READINESS-001",

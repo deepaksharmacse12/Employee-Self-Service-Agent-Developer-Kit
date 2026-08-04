@@ -124,6 +124,20 @@ def test_installation_config_rejects_catalog_drift(tmp_path: Path):
         install_ess_agent.load_installation_config(config_path)
 
 
+def test_installation_config_requires_invoker_runtime_source(tmp_path: Path):
+    import install_ess_agent
+
+    config = install_ess_agent.load_installation_config()
+    config["installations"]["da.it"]["requiredConnection"]["runtimeSource"] = (
+        "embedded"
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="runtimeSource as 'invoker'"):
+        install_ess_agent.load_installation_config(config_path)
+
+
 class FakePPAdminClient:
     def __init__(self, tenant_id, environment_id="env-123", connections=None):
         self.tenant_id = tenant_id
