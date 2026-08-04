@@ -382,6 +382,44 @@ class TestDiscoverListEnvironmentsMode:
 
 
 class TestEssAgentInventory:
+    def test_inventory_only_succeeds_when_no_agents_are_installed(
+        self,
+        capsys,
+        monkeypatch,
+    ):
+        import discover
+
+        monkeypatch.setattr(discover, "authenticate", lambda _url: "token")
+        monkeypatch.setattr(
+            discover,
+            "discover_agents",
+            lambda _url, _token: [],
+        )
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "discover.py",
+                "--url",
+                "https://org.crm.dynamics.com",
+                "--inventory-only",
+            ],
+        )
+
+        discover.main()
+
+        output = capsys.readouterr().out
+        json_line = [
+            line
+            for line in output.splitlines()
+            if line.startswith("ESS_AGENT_DISCOVERY_JSON:")
+        ][0]
+        payload = json.loads(
+            json_line.split("ESS_AGENT_DISCOVERY_JSON:", 1)[1]
+        )
+        assert payload["agents"] == []
+        assert len(payload["availableInstallations"]) == 4
+        assert "No supported ESS agents found" not in output
+
     def test_excludes_installed_product_and_unrelated_bots(self):
         import discover
         import install_ess_agent

@@ -1219,9 +1219,7 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument(
         "--product",
         required=True,
-        action="append",
         choices=[item.value for item in ProductId],
-        dest="products",
     )
 
     step = commands.add_parser("update-step")
@@ -1335,9 +1333,7 @@ def main() -> int:
                 environment_name=args.environment_name,
                 environment_type=args.environment_type,
                 tenant_endpoint=args.tenant_endpoint,
-                selected_products=tuple(
-                    ProductId(product_id) for product_id in args.products
-                ),
+                selected_products=(ProductId(args.product),),
             )
             service.save(state)
         elif args.command == "update-step":

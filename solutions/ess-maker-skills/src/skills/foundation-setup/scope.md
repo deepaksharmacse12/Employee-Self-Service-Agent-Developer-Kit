@@ -1,8 +1,7 @@
 <!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
 # Setup Step 1 — Scope
 
-Use `vscode_askQuestions` to collect one target environment and one or more ESS
-products.
+Use `vscode_askQuestions` to collect one target environment and one ESS product.
 
 1. First ask how the maker wants to provide the environment:
 
@@ -114,16 +113,52 @@ products.
 7. Use the environment type returned in `SELECTED_ENV_JSON:` as
    `ENVIRONMENT_PLATFORM_TYPE`. Do not ask the maker to classify the
    environment.
-8. Present these four products in this order:
-   - **DA: Employee Self-Service HR (Recommended)**
-   - **DA: Employee Self-Service IT (Recommended)**
-   - **CEA: Employee Self-Service HR**
-   - **CEA: Employee Self-Service IT**
-9. Let the maker select one or more products. Persist the catalog IDs exactly as
-   `da.esshr`, `da.essit`, `cea.esshr`, and `cea.essit`.
+8. Discover the supported ESS agents already installed in the selected
+   environment and the remaining catalog installations:
+
+   ```text
+   python scripts/discover.py \
+     --url "{ENVIRONMENT_URL}" \
+     --inventory-only
+   ```
+
+   Parse `ESS_AGENT_DISCOVERY_JSON:`. Treat `agents` as installed and
+   `availableInstallations` as the only products available to install. Do not
+   offer an installed product as an installation option.
+
+   If `agents` is nonempty, show each installed agent distinctly:
+
+   ```text
+   Installed: **{agent 1 name}**; **{agent 2 name}**
+   ```
+
+   Build the same `vscode_askQuestions` picker used by onboarding:
+
+   - Add one option for each `availableInstallations` entry, preserving catalog
+     order and using its `label` and `description`.
+   - If `agents` is nonempty, append **Customize an installed agent**.
+   - Do not mark any option as recommended in the tool metadata and do not
+     preselect an option. The `(Recommended)` text in a catalog label is
+     informational only.
+   - Allow exactly one selection.
+
+   If the maker selects an available installation, use its `configKey` as
+   `PRODUCT_ID`.
+
+   If the maker selects **Customize an installed agent**, ask them to select one
+   entry from `agents`. Use its `configKey` as `PRODUCT_ID` and retain its
+   `schemaname` as `INSTALLED_SCHEMA_NAME`. This adopts the existing installed
+   product into foundation state; it does not reinstall it.
+
+   If both `agents` and `availableInstallations` are empty, show the exact
+   discovery result and stop.
+9. Persist `PRODUCT_ID`, which must be exactly `da.esshr`, `da.essit`,
+   `cea.esshr`, or `cea.essit`.
 
 Do not collapse the choices into HR, IT, or both. DA and CEA are separate
-installable products with independent lifecycle state.
+installable products with independent lifecycle state. Install one product per
+foundation cycle. After setup completes, onboarding uses `add-product` to offer
+one remaining product at a time while preserving the installed product.
 
 Persist the locked scope:
 
@@ -133,11 +168,21 @@ python scripts/setup_state.py set-scope \
   --environment-name "{ENVIRONMENT_NAME}" \
   --environment-type "{ENVIRONMENT_PLATFORM_TYPE}" \
   --tenant-endpoint "{ENVIRONMENT_URL}" \
-  --product "{PRODUCT_ID}" [--product "{ANOTHER_PRODUCT_ID}" ...]
+  --product "{PRODUCT_ID}"
 ```
 
 The command records `SETUP-SCOPE-001`, `SETUP-SCOPE-002`, and
 `SETUP-SCOPE-003`, then completes the step atomically.
+
+If an installed agent was selected for customization, immediately record its
+existing installation:
+
+```text
+python scripts/setup_state.py set-product-status \
+  --product "{PRODUCT_ID}" \
+  --status installed \
+  --schema-name "{INSTALLED_SCHEMA_NAME}"
+```
 
 **Message:**
 

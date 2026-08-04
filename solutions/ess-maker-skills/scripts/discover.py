@@ -121,6 +121,11 @@ def main():
         "--resolve-environment-url",
         help="Resolve one environment URL to its Power Platform metadata",
     )
+    parser.add_argument(
+        "--inventory-only",
+        action="store_true",
+        help="Output ESS agent inventory JSON without requiring an installed agent",
+    )
     parser.add_argument("--select", type=int, default=None,
                         help="Select agent by number and output JSON")
     args = parser.parse_args()
@@ -195,6 +200,9 @@ def main():
 
     print(f"ESS_AGENT_DISCOVERY_JSON:{json.dumps(inventory)}")
     agents = inventory["agents"]
+
+    if args.inventory_only:
+        return
 
     if not agents:
         print("No supported ESS agents found in this environment.")

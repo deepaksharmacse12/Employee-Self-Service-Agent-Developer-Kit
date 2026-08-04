@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import setup_state
 from setup_state import (
     EnvironmentType,
     InstallationStatus,
@@ -249,6 +250,24 @@ def test_scope_accepts_discovered_power_platform_environment_type() -> None:
     )
 
     assert state.environment["type"] == "Developer"
+
+
+def test_set_scope_cli_accepts_one_initial_product() -> None:
+    args = setup_state.build_parser().parse_args([
+        "set-scope",
+        "--environment-id",
+        "environment-id",
+        "--environment-name",
+        "Development",
+        "--environment-type",
+        "Developer",
+        "--tenant-endpoint",
+        "https://dev.crm.dynamics.com",
+        "--product",
+        "da.esshr",
+    ])
+
+    assert args.product == "da.esshr"
 
 
 def test_product_installation_states_are_independent() -> None:

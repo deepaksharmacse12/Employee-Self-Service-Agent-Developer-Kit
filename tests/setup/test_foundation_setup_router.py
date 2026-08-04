@@ -150,6 +150,29 @@ def test_scope_uses_discovered_environment_type_without_prompting() -> None:
     assert "{Dev|Test|Prod}" not in scope
 
 
+def test_initial_scope_selects_one_product_without_default_selection() -> None:
+    scope = _SCOPE.read_text(encoding="utf-8")
+    normalized = " ".join(scope.split())
+
+    assert "--inventory-only" in scope
+    assert "ESS_AGENT_DISCOVERY_JSON:" in scope
+    assert "availableInstallations" in scope
+    assert "Do not offer an installed product as an installation option." in (
+        normalized
+    )
+    assert "Installed: **{agent 1 name}**; **{agent 2 name}**" in scope
+    assert "Customize an installed agent" in scope
+    assert "Allow exactly one selection." in scope
+    assert "Do not mark any option as recommended in the tool metadata" in (
+        normalized
+    )
+    assert "do not preselect an option" in normalized
+    assert "--product \"{PRODUCT_ID}\"" in scope
+    assert "ANOTHER_PRODUCT_ID" not in scope
+    assert "--status installed" in scope
+    assert "it does not reinstall it" in normalized
+
+
 def test_scope_guides_and_verifies_new_environment_creation() -> None:
     scope = _SCOPE.read_text(encoding="utf-8")
     normalized = " ".join(scope.split())
