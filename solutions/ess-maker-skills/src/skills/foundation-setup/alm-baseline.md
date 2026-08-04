@@ -45,14 +45,21 @@ python scripts/preferred_solution.py \
   select --solution-id "{SOLUTION_ID}"
 ```
 
-The command detects whether the selected solution is already preferred. If so,
-it does not write to Dataverse. Otherwise it invokes `SetPreferredSolution`,
-rereads `GetPreferredSolution()`, and continues only when the selected ID is
-retained. It then persists the solution ID, unique name, publisher prefix, and
-version to setup state.
+The command must not trust the picker label. After the maker answers, it
+rediscovers the selected solution and reads `GetPreferredSolution()`. If the
+selected solution is not preferred, it invokes `SetPreferredSolution`. It then
+always reads `GetPreferredSolution()` again and continues only when the selected
+ID is retained. This final verification is mandatory even when the solution was
+already marked **(Current preferred)**. It then persists the solution ID, unique
+name, publisher prefix, and version to setup state.
 
 Parse `PREFERRED_SOLUTION_JSON:` and show a concise confirmation. Do not ask for
 another confirmation.
+
+If Dataverse rejects the cached session with HTTP 401, the command clears only
+the local token cache, prompts for sign-in, and retries once. If the retry also
+fails, show the final error once and keep `SETUP-04` in progress. Do not repeat
+the command error in a second setup message.
 
 Record:
 

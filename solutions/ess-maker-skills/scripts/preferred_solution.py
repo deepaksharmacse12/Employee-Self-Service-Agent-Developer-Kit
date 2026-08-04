@@ -12,7 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 import uuid
 
-from auth import authenticate, dataverse_get, execute_action, query_all
+from auth import (
+    AuthExpiredError,
+    authenticate,
+    clear_token_cache,
+    dataverse_get,
+    execute_action,
+    query_all,
+)
 from setup_state import persist_alm_solution
 
 
@@ -201,13 +208,14 @@ class PreferredSolutionService:
         already_preferred = selected.is_preferred
         if not already_preferred:
             self._gateway.set_preferred_solution(selected.solution_id)
-            verified_id = _normalized_guid(
-                self._gateway.get_preferred_solution_id()
+
+        verified_id = _normalized_guid(
+            self._gateway.get_preferred_solution_id()
+        )
+        if verified_id != _normalized_guid(selected.solution_id):
+            raise RuntimeError(
+                "Dataverse did not retain the selected preferred solution."
             )
-            if verified_id != _normalized_guid(selected.solution_id):
-                raise RuntimeError(
-                    "Dataverse did not retain the selected preferred solution."
-                )
 
         return selected, already_preferred
 
@@ -216,6 +224,37 @@ def _service(env_url: str) -> PreferredSolutionService:
     token = authenticate(env_url.rstrip("/"))
     gateway = DataversePreferredSolutionGateway(env_url, token)
     return PreferredSolutionService(gateway)
+
+
+def _execute_command(args: argparse.Namespace) -> tuple[str, dict]:
+    service = _service(args.url)
+    if args.command == "list":
+        candidates = service.list_candidates()
+        return LIST_MARKER, {
+            "solutions": [candidate.to_dict() for candidate in candidates],
+            "preferredSolutionId": next(
+                (
+                    candidate.solution_id
+                    for candidate in candidates
+                    if candidate.is_preferred
+                ),
+                None,
+            ),
+        }
+
+    selected, already_preferred = service.configure(args.solution_id)
+    persist_alm_solution(
+        solution_id=selected.solution_id,
+        solution_name=selected.unique_name,
+        publisher_prefix=selected.publisher_prefix,
+        version=selected.version,
+        state_path=Path(args.state),
+    )
+    return SELECTION_MARKER, {
+        **selected.to_dict(),
+        "isPreferred": True,
+        "wasAlreadyPreferred": already_preferred,
+    }
 
 
 def main() -> int:
@@ -232,39 +271,17 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        service = _service(args.url)
-        if args.command == "list":
-            candidates = service.list_candidates()
-            result = {
-                "solutions": [candidate.to_dict() for candidate in candidates],
-                "preferredSolutionId": next(
-                    (
-                        candidate.solution_id
-                        for candidate in candidates
-                        if candidate.is_preferred
-                    ),
-                    None,
-                ),
-            }
-            print(f"{LIST_MARKER}{json.dumps(result)}")
-            return 0
-
-        selected, already_preferred = service.configure(args.solution_id)
-        persist_alm_solution(
-            solution_id=selected.solution_id,
-            solution_name=selected.unique_name,
-            publisher_prefix=selected.publisher_prefix,
-            version=selected.version,
-            state_path=Path(args.state),
-        )
-        result = {
-            **selected.to_dict(),
-            "isPreferred": True,
-            "wasAlreadyPreferred": already_preferred,
-        }
-        print(f"{SELECTION_MARKER}{json.dumps(result)}")
+        try:
+            marker, result = _execute_command(args)
+        except AuthExpiredError:
+            clear_token_cache()
+            print(
+                "Dataverse rejected the cached session. Refreshing sign-in..."
+            )
+            marker, result = _execute_command(args)
+        print(f"{marker}{json.dumps(result)}")
         return 0
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (AuthExpiredError, OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}")
         return 1
 

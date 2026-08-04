@@ -124,6 +124,96 @@ class TestDiscoverTenant:
             auth.discover_tenant("http://insecure.example/")
 
 
+def test_clear_token_cache_removes_only_cached_tokens(
+    tmp_path, monkeypatch
+) -> None:
+    import auth
+
+    monkeypatch.chdir(tmp_path)
+    local = tmp_path / ".local"
+    local.mkdir()
+    cache = local / ".token_cache.bin"
+    preserved = local / "config.json"
+    cache.write_text("cached", encoding="utf-8")
+    preserved.write_text("{}", encoding="utf-8")
+
+    auth.clear_token_cache()
+
+    assert not cache.exists()
+    assert preserved.exists()
+
+
+@responses.activate
+def test_dataverse_token_validation_detects_401(
+    dataverse_url: str,
+) -> None:
+    import auth
+
+    responses.add(
+        responses.GET,
+        f"{dataverse_url}/api/data/v9.2/WhoAmI",
+        status=401,
+        json={"error": {"code": "InvalidToken"}},
+    )
+
+    assert not auth._dataverse_accepts_token(dataverse_url, "stale-token")
+
+
+def test_authenticate_replaces_dataverse_rejected_cached_token(
+    tmp_path, monkeypatch
+) -> None:
+    import auth
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.has_state_changed = True
+
+        def deserialize(self, value: str) -> None:
+            assert value == "cached"
+
+        def serialize(self) -> str:
+            return "refreshed"
+
+    class FakeApp:
+        instances = 0
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.instance = FakeApp.instances
+            FakeApp.instances += 1
+
+        def get_accounts(self) -> list[dict]:
+            return [{"home_account_id": "account"}]
+
+        def acquire_token_silent(self, scopes, account):
+            assert self.instance == 0
+            return {"access_token": "stale-token"}
+
+        def acquire_token_interactive(self, scopes, prompt):
+            assert self.instance == 1
+            return {"access_token": "fresh-token"}
+
+    monkeypatch.chdir(tmp_path)
+    local = tmp_path / ".local"
+    local.mkdir()
+    (local / ".token_cache.bin").write_text("cached", encoding="utf-8")
+    monkeypatch.setattr(auth, "discover_tenant", lambda _url: "tenant-id")
+    monkeypatch.setattr(
+        auth,
+        "_dataverse_accepts_token",
+        lambda _url, token: token != "stale-token",
+    )
+    monkeypatch.setattr(auth.msal, "SerializableTokenCache", FakeCache)
+    monkeypatch.setattr(auth.msal, "PublicClientApplication", FakeApp)
+
+    token = auth.authenticate("https://example.crm.dynamics.com")
+
+    assert token == "fresh-token"
+    assert FakeApp.instances == 2
+    assert (local / ".token_cache.bin").read_text(
+        encoding="utf-8"
+    ) == "refreshed"
+
+
 class TestQueryAll:
     """Drives scripts/auth.py:query_all through the mock.
 
@@ -620,6 +710,9 @@ class TestExecuteAction:
         action_call = next(
             call for call in responses.calls
             if call.request.url.endswith("/SetPreferredSolution")
+        )
+        assert action_call.request.headers["Authorization"] == (
+            f"Bearer {fake_token}"
         )
         assert json.loads(action_call.request.body) == {
             "SolutionId": "11111111-1111-1111-1111-111111111111"

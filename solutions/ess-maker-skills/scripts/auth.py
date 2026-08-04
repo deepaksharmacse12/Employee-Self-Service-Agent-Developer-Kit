@@ -167,6 +167,25 @@ def discover_tenant(env_url):
     return "organizations"
 
 
+def _dataverse_accepts_token(env_url, token):
+    """Return False only when Dataverse explicitly rejects the token."""
+    try:
+        resp = _SESSION.get(
+            f"{env_url}/api/data/v9.2/WhoAmI",
+            headers={
+                **HEADERS_BASE,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=30,
+            verify=True,
+        )
+    except requests.RequestException:
+        # Authentication should not turn a transient connectivity failure into
+        # a forced sign-in. The caller's real operation will surface it.
+        return True
+    return resp.status_code != 401
+
+
 def authenticate(env_url):
     """Get a Dataverse access token via MSAL interactive browser auth.
 
@@ -193,6 +212,19 @@ def authenticate(env_url):
     result = None
     if accounts:
         result = app.acquire_token_silent([scope], account=accounts[0])
+
+    if (
+        result
+        and "access_token" in result
+        and not _dataverse_accepts_token(env_url, result["access_token"])
+    ):
+        print("Dataverse rejected the cached session. Refreshing sign-in...")
+        clear_token_cache()
+        cache = msal.SerializableTokenCache()
+        app = msal.PublicClientApplication(
+            CLIENT_ID, authority=authority, token_cache=cache
+        )
+        result = None
 
     if not result or "access_token" not in result:
         print(f"Opening browser for sign-in (tenant: {tenant})...")
@@ -266,6 +298,15 @@ def authenticate(env_url):
         pass
 
     return result["access_token"]
+
+
+def clear_token_cache():
+    """Remove the exact shared MSAL cache after Dataverse rejects a token."""
+    cache_path = os.path.join(LOCAL_STATE_DIR, ".token_cache.bin")
+    try:
+        os.remove(cache_path)
+    except FileNotFoundError:
+        pass
 
 
 def query_all(env_url, token, entity_set, select, filter_expr=None):
@@ -405,7 +446,7 @@ def execute_action(env_url, token, action_name, data):
         raise ValueError("action_name must be a non-empty unbound action name")
     headers = {
         **HEADERS_BASE,
-        "Authorization": f"******",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
     url = f"{env_url}/api/data/v9.2/{action_name}"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from auth import AuthExpiredError
 from preferred_solution import PreferredSolutionGateway, PreferredSolutionService
 
 
@@ -18,6 +19,7 @@ class FakeGateway(PreferredSolutionGateway):
     def __init__(self, preferred_id: str | None = None) -> None:
         self.preferred_id = preferred_id
         self.set_calls = []
+        self.get_calls = 0
 
     def list_unmanaged_solutions(self) -> list[dict]:
         return [
@@ -38,6 +40,7 @@ class FakeGateway(PreferredSolutionGateway):
         ]
 
     def get_preferred_solution_id(self) -> str | None:
+        self.get_calls += 1
         return self.preferred_id
 
     def get_publisher(self, publisher_id: str) -> dict:
@@ -81,6 +84,7 @@ def test_configure_skips_write_when_solution_is_already_preferred() -> None:
     assert selected.unique_name == "ContosoESS"
     assert already_preferred is True
     assert gateway.set_calls == []
+    assert gateway.get_calls == 2
 
 
 def test_configure_sets_and_verifies_new_preferred_solution() -> None:
@@ -93,6 +97,7 @@ def test_configure_sets_and_verifies_new_preferred_solution() -> None:
     assert already_preferred is False
     assert gateway.set_calls == [SOLUTION_TWO]
     assert gateway.preferred_id == SOLUTION_TWO
+    assert gateway.get_calls == 2
 
 
 def test_configure_rejects_solution_outside_discovered_list() -> None:
@@ -111,3 +116,84 @@ def test_configure_fails_when_dataverse_does_not_retain_selection() -> None:
 
     with pytest.raises(RuntimeError, match="did not retain"):
         service.configure(SOLUTION_TWO)
+
+
+def test_configure_revalidates_solution_marked_current_in_picker() -> None:
+    class DriftingGateway(FakeGateway):
+        def get_preferred_solution_id(self) -> str | None:
+            self.get_calls += 1
+            return SOLUTION_ONE if self.get_calls == 1 else SOLUTION_TWO
+
+    gateway = DriftingGateway(SOLUTION_ONE)
+    service = PreferredSolutionService(gateway)
+
+    with pytest.raises(RuntimeError, match="did not retain"):
+        service.configure(SOLUTION_ONE)
+
+    assert gateway.set_calls == []
+    assert gateway.get_calls == 2
+
+
+def test_main_refreshes_cached_session_and_retries_once(
+    monkeypatch,
+    capsys,
+) -> None:
+    import preferred_solution
+
+    attempts = []
+    cleared = []
+
+    def execute(args):
+        attempts.append(args.command)
+        if len(attempts) == 1:
+            raise AuthExpiredError("expired")
+        return preferred_solution.LIST_MARKER, {
+            "solutions": [],
+            "preferredSolutionId": None,
+        }
+
+    monkeypatch.setattr(preferred_solution, "_execute_command", execute)
+    monkeypatch.setattr(
+        preferred_solution,
+        "clear_token_cache",
+        lambda: cleared.append(True),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "preferred_solution.py",
+            "--url",
+            "https://org.crm.dynamics.com",
+            "list",
+        ],
+    )
+
+    assert preferred_solution.main() == 0
+    output = capsys.readouterr().out
+    assert attempts == ["list", "list"]
+    assert cleared == [True]
+    assert output.count("Refreshing sign-in") == 1
+    assert preferred_solution.LIST_MARKER in output
+
+
+def test_main_reports_second_401_once(monkeypatch, capsys) -> None:
+    import preferred_solution
+
+    def reject(_args):
+        raise AuthExpiredError("expired")
+
+    monkeypatch.setattr(preferred_solution, "_execute_command", reject)
+    monkeypatch.setattr(preferred_solution, "clear_token_cache", lambda: None)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "preferred_solution.py",
+            "--url",
+            "https://org.crm.dynamics.com",
+            "list",
+        ],
+    )
+
+    assert preferred_solution.main() == 1
+    output = capsys.readouterr().out
+    assert output.count("ERROR:") == 1
