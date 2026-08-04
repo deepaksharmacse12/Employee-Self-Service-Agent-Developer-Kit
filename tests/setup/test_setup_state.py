@@ -342,6 +342,40 @@ def test_installation_progress_updates_are_resumable() -> None:
     assert state.products["da.esshr"].installation_status == "installed"
 
 
+def test_verified_alm_solution_metadata_is_persisted() -> None:
+    state = SetupState()
+
+    SetupWorkflow.set_alm(
+        state,
+        solution_id="11111111-1111-1111-1111-111111111111",
+        solution_name="ContosoESS",
+        publisher_prefix="contoso",
+        version="1.0.0.0",
+    )
+
+    assert state.alm == {
+        "solution_id": "11111111-1111-1111-1111-111111111111",
+        "solution_name": "ContosoESS",
+        "publisher_prefix": "contoso",
+        "version": "1.0.0.0",
+        "preferred": True,
+        "updated_at": state.alm["updated_at"],
+    }
+
+
+def test_alm_solution_metadata_cannot_be_incomplete() -> None:
+    state = SetupState()
+
+    with pytest.raises(SetupStateError, match="publisher_prefix"):
+        SetupWorkflow.set_alm(
+            state,
+            solution_id="11111111-1111-1111-1111-111111111111",
+            solution_name="ContosoESS",
+            publisher_prefix="",
+            version="1.0.0.0",
+        )
+
+
 def test_finalize_requires_all_prior_steps() -> None:
     state = SetupState()
 

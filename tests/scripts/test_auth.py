@@ -593,3 +593,49 @@ class TestRecordExists:
             auth.record_exists(
                 "http://insecure/", fake_token, "workflows", "x", "workflowid")
 
+
+class TestExecuteAction:
+    @responses.activate
+    def test_posts_unbound_action(
+        self,
+        dataverse_url: str,
+        fake_token: str,
+    ) -> None:
+        import auth
+
+        responses.add(
+            method="POST",
+            url=f"{dataverse_url}/api/data/v9.2/SetPreferredSolution",
+            status=204,
+        )
+
+        result = auth.execute_action(
+            dataverse_url,
+            fake_token,
+            "SetPreferredSolution",
+            {"SolutionId": "11111111-1111-1111-1111-111111111111"},
+        )
+
+        assert result == {}
+        action_call = next(
+            call for call in responses.calls
+            if call.request.url.endswith("/SetPreferredSolution")
+        )
+        assert json.loads(action_call.request.body) == {
+            "SolutionId": "11111111-1111-1111-1111-111111111111"
+        }
+
+    def test_rejects_bound_or_nested_action_name(
+        self,
+        dataverse_url: str,
+        fake_token: str,
+    ) -> None:
+        import auth
+
+        with pytest.raises(ValueError, match="unbound action name"):
+            auth.execute_action(
+                dataverse_url,
+                fake_token,
+                "bots(id)/Microsoft.Dynamics.CRM.Action",
+                {},
+            )

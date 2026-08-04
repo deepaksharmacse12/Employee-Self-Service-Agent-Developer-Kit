@@ -398,6 +398,37 @@ def dataverse_get(env_url, token, path, params=None):
     return resp.json()
 
 
+def execute_action(env_url, token, action_name, data):
+    """Execute an unbound Dataverse Web API action via POST."""
+    _validate_https_url(env_url)
+    if not action_name or "/" in action_name:
+        raise ValueError("action_name must be a non-empty unbound action name")
+    headers = {
+        **HEADERS_BASE,
+        "Authorization": f"******",
+        "Content-Type": "application/json",
+    }
+    url = f"{env_url}/api/data/v9.2/{action_name}"
+    _start = time.perf_counter()
+    resp = _SESSION.post(
+        url,
+        headers=headers,
+        json=data,
+        timeout=60,
+        verify=True,
+    )
+    _emit_api_call(action_name, "execute", _start, status=resp.status_code)
+    if resp.status_code == 401:
+        raise AuthExpiredError(response=resp)
+    raise_api_error(resp, resource_name=action_name, operation="execute")
+    if not resp.content:
+        return {}
+    try:
+        return resp.json()
+    except ValueError:
+        return {}
+
+
 def update_record(env_url, token, entity_set, record_id, data):
     """Update a single Dataverse record via PATCH.
 

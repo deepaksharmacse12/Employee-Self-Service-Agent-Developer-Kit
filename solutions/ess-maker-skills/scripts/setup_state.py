@@ -762,6 +762,36 @@ class SetupWorkflow:
         state.updated_at = record.updated_at
 
     @staticmethod
+    def set_alm(
+        state: SetupState,
+        *,
+        solution_id: str,
+        solution_name: str,
+        publisher_prefix: str,
+        version: str,
+    ) -> None:
+        required = {
+            "solution_id": solution_id,
+            "solution_name": solution_name,
+            "publisher_prefix": publisher_prefix,
+            "version": version,
+        }
+        missing = [
+            name for name, value in required.items()
+            if not isinstance(value, str) or not value.strip()
+        ]
+        if missing:
+            raise SetupStateError(
+                f"ALM metadata is missing: {', '.join(missing)}"
+            )
+        state.alm = {
+            **required,
+            "preferred": True,
+            "updated_at": utc_now(),
+        }
+        state.updated_at = state.alm["updated_at"]
+
+    @staticmethod
     def is_complete(state: SetupState) -> bool:
         return all(
             record.state == StepStatus.DONE
@@ -883,6 +913,27 @@ def persist_product_installation_status(
         connection_name=connection_name,
         schema_name=schema_name,
         failure_cause=failure_cause,
+    )
+    service.save(state)
+
+
+def persist_alm_solution(
+    *,
+    solution_id: str,
+    solution_name: str,
+    publisher_prefix: str,
+    version: str,
+    state_path: Path = DEFAULT_STATE_PATH,
+) -> None:
+    """Persist verified preferred-solution metadata."""
+    service = SetupStateService(JsonSetupStateRepository(state_path))
+    state = service.load()
+    SetupWorkflow.set_alm(
+        state,
+        solution_id=solution_id,
+        solution_name=solution_name,
+        publisher_prefix=publisher_prefix,
+        version=version,
     )
     service.save(state)
 
@@ -1056,14 +1107,13 @@ def main() -> int:
             state.updated_at = utc_now()
             service.save(state)
         elif args.command == "set-alm":
-            state.alm = {
-                "solution_id": args.solution_id,
-                "solution_name": args.solution_name,
-                "publisher_prefix": args.publisher_prefix,
-                "version": args.version,
-                "preferred": True,
-                "updated_at": utc_now(),
-            }
+            SetupWorkflow.set_alm(
+                state,
+                solution_id=args.solution_id,
+                solution_name=args.solution_name,
+                publisher_prefix=args.publisher_prefix,
+                version=args.version,
+            )
             service.save(state)
         elif args.command == "set-product-status":
             SetupWorkflow.update_product_installation(

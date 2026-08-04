@@ -7,30 +7,44 @@ Mark the step in progress:
 python scripts/setup_state.py update-step --step SETUP-04 --status in-progress
 ```
 
-Run the existing preferred-solution check:
+Discover eligible unmanaged solutions in the locked environment:
 
 ```text
-python scripts/flightcheck/cli.py --checkpoint ENV-009
+python scripts/preferred_solution.py --url "{ENVIRONMENT_URL}" list
 ```
 
-If no suitable unmanaged solution is selected, guide the maker to Power Apps:
+Parse `UNMANAGED_SOLUTIONS_JSON:`. Build one `vscode_askQuestions` option per
+entry in `solutions`:
 
-1. Open **Solutions** in the locked environment.
-2. Create an unmanaged solution with `display name`, `name/schema`, `publisher`,
-   and `version`, or select an existing suitable solution.
-3. Use a custom publisher rather than the environment Default Publisher.
-4. Choose **Set preferred solution**.
-5. Re-run `ENV-009`.
+- Label: `displayName`, adding **(Current preferred)** when `isPreferred` is
+  true.
+- Description: unique name, version, publisher name, and publisher prefix.
+- Add **Default publisher — not recommended** when `publisherIsDefault` is
+  true.
 
-Capture solution id, solution name/schema, publisher prefix, and version:
+Do not ask the maker to type a solution ID, unique name, publisher prefix, or
+version. These values come from Dataverse.
+
+If `solutions` is empty, guide the maker to create an unmanaged solution with a
+custom publisher in Power Apps, then offer **Check again**. This is the only
+manual creation path.
+
+After the maker selects a solution, configure it:
 
 ```text
-python scripts/setup_state.py set-alm \
-  --solution-id "{SOLUTION_ID}" \
-  --solution-name "{SOLUTION_NAME}" \
-  --publisher-prefix "{PUBLISHER_PREFIX}" \
-  --version "{VERSION}"
+python scripts/preferred_solution.py \
+  --url "{ENVIRONMENT_URL}" \
+  select --solution-id "{SOLUTION_ID}"
 ```
+
+The command detects whether the selected solution is already preferred. If so,
+it does not write to Dataverse. Otherwise it invokes `SetPreferredSolution`,
+rereads `GetPreferredSolution()`, and continues only when the selected ID is
+retained. It then persists the solution ID, unique name, publisher prefix, and
+version to setup state.
+
+Parse `PREFERRED_SOLUTION_JSON:` and show a concise confirmation. Do not ask for
+another confirmation.
 
 Record:
 
@@ -38,9 +52,8 @@ Record:
 - `SETUP-ALM-002` — preferred solution id equals the target solution id;
 - `SETUP-ALM-003` — required metadata is stored.
 
-Use automated mode for a passing `ENV-009`. If the API is unavailable, manual
-attestation must include the solution id and a timestamp. Complete only after all
-three checks pass:
+Record all three checks in automated mode from the verified selection result.
+Complete only after all three checks pass:
 
 ```text
 python scripts/setup_state.py update-step --step SETUP-04 --status done
