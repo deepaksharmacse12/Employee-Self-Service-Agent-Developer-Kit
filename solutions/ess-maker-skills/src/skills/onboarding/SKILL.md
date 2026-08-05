@@ -15,7 +15,7 @@ agent, product, and connector names before displaying them.
 Run `python scripts/setup_state.py show --view current`. When `connect_ready` is
 true, this is workspace bootstrap after foundation setup:
 
-1. Initialize `workspace/onboarding/tasks.md` from the template only when it is
+1. Initialize `workspace/onboarding/steps.md` from the template only when it is
    missing.
 2. Do not render another setup checklist or repeat foundation prerequisites.
 3. Resume from the first unchecked workspace-bootstrap task.
@@ -24,13 +24,13 @@ true, this is workspace bootstrap after foundation setup:
 Only use the legacy standalone onboarding messages below when foundation setup
 is not complete.
 
-Read `workspace/onboarding/tasks.md`.
+Read `workspace/onboarding/steps.md`.
 
-If the file does not exist, copy `src/skills/onboarding/tasks.md` to
-`workspace/onboarding/tasks.md` and go to Fresh Start below.
+If the file does not exist, copy `src/skills/onboarding/steps.md` to
+`workspace/onboarding/steps.md` and go to Fresh Start below.
 
 If the file exists but mentions "Copilot Studio extension", "Clone agent", or
-"PAC CLI", delete it, re-copy from `src/skills/onboarding/tasks.md`, and show:
+"PAC CLI", delete it, re-copy from `src/skills/onboarding/steps.md`, and show:
 
 **Message:**
 

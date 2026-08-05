@@ -10,7 +10,7 @@ python scripts/setup_state.py show --view report
 ```
 
 Set ENV_URL to `environment.tenant_endpoint`, stripping any trailing slash.
-Create `workspace/onboarding/tasks.md` from `src/skills/onboarding/tasks.md`
+Create `workspace/onboarding/steps.md` from `src/skills/onboarding/steps.md`
 only when it is missing. Do not display that checklist.
 
 Create `.vscode/mcp.json` with the locked endpoint:
