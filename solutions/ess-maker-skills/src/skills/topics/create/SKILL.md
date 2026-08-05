@@ -333,12 +333,7 @@ If a **workflow** was created (e.g. a ServiceNow options flow for runtime depend
 python scripts/validate.py "<flow name>"
 ```
 
-Then show:
-
-> Your topic is ready. After publishing, test it here:
-> [Open Copilot Studio](https://copilotstudio.microsoft.com/)
-
-If the topic misbehaves at runtime — a generic error, a blank field, a branch that fires wrong, or a reply that turns out to be a consent gate — run the **`topics/test`** skill (`src/skills/topics/test/SKILL.md`). It drives the topic, confirms the reply is real (`reply_signal.py`), inspects the flow's run history for flow-backed topics (`flow_run_inspect.py`), and plants/strips a byte-reversible DBG node to expose topic-internal state (`plant_debug.py` / `strip_debug.py`).
+Once the push (and any publish, whether run now or handed off to the maker) is initiated, **do not end the interaction here** — the topic still needs its behaviour validated. Proceed to Step 7 to offer the next steps, including driving the topic.
 
 ## Step 7: Offer Next Steps
 
