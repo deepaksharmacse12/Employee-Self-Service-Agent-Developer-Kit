@@ -33,15 +33,17 @@ EXPERIENCE_STATUS = {
 VERTICAL_PACKAGE = {
     "hr": "Employee Self-Service HR",
     "it": "Employee Self-Service IT",
+    "hub": "Employee Self-Service Hub",
 }
 VERTICAL_CONFIG_SECTION = {
     "hr": "esshr",
     "it": "essit",
+    "hub": "esshub",
 }
 
 
 def load_parent_schemas(catalog_path: Path = CATALOG_PATH) -> dict[tuple[str, str], str]:
-    """Read DA/CEA and HR/IT parent schema mappings from the solution catalog."""
+    """Read DA/CEA parent schema mappings from the solution catalog."""
     mappings: dict[tuple[str, str], str] = {}
     in_parents = False
 
@@ -233,7 +235,7 @@ def load_installation_config(
                 f"schema '{catalog_schema}' in solution-catalog.md."
             )
 
-        if vertical_key == "hr":
+        if vertical_key != "it":
             if required_connection is not None:
                 raise ValueError(
                     f"Installation '{installation_key}' must not require a "
@@ -279,7 +281,7 @@ def load_installation_config(
 
 
 def build_installation_options(config: dict) -> list[dict]:
-    """Build the single ordered DA/CEA × HR/IT installation picker."""
+    """Build the single ordered ESS installation picker."""
     experiences = config["experiences"]
     verticals = config["verticals"]
 
@@ -556,11 +558,19 @@ def install_agent(
             "Could not resolve the selected environment's Power Platform ID."
         )
 
-    validate_required_connection(
-        installation,
-        pp_admin.get_connections(environment_id),
-        connection_name,
-    )
+    if installation.get("requiredConnection") is not None:
+        connections = pp_admin.get_connections(environment_id)
+        if isinstance(connections, dict) and connections.get("_error"):
+            raise RuntimeError(
+                "Your account cannot read connections for this environment. "
+                "Use a Power Platform administrator account, or ask an admin "
+                "to confirm the required connection exists."
+            )
+        validate_required_connection(
+            installation,
+            connections,
+            connection_name,
+        )
 
     client = powerplatform_client_factory(tenant_id)
     client.authenticate()
@@ -635,7 +645,7 @@ def main() -> None:
         "--vertical",
         required=True,
         choices=sorted(VERTICAL_PACKAGE),
-        help="Agent vertical: hr or it",
+        help="Agent vertical: hr, it, or hub",
     )
     parser.add_argument(
         "--connection-name",

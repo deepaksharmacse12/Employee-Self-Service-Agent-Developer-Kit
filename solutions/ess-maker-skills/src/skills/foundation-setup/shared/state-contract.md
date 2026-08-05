@@ -45,11 +45,13 @@ Manual completion requires an explicit positive attestation and evidence.
 ```text
 da.esshr
 da.essit
+da.esshub
 cea.esshr
 cea.essit
+cea.esshub
 ```
 
-`products` always contains an independent record for all four IDs. Selected
+`products` always contains an independent record for all six IDs. Selected
 products transition through `pending`, `connection-required`, `ready`,
 `installing`, `manual-required`, `installed`,
 `connection-attestation-required`, `bound`, or `failed`. Unselected products

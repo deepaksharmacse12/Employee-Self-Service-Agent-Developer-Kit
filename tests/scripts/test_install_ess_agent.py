@@ -20,12 +20,14 @@ def test_catalog_resolves_all_parent_schema_combinations():
     assert mappings == {
         ("cea", "hr"): "msdyn_CopilotForEmployeeSelfServiceHR",
         ("cea", "it"): "msdyn_CopilotForEmployeeSelfServiceIT",
+        ("cea", "hub"): "msdyn_CopilotForEmployeeSelfServiceCore",
         ("da", "hr"): "msdyn_CopilotForEmployeeSelfServiceDAHR",
         ("da", "it"): "msdyn_CopilotForEmployeeSelfServiceDAIT",
+        ("da", "hub"): "msdyn_CopilotForEmployeeSelfServiceCoreDA",
     }
 
 
-def test_catalog_requires_all_four_parent_mappings(tmp_path: Path):
+def test_catalog_requires_all_parent_mappings(tmp_path: Path):
     import install_ess_agent
 
     catalog = tmp_path / "solution-catalog.md"
@@ -52,15 +54,17 @@ def test_installation_config_has_collision_safe_composite_keys():
     assert set(config["installations"]) == {
         "da.hr",
         "da.it",
+        "da.hub",
         "cea.hr",
         "cea.it",
+        "cea.hub",
     }
     assert config["experiences"]["da"]["recommended"] is True
     assert config["experiences"]["cea"]["recommended"] is False
     assert len({
         entry["marketplaceApplication"]["uniqueName"]
         for entry in config["installations"].values()
-    }) == 4
+    }) == 6
 
 
 def test_installation_options_are_single_picker_in_da_then_cea_order():
@@ -73,14 +77,18 @@ def test_installation_options_are_single_picker_in_da_then_cea_order():
     assert [option["label"] for option in options] == [
         "DA: Employee Self-Service HR (Recommended)",
         "DA: Employee Self-Service IT (Recommended)",
+        "DA: Employee Self-Service Hub (Recommended)",
         "CEA: Employee Self-Service HR",
         "CEA: Employee Self-Service IT",
+        "CEA: Employee Self-Service Hub",
     ]
     assert [option["configKey"] for option in options] == [
         "da.esshr",
         "da.essit",
+        "da.esshub",
         "cea.esshr",
         "cea.essit",
+        "cea.esshub",
     ]
 
 
@@ -197,6 +205,63 @@ class FakePowerPlatformClient:
         _operation_id,
     ):
         return self.statuses.pop(0)
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_reports_connection_permission_error(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    pp_admin = FakePPAdminClient(
+        "tenant-123",
+        connections={"_error": "insufficient_permissions", "_status": 403},
+    )
+    powerplatform = FakePowerPlatformClient("tenant-123", packages=[])
+
+    with pytest.raises(
+        RuntimeError,
+        match="cannot read connections",
+    ):
+        install_ess_agent.install_agent(
+            "https://org.crm.dynamics.com",
+            "da",
+            "it",
+            pp_admin_client_factory=lambda _tenant: pp_admin,
+            powerplatform_client_factory=lambda _tenant: powerplatform,
+        )
+
+    assert not powerplatform.authenticated
+
+
+@patch("install_ess_agent.discover_tenant", return_value="tenant-123")
+def test_install_without_connection_requirement_skips_connection_api(
+    _mock_discover_tenant,
+):
+    import install_ess_agent
+
+    class NoConnectionAccessClient(FakePPAdminClient):
+        def get_connections(self, _environment_id):
+            pytest.fail("connection API should not be called")
+
+    pp_admin = NoConnectionAccessClient("tenant-123")
+    powerplatform = FakePowerPlatformClient(
+        "tenant-123",
+        packages=[{
+            "uniqueName": "msdyn_CopilotForEmployeeSelfServiceCoreDA",
+            "state": "Installed",
+        }],
+    )
+
+    schema = install_ess_agent.install_agent(
+        "https://org.crm.dynamics.com",
+        "da",
+        "hub",
+        pp_admin_client_factory=lambda _tenant: pp_admin,
+        powerplatform_client_factory=lambda _tenant: powerplatform,
+    )
+
+    assert schema == "msdyn_CopilotForEmployeeSelfServiceCoreDA"
 
 
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")

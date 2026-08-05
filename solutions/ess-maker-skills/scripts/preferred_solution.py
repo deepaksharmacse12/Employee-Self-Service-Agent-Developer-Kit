@@ -274,7 +274,7 @@ def main() -> int:
         try:
             marker, result = _execute_command(args)
         except AuthExpiredError:
-            clear_token_cache()
+            clear_token_cache(args.url)
             print(
                 "Dataverse rejected the cached session. Refreshing sign-in..."
             )

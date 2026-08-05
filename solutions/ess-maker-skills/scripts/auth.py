@@ -219,8 +219,12 @@ def authenticate(env_url):
         and not _dataverse_accepts_token(env_url, result["access_token"])
     ):
         print("Dataverse rejected the cached session. Refreshing sign-in...")
-        clear_token_cache()
-        cache = msal.SerializableTokenCache()
+        clear_token_cache(
+            env_url,
+            cache=cache,
+            app=app,
+            account=accounts[0],
+        )
         app = msal.PublicClientApplication(
             CLIENT_ID, authority=authority, token_cache=cache
         )
@@ -241,32 +245,7 @@ def authenticate(env_url):
         print("Verify you have access to this environment and try again.")
         sys.exit(1)
 
-    # Persist cache with strict 0o600 permissions on POSIX. The cache holds
-    # MSAL refresh tokens; default umask (0o644) would expose them to other
-    # users on shared dev VMs.
-    if cache.has_state_changed:
-        os.makedirs(LOCAL_STATE_DIR, exist_ok=True)
-        try:
-            os.chmod(LOCAL_STATE_DIR, 0o700)
-        except OSError:
-            # Windows ignores chmod for directories - that's expected.
-            pass
-        # Use os.open with explicit mode so the file is created with 0o600
-        # rather than written under default umask first and chmodded after.
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        if hasattr(os, "O_BINARY"):
-            flags |= os.O_BINARY
-        fd = os.open(cache_path, flags, 0o600)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(cache.serialize())
-        finally:
-            # Re-chmod is a defense-in-depth no-op on POSIX where O_CREAT mode
-            # already set 0o600, and a no-op on Windows where chmod is limited.
-            try:
-                os.chmod(cache_path, stat.S_IRUSR | stat.S_IWUSR)
-            except OSError:
-                pass
+    _persist_token_cache(cache, cache_path)
 
     # Record the tenant + start a telemetry session. No developer identity is
     # collected; active-install counts dedupe on a random instance_id.
@@ -300,13 +279,66 @@ def authenticate(env_url):
     return result["access_token"]
 
 
-def clear_token_cache():
-    """Remove the exact shared MSAL cache after Dataverse rejects a token."""
-    cache_path = os.path.join(LOCAL_STATE_DIR, ".token_cache.bin")
+def _persist_token_cache(cache, cache_path):
+    """Persist the shared MSAL cache with owner-only permissions."""
+    if not cache.has_state_changed:
+        return
+    os.makedirs(LOCAL_STATE_DIR, exist_ok=True)
     try:
-        os.remove(cache_path)
-    except FileNotFoundError:
+        os.chmod(LOCAL_STATE_DIR, 0o700)
+    except OSError:
         pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    fd = os.open(cache_path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as cache_file:
+            cache_file.write(cache.serialize())
+    finally:
+        try:
+            os.chmod(cache_path, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+
+
+def clear_token_cache(env_url=None, *, cache=None, app=None, account=None):
+    """Remove only the rejected account from the shared MSAL token cache."""
+    cache_path = os.path.join(LOCAL_STATE_DIR, ".token_cache.bin")
+    if cache is None:
+        cache = msal.SerializableTokenCache()
+        try:
+            with open(cache_path, "r", encoding="utf-8") as cache_file:
+                cache.deserialize(cache_file.read())
+        except FileNotFoundError:
+            return
+
+    if account is None:
+        if not env_url:
+            return
+        tenant = discover_tenant(env_url)
+        if app is None:
+            app = msal.PublicClientApplication(
+                CLIENT_ID,
+                authority=f"https://login.microsoftonline.com/{tenant}",
+                token_cache=cache,
+            )
+        accounts = app.get_accounts()
+        if not accounts:
+            return
+        account = accounts[0]
+
+    if app is None:
+        if not env_url:
+            return
+        tenant = discover_tenant(env_url)
+        app = msal.PublicClientApplication(
+            CLIENT_ID,
+            authority=f"https://login.microsoftonline.com/{tenant}",
+            token_cache=cache,
+        )
+    app.remove_account(account)
+    _persist_token_cache(cache, cache_path)
 
 
 def query_all(env_url, token, entity_set, select, filter_expr=None):

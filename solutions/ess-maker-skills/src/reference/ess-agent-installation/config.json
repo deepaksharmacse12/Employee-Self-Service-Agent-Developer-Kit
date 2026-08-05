@@ -26,6 +26,11 @@
       "label": "Employee Self-Service IT",
       "description": "Install the Information Technology agent.",
       "displayOrder": 2
+    },
+    "hub": {
+      "label": "Employee Self-Service Hub",
+      "description": "Install the unified Employee Self-Service Hub agent.",
+      "displayOrder": 3
     }
   },
   "installations": {
@@ -67,6 +72,22 @@
         "status": "Active (DA bundle)"
       }
     },
+    "da.hub": {
+      "configKey": "da.esshub",
+      "experienceKey": "da",
+      "verticalKey": "hub",
+      "marketplaceApplication": {
+        "uniqueName": "msdyn_CopilotForEmployeeSelfServiceCoreDA"
+      },
+      "solution": {
+        "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceCoreDA"
+      },
+      "requiredConnection": null,
+      "catalogMatch": {
+        "parentPackage": "Employee Self-Service Hub",
+        "status": "Active (DA bundle)"
+      }
+    },
     "cea.hr": {
       "configKey": "cea.esshr",
       "experienceKey": "cea",
@@ -102,6 +123,22 @@
       },
       "catalogMatch": {
         "parentPackage": "Employee Self-Service IT",
+        "status": "Active (CEA bundle)"
+      }
+    },
+    "cea.hub": {
+      "configKey": "cea.esshub",
+      "experienceKey": "cea",
+      "verticalKey": "hub",
+      "marketplaceApplication": {
+        "uniqueName": "msdyn_CopilotForEmployeeSelfServiceCore"
+      },
+      "solution": {
+        "parentUniqueName": "msdyn_CopilotForEmployeeSelfServiceCore"
+      },
+      "requiredConnection": null,
+      "catalogMatch": {
+        "parentPackage": "Employee Self-Service Hub",
         "status": "Active (CEA bundle)"
       }
     }

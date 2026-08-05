@@ -156,7 +156,7 @@ def test_main_refreshes_cached_session_and_retries_once(
     monkeypatch.setattr(
         preferred_solution,
         "clear_token_cache",
-        lambda: cleared.append(True),
+        lambda url: cleared.append(url),
     )
     monkeypatch.setattr(
         "sys.argv",
@@ -171,7 +171,7 @@ def test_main_refreshes_cached_session_and_retries_once(
     assert preferred_solution.main() == 0
     output = capsys.readouterr().out
     assert attempts == ["list", "list"]
-    assert cleared == [True]
+    assert cleared == ["https://org.crm.dynamics.com"]
     assert output.count("Refreshing sign-in") == 1
     assert preferred_solution.LIST_MARKER in output
 
@@ -183,7 +183,11 @@ def test_main_reports_second_401_once(monkeypatch, capsys) -> None:
         raise AuthExpiredError("expired")
 
     monkeypatch.setattr(preferred_solution, "_execute_command", reject)
-    monkeypatch.setattr(preferred_solution, "clear_token_cache", lambda: None)
+    monkeypatch.setattr(
+        preferred_solution,
+        "clear_token_cache",
+        lambda _url: None,
+    )
     monkeypatch.setattr(
         "sys.argv",
         [

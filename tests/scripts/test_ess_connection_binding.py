@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from setup_state import (
     EnvironmentType,
     JsonSetupStateRepository,
@@ -100,6 +102,40 @@ def test_preflight_auto_selects_only_connected_match():
 
     assert result["status"] == "ready"
     assert result["selectedConnection"]["name"] == "alchemy"
+
+
+def test_inspect_reports_connection_permission_error(monkeypatch):
+    import ess_connection_binding
+
+    class FakePPAdmin:
+        def __init__(self, tenant_id):
+            assert tenant_id == "tenant"
+
+        def authenticate(self, *, include_flow):
+            assert include_flow is False
+
+        def get_connections(self, environment_id):
+            assert environment_id == "environment-id"
+            return {"_error": "insufficient_permissions", "_status": 403}
+
+    monkeypatch.setattr(
+        ess_connection_binding,
+        "discover_tenant",
+        lambda _url: "tenant",
+    )
+    monkeypatch.setattr(
+        ess_connection_binding,
+        "derive_environment_id",
+        lambda _url, _configured_id, _client: "environment-id",
+    )
+
+    with pytest.raises(RuntimeError, match="cannot read connections"):
+        ess_connection_binding.inspect_connections(
+            "https://org.crm.dynamics.com",
+            "da",
+            "it",
+            pp_admin_client_factory=FakePPAdmin,
+        )
 
 
 def test_bind_updates_exact_solution_reference_and_persists_s_states(
@@ -236,6 +272,38 @@ def test_hr_binding_marks_connection_not_required(tmp_path, monkeypatch):
     state = JsonSetupStateRepository(state_path).load()
     assert state.products["cea.esshr"].installation_status == "bound"
     assert state.products["cea.esshr"].requires_connection_attestation is False
+
+
+def test_cli_accepts_hub_vertical(monkeypatch, capsys):
+    import ess_connection_binding
+
+    monkeypatch.setattr(
+        ess_connection_binding,
+        "inspect_connections",
+        lambda _url, experience, vertical: {
+            "required": False,
+            "status": "not-required",
+            "experience": experience,
+            "vertical": vertical,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "ess_connection_binding.py",
+            "inspect",
+            "--url",
+            "https://org.crm.dynamics.com",
+            "--experience",
+            "da",
+            "--vertical",
+            "hub",
+        ],
+    )
+
+    ess_connection_binding.main()
+
+    assert '"vertical": "hub"' in capsys.readouterr().out
 
 
 def test_connection_settings_url_escapes_path_segments():

@@ -34,6 +34,14 @@ def test_new_state_has_one_deterministic_resume_step() -> None:
     assert state.active_step == "SETUP-01"
     assert SetupWorkflow.next_step(state) == "SETUP-01"
     assert all(record.state == "pending" for record in state.steps.values())
+    assert set(state.products) == {
+        "da.esshr",
+        "da.essit",
+        "da.esshub",
+        "cea.esshr",
+        "cea.essit",
+        "cea.esshub",
+    }
 
 
 def test_workflow_rejects_multiple_in_progress_steps() -> None:
@@ -147,6 +155,38 @@ def test_repository_rejects_corrupt_state(tmp_path: Path) -> None:
     state_path.write_text("{broken", encoding="utf-8")
 
     with pytest.raises(SetupStateError, match="unreadable"):
+        JsonSetupStateRepository(state_path).load()
+
+
+@pytest.mark.parametrize("corruption", [
+    "step-string",
+    "step-unknown-key",
+    "validations-container-list",
+    "validations-list",
+    "products-container-list",
+    "product-string",
+])
+def test_repository_normalizes_malformed_records(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    state_path = tmp_path / "config.json"
+    raw = SetupState().to_dict()
+    if corruption == "step-string":
+        raw["steps"]["SETUP-01"] = "not-a-step-record"
+    elif corruption == "step-unknown-key":
+        raw["steps"]["SETUP-01"] = {"unknown": True}
+    elif corruption == "validations-container-list":
+        raw["validations"] = []
+    elif corruption == "validations-list":
+        raw["validations"] = {"CHECK-001": []}
+    elif corruption == "products-container-list":
+        raw["products"] = []
+    else:
+        raw["products"]["da.esshr"] = "not-a-product-record"
+    state_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(SetupStateError, match="malformed"):
         JsonSetupStateRepository(state_path).load()
 
 

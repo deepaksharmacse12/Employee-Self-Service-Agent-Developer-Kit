@@ -124,10 +124,22 @@ class TestDiscoverTenant:
             auth.discover_tenant("http://insecure.example/")
 
 
-def test_clear_token_cache_removes_only_cached_tokens(
+def test_clear_token_cache_removes_only_rejected_account(
     tmp_path, monkeypatch
 ) -> None:
     import auth
+
+    removed = []
+
+    class FakeCache:
+        has_state_changed = True
+
+        def serialize(self):
+            return "remaining-account-cache"
+
+    class FakeApp:
+        def remove_account(self, account):
+            removed.append(account)
 
     monkeypatch.chdir(tmp_path)
     local = tmp_path / ".local"
@@ -137,9 +149,16 @@ def test_clear_token_cache_removes_only_cached_tokens(
     cache.write_text("cached", encoding="utf-8")
     preserved.write_text("{}", encoding="utf-8")
 
-    auth.clear_token_cache()
+    account = {"home_account_id": "rejected-account"}
+    auth.clear_token_cache(
+        "https://example.crm.dynamics.com",
+        cache=FakeCache(),
+        app=FakeApp(),
+        account=account,
+    )
 
-    assert not cache.exists()
+    assert removed == [account]
+    assert cache.read_text(encoding="utf-8") == "remaining-account-cache"
     assert preserved.exists()
 
 
@@ -191,6 +210,10 @@ def test_authenticate_replaces_dataverse_rejected_cached_token(
         def acquire_token_interactive(self, scopes, prompt):
             assert self.instance == 1
             return {"access_token": "fresh-token"}
+
+        def remove_account(self, account):
+            assert self.instance == 0
+            assert account == {"home_account_id": "account"}
 
     monkeypatch.chdir(tmp_path)
     local = tmp_path / ".local"

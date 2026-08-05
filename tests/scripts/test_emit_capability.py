@@ -9,16 +9,33 @@ import os
 import sys
 
 import emit_capability
+import pytest
 
 
 def test_capability_emit_starts_detached_worker(monkeypatch) -> None:
     calls = []
+    waits = []
 
     def fake_popen(command, **kwargs):
         calls.append((command, kwargs))
-        return object()
+        return type("Worker", (), {"wait": lambda self: waits.append(True)})()
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            assert name == "adk-capability-worker-reaper"
+            assert daemon is True
+            self.target = target
+
+        def start(self):
+            self.target()
 
     monkeypatch.setattr(emit_capability.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(emit_capability.threading, "Thread", FakeThread)
+    monkeypatch.setattr(
+        "adk_telemetry.telemetry_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr("adk_telemetry._SYNC", False)
 
     result = emit_capability.main(["emit_capability.py", "setup"])
 
@@ -34,6 +51,21 @@ def test_capability_emit_starts_detached_worker(monkeypatch) -> None:
     assert kwargs["stdin"] is emit_capability.subprocess.DEVNULL
     assert kwargs["stdout"] is emit_capability.subprocess.DEVNULL
     assert kwargs["stderr"] is emit_capability.subprocess.DEVNULL
+    assert waits == [True]
+
+
+def test_capability_emit_does_not_spawn_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "adk_telemetry.telemetry_enabled",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        emit_capability.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("worker should not start"),
+    )
+
+    assert emit_capability.main(["emit_capability.py", "setup"]) == 0
 
 
 def test_worker_emits_synchronously(monkeypatch) -> None:

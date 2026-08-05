@@ -158,7 +158,8 @@ class TestTransitiveRequirements:
         plan = registry.transitive_requirements("ENV-002")
         # Single category function (run_environment_checks) covers both.
         assert len(plan.ordered_fns) == 1
-        assert plan.requires_config is True
+        assert plan.requires_config is False
+        assert plan.requires_dataverse_endpoint is True
 
     def test_env_capacity_001_resolves_and_unions_powerplatform(self):
         spec = registry.resolve("ENV-CAPACITY-001")

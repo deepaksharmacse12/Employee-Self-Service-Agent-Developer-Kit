@@ -148,9 +148,15 @@ def inspect_connections(
             "Could not resolve the selected Dataverse URL to a Power Platform "
             "environment ID."
         )
+    connections = client.get_connections(environment_id)
+    if isinstance(connections, dict) and connections.get("_error"):
+        raise RuntimeError(
+            "Your account cannot read connections for this environment. "
+            "Use a Power Platform administrator account."
+        )
     return build_preflight_result(
         installation,
-        client.get_connections(environment_id),
+        connections,
         environment_id,
     )
 
@@ -372,7 +378,11 @@ def main() -> None:
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument("--url", required=True)
         command_parser.add_argument("--experience", required=True, choices=("da", "cea"))
-        command_parser.add_argument("--vertical", required=True, choices=("hr", "it"))
+        command_parser.add_argument(
+            "--vertical",
+            required=True,
+            choices=("hr", "it", "hub"),
+        )
         if command == "bind":
             command_parser.add_argument("--connection-name")
             command_parser.add_argument(

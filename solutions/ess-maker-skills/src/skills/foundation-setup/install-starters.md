@@ -77,8 +77,9 @@ python scripts/setup_state.py show
 ```
 
 Process selected products in catalog order: `da.esshr`, `da.essit`,
-`cea.esshr`, `cea.essit`. Resume from each product's persisted status; never
-overwrite another product's successful result.
+`da.esshub`, `cea.esshr`, `cea.essit`, `cea.esshub`. Resume from each
+product's persisted status; never overwrite another product's successful
+result.
 
 For each product, resolve its `experienceKey`, `verticalKey`, application,
 solution, and `requiredConnection` from
@@ -91,7 +92,7 @@ For products with `requiredConnection`, run preflight before installation:
 python scripts/ess_connection_binding.py inspect \
   --url "{ENVIRONMENT_URL}" \
   --experience "{da|cea}" \
-  --vertical "{hr|it}"
+  --vertical "{hr|it|hub}"
 ```
 
 Parse `ESS_CONNECTION_PREFLIGHT_JSON:`:
@@ -128,7 +129,7 @@ Start or resume automatic installation through the solution-catalog schema:
 python scripts/install_ess_agent.py \
   --url "{ENVIRONMENT_URL}" \
   --experience "{da|cea}" \
-  --vertical "{hr|it}" \
+  --vertical "{hr|it|hub}" \
   [--connection-name "{CONNECTION_NAME}"]
 ```
 
@@ -150,7 +151,7 @@ After installation, automatically bind and verify the selected connection:
 python scripts/ess_connection_binding.py bind \
   --url "{ENVIRONMENT_URL}" \
   --experience "{da|cea}" \
-  --vertical "{hr|it}" \
+  --vertical "{hr|it|hub}" \
   [--connection-name "{CONNECTION_NAME}"]
 ```
 

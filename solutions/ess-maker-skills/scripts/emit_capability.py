@@ -24,10 +24,8 @@ Design rules (match adk_telemetry.py):
     we exit 0 regardless, so a skill step that runs this can't fail the flow.
   * Non-blocking for the maker. The command launches a detached worker that
     performs the synchronous emit after the caller has already returned.
-  * Consent-aware. ``emit_capability_use`` already no-ops when telemetry is
-    disabled (``ESS_ADK_TELEMETRY=off`` or opted out via
-    ``python scripts/adk_telemetry.py off``), so no extra gating is needed
-    here.
+  * Consent-aware. The parent checks consent before launching a worker so an
+    opted-out maker does not incur a process launch for a no-op.
 
 Usage:
     python scripts/emit_capability.py topic_create
@@ -41,6 +39,7 @@ canonical value-list). An unknown value is still emitted, but normalized to
 import os
 import subprocess
 import sys
+import threading
 
 # Add scripts/ to path so we can import adk_telemetry, mirroring the
 # sibling-import pattern used by discover.py / evaluate_evals.py.
@@ -81,6 +80,16 @@ def main(argv: list[str]) -> int:
         return 0
 
     capability = args[0].strip()
+    if not adk_telemetry.telemetry_enabled():
+        return 0
+
+    if adk_telemetry._SYNC:
+        try:
+            adk_telemetry.emit_capability_use(capability, block=True)
+        except Exception:  # noqa: BLE001 — telemetry must never break a skill
+            pass
+        return 0
+
     try:
         kwargs = {
             "stdin": subprocess.DEVNULL,
@@ -96,10 +105,15 @@ def main(argv: list[str]) -> int:
             )
         else:
             kwargs["start_new_session"] = True
-        subprocess.Popen(
+        worker = subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), "--worker", capability],
             **kwargs,
         )
+        threading.Thread(
+            target=worker.wait,
+            name="adk-capability-worker-reaper",
+            daemon=True,
+        ).start()
     except Exception:  # noqa: BLE001 — telemetry must never break a skill
         pass
 

@@ -96,6 +96,22 @@ class TestListEnvironments:
 
         assert selected == environments[0]
 
+    def test_resolve_environment_rejects_invalid_url_cleanly(
+        self,
+        capsys,
+    ):
+        import list_environments
+
+        with pytest.raises(SystemExit) as exc_info:
+            list_environments.resolve_environment_for_user(
+                "http://insecure.example"
+            )
+
+        assert exc_info.value.code == 1
+        assert "ERROR: Power Platform authentication failed" in (
+            capsys.readouterr().out
+        )
+
     @patch("list_environments.PPAdminClient")
     def test_exits_on_permission_error(self, mock_cls):
         """get_environments returning an error dict causes sys.exit."""
@@ -417,7 +433,7 @@ class TestEssAgentInventory:
             json_line.split("ESS_AGENT_DISCOVERY_JSON:", 1)[1]
         )
         assert payload["agents"] == []
-        assert len(payload["availableInstallations"]) == 4
+        assert len(payload["availableInstallations"]) == 6
         assert "No supported ESS agents found" not in output
 
     def test_excludes_installed_product_and_unrelated_bots(self):
@@ -447,7 +463,13 @@ class TestEssAgentInventory:
         assert [
             option["configKey"]
             for option in inventory["availableInstallations"]
-        ] == ["da.essit", "cea.esshr", "cea.essit"]
+        ] == [
+            "da.essit",
+            "da.esshub",
+            "cea.esshr",
+            "cea.essit",
+            "cea.esshub",
+        ]
 
     @patch("discover.load_installation_config")
     @patch("discover.discover_agents")
@@ -486,7 +508,7 @@ class TestEssAgentInventory:
         )
         payload = json.loads(marker.split(":", 1)[1])
         assert len(payload["agents"]) == 1
-        assert len(payload["availableInstallations"]) == 3
+        assert len(payload["availableInstallations"]) == 5
 
     def test_url_required_without_list_environments(self, monkeypatch):
         """Without --list-environments, --url is required."""

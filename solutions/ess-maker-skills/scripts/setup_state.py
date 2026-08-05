@@ -100,8 +100,10 @@ class StepStatus(StrEnum):
 class ProductId(StrEnum):
     DA_ESSHR = "da.esshr"
     DA_ESSIT = "da.essit"
+    DA_ESSHUB = "da.esshub"
     CEA_ESSHR = "cea.esshr"
     CEA_ESSIT = "cea.essit"
+    CEA_ESSHUB = "cea.esshub"
 
 
 class InstallationStatus(StrEnum):
@@ -209,14 +211,36 @@ class SetupState:
         if set(steps_raw) != set(STEP_ORDER):
             raise SetupStateError("Setup state contains an unexpected step set")
 
-        steps = {
-            step_id: StepRecord(**record)
-            for step_id, record in steps_raw.items()
-        }
-        validations = {
-            check_id: ValidationRecord(**record)
-            for check_id, record in raw.get("validations", {}).items()
-        }
+        validations_raw = raw.get("validations", {})
+        if not isinstance(validations_raw, dict):
+            raise SetupStateError(
+                "Setup state contains a malformed validations object"
+            )
+        products_raw = raw.get("products", {})
+        if not isinstance(products_raw, dict):
+            raise SetupStateError(
+                "Setup state contains a malformed products object"
+            )
+
+        try:
+            steps = {
+                step_id: StepRecord(**record)
+                for step_id, record in steps_raw.items()
+            }
+            validations = {
+                check_id: ValidationRecord(**record)
+                for check_id, record in validations_raw.items()
+            }
+            products = _default_products()
+            products.update({
+                product_id: ProductInstallationRecord(**record)
+                for product_id, record in products_raw.items()
+            })
+        except (TypeError, ValueError) as exc:
+            raise SetupStateError(
+                "Setup state contains malformed step, validation, or product "
+                "records"
+            ) from exc
 
         state = cls(
             schema_version=raw["schema_version"],
@@ -225,10 +249,7 @@ class SetupState:
             selected_products=list(raw.get("selected_products", [])),
             prerequisites=raw.get("prerequisites", {}),
             alm=raw.get("alm", {}),
-            products={
-                product_id: ProductInstallationRecord(**record)
-                for product_id, record in raw.get("products", {}).items()
-            },
+            products=products,
             steps=steps,
             validations=validations,
             active_step=raw.get("active_step", STEP_ORDER[0]),

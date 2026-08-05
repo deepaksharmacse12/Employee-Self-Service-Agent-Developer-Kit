@@ -24,7 +24,8 @@ Persist readiness independently:
 
 ```text
 python scripts/setup_state.py set-product-readiness \
-  --product "{da.esshr|da.essit|cea.esshr|cea.essit}" --ready
+  --product "{da.esshr|da.essit|da.esshub|cea.esshr|cea.essit|cea.esshub}" \
+  --ready
 ```
 
 Record:
