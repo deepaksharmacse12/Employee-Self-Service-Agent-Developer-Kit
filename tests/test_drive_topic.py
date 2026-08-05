@@ -60,7 +60,7 @@ def test_connect_attaches_when_cdp_already_up(monkeypatch):
             started["n"] += 1
 
     monkeypatch.setattr(drive_topic, "DriveSurface", StubSurface)
-    monkeypatch.setattr(drive_topic, "CdpDriver", lambda ep: object())
+    monkeypatch.setattr(drive_topic, "CdpDriver", lambda ep, **kw: object())
     surface = drive_topic._connect(env_id="e", bot_id="b", allow_launch=True,
                                    cdp_endpoint="http://localhost:9222")
     assert started["n"] == 1
@@ -100,7 +100,7 @@ def test_connect_launch_uses_the_cdp_port_not_the_default(monkeypatch):
             pass
 
     monkeypatch.setattr(drive_topic, "DriveSurface", StubSurface)
-    monkeypatch.setattr(drive_topic, "CdpDriver", lambda ep: object())
+    monkeypatch.setattr(drive_topic, "CdpDriver", lambda ep, **kw: object())
     drive_topic._connect(env_id="e", bot_id="b", allow_launch=True,
                          cdp_endpoint="http://localhost:9224")
     assert captured["port"] == 9224

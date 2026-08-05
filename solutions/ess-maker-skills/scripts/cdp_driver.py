@@ -361,6 +361,11 @@ def _drive_turn(page, text, timeout_s, *, arm_window_s=10, quiet_s=1.5, poll_ms=
         if not state["seen"] and time.time() > arm_deadline:
             # No network turn request observed — treat as a settle and read what
             # is on the DOM (a cached/no-op turn). Not a hard timeout.
+            # KNOWN LIMITATION (needs live validation to fix safely): if the send
+            # never registered, or the turn-request URL pattern changed, the DOM
+            # may still hold the PREVIOUS turn's bubbles, which would be returned
+            # as this turn's reply. A robust fix baselines the transcript before
+            # send and requires a new bubble past the baseline.
             completed = True
             break
         if turn_complete(
@@ -401,8 +406,9 @@ class CdpDriver:
     detaches (leaving the browser running).
     """
 
-    def __init__(self, cdp_endpoint: str = CDP_ENDPOINT):
+    def __init__(self, cdp_endpoint: str = CDP_ENDPOINT, *, expected_match: str | None = None):
         self._cdp = cdp_endpoint
+        self._expected_match = expected_match
         self._pw = None
         self._browser = None
         self._page = None
@@ -414,9 +420,12 @@ class CdpDriver:
             self._browser = self._pw.chromium.connect_over_cdp(self._cdp)
             if not self._browser.contexts:
                 raise RuntimeError("no browser context on the CDP endpoint")
-            page = self._pick_page(self._browser)
+            page = self._pick_page(self._browser, self._expected_match)
             if page is None:
-                raise RuntimeError("no open Copilot Studio page on the CDP endpoint")
+                hint = (f" matching {self._expected_match!r}"
+                        if self._expected_match else "")
+                raise RuntimeError(
+                    f"no open Copilot Studio page{hint} on the CDP endpoint")
             self._page = page
         except Exception:
             self._pw.stop()
@@ -425,10 +434,18 @@ class CdpDriver:
         _dismiss_consent(self._page)
 
     @staticmethod
-    def _pick_page(browser):
+    def _pick_page(browser, expected_match=None):
+        """Pick a Copilot Studio page. When ``expected_match`` is given (an env or
+        bot id from the requested test-pane URL), require it in the page URL so we
+        attach to THIS agent's pane, not whichever Copilot Studio tab another
+        session left open. Falls back to any Copilot Studio page only when no
+        match token is supplied."""
         for ctx in browser.contexts:
             for page in ctx.pages:
-                if "copilotstudio" in (page.url or ""):
+                url = page.url or ""
+                if "copilotstudio" not in url:
+                    continue
+                if expected_match is None or expected_match in url:
                     return page
         return None
 

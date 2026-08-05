@@ -162,8 +162,13 @@ def _select_page(browser, topic_id: str | None):
              if "copilotstudio" in (p.url or "")]
     if topic_id:
         matching = [p for p in pages if topic_id.lower() in (p.url or "").lower()]
-        if matching:
-            pages = matching
+        if not matching:
+            # An explicit topic id that matches no open page must NOT silently
+            # fall back to some other Copilot Studio tab — that would report the
+            # wrong topic as clean/erroring.
+            raise RuntimeError(
+                f"no open Copilot Studio page matches topic id {topic_id!r}")
+        pages = matching
     if not pages:
         raise RuntimeError("no open Copilot Studio page on the CDP endpoint")
     return max(pages, key=lambda p: (

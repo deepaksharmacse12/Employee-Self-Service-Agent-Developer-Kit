@@ -68,3 +68,37 @@ def test_build_launch_args_can_disable_inprivate():
     args = build_launch_args(debug_port=9222, user_data_dir="d", start_url="u",
                              inprivate=False)
     assert "--inprivate" not in args
+
+
+class _FakePage:
+    def __init__(self, url):
+        self.url = url
+
+
+class _FakeBrowser:
+    def __init__(self, urls):
+        self.contexts = [type("Ctx", (), {"pages": [_FakePage(u) for u in urls]})()]
+
+
+def test_pick_page_without_match_returns_first_copilotstudio_page():
+    from cdp_driver import CdpDriver
+    browser = _FakeBrowser(["https://other.com/x",
+                            "https://copilotstudio.microsoft.com/a"])
+    assert CdpDriver._pick_page(browser).url == "https://copilotstudio.microsoft.com/a"
+
+
+def test_pick_page_with_match_requires_the_token_in_url():
+    from cdp_driver import CdpDriver
+    bot = "2731c539"
+    browser = _FakeBrowser([
+        "https://copilotstudio.microsoft.com/environments/e/bots/OTHER/overview",
+        f"https://copilotstudio.microsoft.com/environments/e/bots/{bot}/overview",
+    ])
+    page = CdpDriver._pick_page(browser, bot)
+    assert bot in page.url  # attaches to THIS bot's pane, not the other tab
+
+
+def test_pick_page_with_match_returns_none_when_no_page_matches():
+    from cdp_driver import CdpDriver
+    browser = _FakeBrowser(["https://copilotstudio.microsoft.com/bots/OTHER/overview"])
+    assert CdpDriver._pick_page(browser, "2731c539") is None

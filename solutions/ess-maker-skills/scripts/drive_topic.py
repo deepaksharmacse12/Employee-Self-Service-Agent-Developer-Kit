@@ -162,7 +162,7 @@ def _connect(*, env_id, bot_id, allow_launch, cdp_endpoint):
         print("(To run a second, isolated session, pass "
               "--cdp http://localhost:<other-port>.)")
 
-    surface = DriveSurface(CdpDriver(cdp_endpoint))
+    surface = DriveSurface(CdpDriver(cdp_endpoint, expected_match=bot_id))
     try:
         surface.start()  # raises if no signed-in Copilot Studio page is present
     except RuntimeError:

@@ -148,3 +148,24 @@ def test_non_error_reply_is_not_unexplained():
     assert looks_like_unexplained_error("You have 3 open tickets.") is False
     assert looks_like_unexplained_error("") is False
     assert looks_like_unexplained_error(None) is False
+
+
+class _FakePage:
+    def __init__(self, url):
+        self.url = url
+
+
+class _FakeBrowser:
+    def __init__(self, urls):
+        self.contexts = [type("Ctx", (), {"pages": [_FakePage(u) for u in urls]})()]
+
+
+def test_select_page_raises_when_explicit_topic_id_matches_nothing():
+    import pytest
+
+    from topic_checker_capture import _select_page
+    browser = _FakeBrowser(["https://copilotstudio.microsoft.com/some/other/topic"])
+    # An explicit topic id with no matching page must raise, not silently fall
+    # back to another tab and report the wrong topic as clean.
+    with pytest.raises(RuntimeError):
+        _select_page(browser, "no-such-topic-id")
