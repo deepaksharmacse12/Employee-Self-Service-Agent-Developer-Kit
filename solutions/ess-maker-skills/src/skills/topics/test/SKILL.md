@@ -52,9 +52,10 @@ The drive is automated, but the **sign-in is not** — a test account has to sig
 1. **Launch** an InPrivate Edge with the CDP debug port open, pointed at the agent's test pane, and **end the turn** asking the user to sign in. Do not block a subprocess on `input()` waiting for sign-in — launch, then hand control back to the user.
 
    ```
-   msedge --inprivate --remote-debugging-port=9222 "<test-pane-url>"
+   msedge --inprivate --user-data-dir="<fresh temp dir>" --no-first-run --remote-debugging-port=9222 "<test-pane-url>"
    ```
 
+   - **The dedicated `--user-data-dir` is mandatory.** Without a fresh profile dir, a second `msedge` invocation just opens a tab in an already-running Edge and **silently ignores** `--remote-debugging-port`, so nothing is attachable. (Prefer `drive_topic.py`'s launch, which handles this for you.)
    - **InPrivate is mandatory, not cosmetic.** A normal-profile launch (`--user-data-dir` alone) lets Windows WAM / sync silently sign in the **ambient corp account** — and can flip-flop between identities across launches. InPrivate disables that SSO so the user gets a clean account picker and signs in as the **test** account.
    - The **test-pane URL** is the agent overview page; `drive_topic.py` builds it from `--env`/`--bot` (or `.local/config.json`) — read it from there.
    - **Port** defaults to **9222**. If another session already holds it, pick another (e.g. `9224`) and use it in both the launch and the attach below.

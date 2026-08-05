@@ -72,6 +72,17 @@ def test_plant_inserts_node_after_anchor_action():
     assert out.index("setVariable_cacheHit") < out.index("sendActivity_DBG_cacheHit")
 
 
+def test_plant_rejects_newline_in_activity_or_node_id():
+    import pytest
+    # A newline would inject extra YAML lines (extra nodes) at the anchor indent.
+    with pytest.raises(ValueError):
+        plant_debug_node(_TOPIC, after_action_id="setVariable_cacheHit",
+                         node_id="dbg", activity="ok\n        - kind: SendActivity")
+    with pytest.raises(ValueError):
+        plant_debug_node(_TOPIC, after_action_id="setVariable_cacheHit",
+                         node_id="dbg\nid: evil", activity="ok")
+
+
 def test_plant_uses_anchor_action_indentation():
     out, _ = plant_debug_node(
         _TOPIC, after_action_id="setVariable_cacheHit",

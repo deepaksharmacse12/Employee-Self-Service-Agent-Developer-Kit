@@ -52,6 +52,12 @@ def plant_debug_node(
     ``id:`` is ``after_action_id``. Returns (modified_data, count). count==0 (and
     data unchanged) when the anchor action id is absent — the caller treats that
     as fatal (a mis-targeted plant)."""
+    # The node is written as single-line YAML scalars; a line break in either
+    # value would inject additional YAML lines (extra nodes) at the anchor indent.
+    for field, value in (("node_id", node_id), ("activity", activity)):
+        if "\n" in value or "\r" in value:
+            raise ValueError(f"{field} must be single-line (no newlines): {value!r}")
+
     lines, nl = _split(data)
 
     id_idx = next((i for i, line in enumerate(lines)
@@ -177,7 +183,6 @@ class PlantProvenance:
 class DataverseClient(Protocol):
     def get_topic(self, schemaname: str) -> tuple[str, str]: ...
     def patch_topic(self, record_id: str, content: str) -> None: ...
-    def publish_bot(self, bot_id: str) -> None: ...
 
 
 def plant_debug_nodes_live(
