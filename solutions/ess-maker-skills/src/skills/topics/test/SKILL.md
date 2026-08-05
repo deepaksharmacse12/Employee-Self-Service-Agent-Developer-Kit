@@ -160,6 +160,8 @@ When the reply looks plausible and the flow run shows nothing wrong, but a branc
 
    This restores the topic byte-identically, publishes, and clears the provenance. Run it even if the diagnosis was inconclusive. (`--yes` because you already owned the plant/strip consent above; the bare command prompts and would hang as a subprocess.)
 
+**Recovering a stranded plant (crash / walk-away).** A plant is durable, not tied to this session: `plant_debug.py` records the node to `.local/.dbg_provenance.json` on disk before you strip. So if the tool crashes, the chat closes, or you simply walk away after planting, the DBG node is **still live in the deployed topic** — it is not auto-removed. To recover, run `python scripts/strip_debug.py --yes` from the same workspace at any later time: it reads the persisted provenance, removes the node, republishes, and clears the file (a no-op if the node is already gone). A leftover `.local/.dbg_provenance.json` is the signal that a plant is outstanding; `plant_debug.py` also refuses to plant again while one exists, so a stranded plant can't be silently double-planted.
+
 ## Report
 
 Summarize for the maker:
