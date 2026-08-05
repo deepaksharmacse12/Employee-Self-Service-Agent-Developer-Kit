@@ -345,6 +345,7 @@ If the topic misbehaves at runtime — a generic error, a blank field, a branch 
 After the topic is pushed and verified:
 
 - "Want to define what 'correct' means for this topic? Run `evaluations/create` to author its evaluation cases — the customer-facing scenarios, including failure handling, the topic must satisfy."
-- "Want to test or debug it? Type `/test` to drive the topic and debug its runtime behaviour until it's right."
+- "Want to check it works? I can drive **{TopicName}** now and exercise its happy path and failure handling."
+  - On yes: read `src/skills/topics/test/SKILL.md` and run its debug-and-validate loop **scoped to {TopicName}** — you already know the component (you just created this topic), so **skip the "topic or workflow?" question**, and reuse the signed-in test-pane session if one is already open (only do the launch → sign-in handoff if no browser is ready). Build the probe set (failure paths first) for {TopicName} and drive it.
 - "Would you like to create another topic?"
 - "Type `/menu` to see other options."
