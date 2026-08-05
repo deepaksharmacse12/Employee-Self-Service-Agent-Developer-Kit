@@ -153,9 +153,12 @@ python scripts/validate.py "<flow name>"
 
 If the user prefers to publish manually instead, point them at [Copilot Studio](https://copilotstudio.microsoft.com/).
 
-## Step 9: Offer Next Steps
+## Step 9: Continue into test, or offer next steps
 
-- "Want to check it works? Type `/test` to drive the topic and debug its runtime behaviour."
+Offer to continue straight into a debug drive of the change — and if the user says yes, **do it in the same flow, don't make them start over**:
+
+- "Want to check it works? I can drive **{TopicName}** now and exercise its happy path and failure handling."
+  - On yes: read `src/skills/topics/test/SKILL.md` and run its debug-and-validate loop **scoped to {TopicName}** — you already know the component (this was a topic update), so **skip the "topic or workflow?" question**, and reuse the signed-in test-pane session if one is already open (only do the launch → sign-in handoff if no browser is ready). Build the probe set (failure paths first) for {TopicName} and drive it.
 - "Would you like to make another change?"
 - "Type `/scan` to check for errors."
 - "Type `/menu` to see all available commands."
