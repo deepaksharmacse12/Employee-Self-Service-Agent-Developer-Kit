@@ -153,8 +153,6 @@ python scripts/validate.py "<flow name>"
 
 If the user prefers to publish manually instead, point them at [Copilot Studio](https://copilotstudio.microsoft.com/).
 
-Once the push (and any publish, whether run now or handed off to the maker) is initiated, **do not end the interaction here** — the change still needs its behaviour validated. Proceed to Step 9.
-
 ## Step 9: Continue into test, or offer next steps
 
 Offer to continue straight into a debug drive of the change — and if the user says yes, **do it in the same flow, don't make them start over**:

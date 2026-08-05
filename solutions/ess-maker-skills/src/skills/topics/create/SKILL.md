@@ -333,8 +333,6 @@ If a **workflow** was created (e.g. a ServiceNow options flow for runtime depend
 python scripts/validate.py "<flow name>"
 ```
 
-Once the push (and any publish, whether run now or handed off to the maker) is initiated, **do not end the interaction here** — the topic still needs its behaviour validated. Proceed to Step 7 to offer the next steps, including driving the topic.
-
 ## Step 7: Offer Next Steps
 
 After the topic is pushed and verified:
