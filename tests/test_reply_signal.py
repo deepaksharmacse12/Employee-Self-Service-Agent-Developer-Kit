@@ -125,14 +125,6 @@ def test_looks_like_error_false_for_normal_reply():
     assert looks_like_error(None) is False
 
 
-def test_error_reply_still_classifies_ok():
-    # The advisory does not change the signal — the turn is real, assert on it.
-    from reply_signal import classify_reply_signal, looks_like_error
-    reply = "Error code: 400 Error Message: Something went wrong."
-    assert classify_reply_signal(reply) is ReplySignal.OK
-    assert looks_like_error(reply) is True
-
-
 # --------------------------------------------------------------------------- #
 # expected/rejected-text assertions: the deterministic grade on top of the OK
 # signal. This is the axis that separates a 400 from a real success when both

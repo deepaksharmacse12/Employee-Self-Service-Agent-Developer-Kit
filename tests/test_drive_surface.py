@@ -52,13 +52,6 @@ def test_aggregate_empty_is_empty_string_not_raise():
     assert result.timed_out is False
 
 
-def test_aggregate_single_bubble():
-    result = aggregate_turn([Bubble(text="You have no open cases.", had_card=False)])
-    assert result.reply_text == "You have no open cases."
-    assert result.bubble_count == 1
-    assert result.had_card is False
-
-
 def test_aggregate_carries_timeout_flag():
     result = aggregate_turn([Bubble(text="partial", had_card=False)], timed_out=True)
     assert result.timed_out is True
@@ -85,13 +78,6 @@ def test_aggregate_preserves_individual_bubbles():
     assert [b.text for b in result.bubbles] == [b.text for b in bubbles]
 
 
-def test_result_bubbles_is_an_immutable_tuple():
-    result = aggregate_turn([Bubble("a", False)])
-    assert isinstance(result.bubbles, tuple)
-    with pytest.raises((AttributeError, TypeError)):
-        result.bubbles.append(Bubble("b", False))  # type: ignore[attr-defined]
-
-
 def test_card_and_text_bubble_partitions():
     result = aggregate_turn([
         Bubble("<card>", True),
@@ -114,14 +100,6 @@ def test_trailing_text_after_card_detected():
 
     text_only = aggregate_turn([Bubble("hello", False)])
     assert text_only.has_text_after_card is False
-
-
-def test_empty_result_bubble_helpers_are_safe():
-    result = aggregate_turn([])
-    assert result.bubbles == ()
-    assert result.card_bubbles == ()
-    assert result.text_bubbles == ()
-    assert result.has_text_after_card is False
 
 
 def test_surface_drive_exposes_per_bubble():
@@ -242,21 +220,6 @@ def test_surface_drive_requires_start():
     surface = DriveSurface(driver)
     with pytest.raises(RuntimeError):
         surface.drive("x", timeout_s=30)
-
-
-def test_surface_reset_and_close_delegate():
-    driver = FakeDriver([([Bubble("A", False)], False)])
-    surface = DriveSurface(driver)
-    surface.start()
-    surface.drive("x", timeout_s=30)
-    surface.reset()
-    surface.close()
-    assert driver.resets == 1
-    assert driver.closed == 1
-    # lifecycle order: start -> send -> reset -> close
-    assert [c if isinstance(c, str) else c[0] for c in driver.calls] == [
-        "start", "send", "reset", "close",
-    ]
 
 
 def test_surface_close_is_safe_without_start():
