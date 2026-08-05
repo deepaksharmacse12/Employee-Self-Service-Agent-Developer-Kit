@@ -21,7 +21,7 @@ Both kinds run in the **same loop** and usually coexist — the common state is 
 
 This skill **drives the topic automatically** — it launches (or attaches to) an InPrivate browser on the agent's test pane, sends the probe, and captures the reply — then runs deterministic tools over that reply so you are not debugging on a phantom reply or guessing at hidden state:
 
-- **`scripts/drive_topic.py`** — drive a probe against the test pane and classify the reply in one step. It attaches to an already-open CDP browser, or launches Edge InPrivate on the test pane and prompts a single sign-in, then drives. InPrivate is deliberate: it signs in as a *test* account, not the ambient corp account.
+- **`scripts/drive_topic.py`** — drive a probe against the already-open, signed-in test pane and classify the reply in one step. Attach with `--no-launch --cdp <endpoint>`; the browser is launched and signed into as a separate chat-driven step (see "Get the browser ready" below), not by surfacing the tool's own sign-in prompt. InPrivate is deliberate: it signs in as a *test* account, not the ambient corp account.
 - **`scripts/reply_signal.py`** — the classifier `drive_topic` uses (also runnable standalone on a pasted reply): real answer vs consent gate / timeout / empty.
 - **`scripts/flow_run_inspect.py`** — for flow-backed topics, read the flow's per-action run history (did the connector run, which action failed, why is the reply generic). Interpret it with `src/reference/ess-docs/operations/flow-run-inspection.md`.
 - **`scripts/plant_debug.py`** / **`scripts/strip_debug.py`** — for topic-internal silent-state bugs, plant a temporary DBG node that projects a topic variable into the transcript, re-drive, read it, then strip it.
