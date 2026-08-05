@@ -37,6 +37,8 @@ reference names, and runtime sources from packaged workflow definitions.
 | 2 | Employee Self-Service IT | `msdyn_CopilotForEmployeeSelfServiceIT` | Active (CEA bundle) | Name: `Microsoft 365 Self-Help`<br>Logical name: `msdyn_copilotforemployeeselfserviceit.shared_alchemy.shared-alchemy-8262076a-e778-450b-8a35-5ae815712319` |
 | 3 | Employee Self-Service HR | `msdyn_CopilotForEmployeeSelfServiceDAHR` | Active (DA bundle) | _(none)_ |
 | 4 | Employee Self-Service IT | `msdyn_CopilotForEmployeeSelfServiceDAIT` | Active (DA bundle) | Name: `Microsoft 365 Self-Help`<br>Logical name: `msdyn_copilotforemployeeselfservicedait.shared_alchemy.shared-alchemy-8262076a-e778-450b-8a35-5ae815712319` |
+| 5 | Employee Self-Service Hub | `msdyn_CopilotForEmployeeSelfServiceCore` | Active (CEA bundle) | _(none)_ |
+| 6 | Employee Self-Service Hub | `msdyn_CopilotForEmployeeSelfServiceCoreDA` | Active (DA bundle) | _(none)_ |
 
 ## Child packages, connection references, and flows
 
