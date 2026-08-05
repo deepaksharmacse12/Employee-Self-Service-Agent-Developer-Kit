@@ -29,6 +29,6 @@ An authored flow is not agent-invocable until it is registered and activated. `/
 
 After pushing:
 
-1. **Publish** — pushed **topic** changes only go live once the agent is published (a flow's `clientdata` edits are live immediately). Run `python scripts/publish.py` — see [publish.md](../deployment/publish.md).
+1. **Publish** — pushed **topic** changes only go live once the agent is published (a flow's `clientdata` edits are live immediately). Ask the maker once, then run `python scripts/publish.py --yes` non-interactively — see [publish.md](../deployment/publish.md).
 2. **Validate** — confirm the flow is runtime-invocable: `python scripts/validate.py "<your flow name>"` checks it is activated, `modernflowtype=1`, all Response actions are `kind:Skills`, has a bound flow-scoped connection reference, and is linked to a system topic.
-3. **Repair** — activation triggers live connector-schema validation, so if the backing service is unreachable (e.g. hibernating) registration can fail transiently. Re-drive it with `python scripts/push.py --repair` once the service is reachable.
+3. **Repair** — activation triggers live connector-schema validation, so if the backing service is unreachable (e.g. hibernating) registration can fail transiently. Re-drive it with `python scripts/push.py --repair --yes` once the service is reachable (this republishes — ask the maker once, then run it non-interactively).

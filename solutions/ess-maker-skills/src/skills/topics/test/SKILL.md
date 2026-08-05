@@ -47,20 +47,20 @@ Most real topics are both; work outward — confirm the drive, then the flow, th
 
 ## Get the browser ready (launch → sign in → attach)
 
-The drive is automated, but the **sign-in is not** — a test account has to sign in once in a real browser window, and that is a human step across a turn boundary. So getting ready is two phases, and the agent must not try to do both in one blocking call:
+The drive is automated, but the **sign-in is not** — a test account has to sign in once in a real browser window, and that is a human step across a turn boundary. Handle it as a **chat** interaction, never by surfacing a terminal prompt: do **not** use `drive_topic.py`'s own launch path here (it prints a "press Enter here" prompt and blocks on `input()` — that presents the CLI as the UX, which we avoid). Instead, two phases:
 
-1. **Launch** an InPrivate Edge with the CDP debug port open, pointed at the agent's test pane, and **end the turn** asking the user to sign in. Do not block a subprocess on `input()` waiting for sign-in — launch, then hand control back to the user.
+1. **Launch** an InPrivate Edge with the CDP debug port open (non-blocking), pointed at the agent's test pane, then **end the turn with a chat message**: tell the maker to sign in as their test account in the window that opened, and to reply here when they're ready to test.
 
    ```
    msedge --inprivate --user-data-dir="<fresh temp dir>" --no-first-run --remote-debugging-port=9222 "<test-pane-url>"
    ```
 
-   - **The dedicated `--user-data-dir` is mandatory.** Without a fresh profile dir, a second `msedge` invocation just opens a tab in an already-running Edge and **silently ignores** `--remote-debugging-port`, so nothing is attachable. (Prefer `drive_topic.py`'s launch, which handles this for you.)
+   - **The dedicated `--user-data-dir` is mandatory.** Without a fresh profile dir, a second `msedge` invocation just opens a tab in an already-running Edge and **silently ignores** `--remote-debugging-port`, so nothing is attachable.
    - **InPrivate is mandatory, not cosmetic.** A normal-profile launch (`--user-data-dir` alone) lets Windows WAM / sync silently sign in the **ambient corp account** — and can flip-flop between identities across launches. InPrivate disables that SSO so the user gets a clean account picker and signs in as the **test** account.
    - The **test-pane URL** is the agent overview page; `drive_topic.py` builds it from `--env`/`--bot` (or `.local/config.json`) — read it from there.
    - **Port** defaults to **9222**. If another session already holds it, pick another (e.g. `9224`) and use it in both the launch and the attach below.
 
-2. **Wait for the user to confirm they are signed in** (a chat turn — "signed in" / "done"), *then* **attach and drive**. Because the browser is already up, use `--no-launch` so the tool attaches instead of trying to launch again:
+2. **When the maker replies in chat that they're signed in / ready**, attach and drive. Because the browser is already up, use `--no-launch` so the tool attaches without re-launching (and without any interactive prompt of its own):
 
    ```
    python scripts/drive_topic.py --prompt "<probe input>" --no-launch --cdp http://localhost:9222

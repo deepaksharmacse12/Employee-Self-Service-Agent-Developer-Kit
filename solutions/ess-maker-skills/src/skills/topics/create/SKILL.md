@@ -321,10 +321,10 @@ After a successful push, show the user what was created:
 - If template config was created: the scenario name
 - If workflow was created: the workflow file path
 
-A new **topic** only goes live once the agent is **published** (a new flow's `clientdata` is live immediately, but its registration still needs the push, which is done). If you deactivated an intent-overlapping topic in Step 4, that change **also** goes live only on publish. Offer to publish for them:
+A new **topic** only goes live once the agent is **published** (a new flow's `clientdata` is live immediately, but its registration still needs the push, which is done). If you deactivated an intent-overlapping topic in Step 4, that change **also** goes live only on publish. Ask **once** in chat whether to publish; on yes, run it **non-interactively** so the CLI's own confirmation never surfaces to the maker:
 
 ```
-python scripts/publish.py
+python scripts/publish.py --yes
 ```
 
 If a **workflow** was created (e.g. a ServiceNow options flow for runtime dependent dropdowns), also offer to confirm it is agent-invocable — this verifies it is activated, `modernflowtype=1`, has kind:Skills Response actions, a bound flow-scoped connection reference, and a system-topic link:
