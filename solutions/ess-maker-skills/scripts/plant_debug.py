@@ -24,7 +24,7 @@ import json
 import time
 from pathlib import Path
 
-from debug_plant import PlantSpec, plant_debug_nodes_live
+from debug_plant import PlantSpec, plant_debug_nodes_live, strip_debug_nodes_live
 from http_errors import APIError
 
 # Provenance is written here by plant and read by strip. Lives under the kit's
@@ -69,6 +69,11 @@ def publish_with_retry(publish_fn, *, attempts=_PUBLISH_ATTEMPTS,
             return
         except APIError as err:
             if not _is_transient_publish_error(err) or attempt == attempts - 1:
+                if getattr(err, "status_code", None) == 401:
+                    print("  Publish still returns 401 after retries. This is "
+                          "usually publish throttling on a valid token, but a "
+                          "persistent 401 can also mean the token expired — "
+                          "re-run to re-authenticate if it does not clear.")
                 raise
             delay = base_delay * (2 ** attempt)
             print(f"  Publish throttled ({getattr(err, 'status_code', '?')}); "
@@ -264,7 +269,17 @@ def main(argv=None) -> int:
     spec = PlantSpec(after_action_id=args.after, node_id=node_id, activity=args.activity)
 
     provenance = plant_debug_nodes_live(client, topic_schema, [spec])
-    save_provenance(provenance)
+    try:
+        save_provenance(provenance)
+    except OSError as exc:
+        # The live topic is already patched but the strip record didn't persist —
+        # an un-strippable mutation. Roll the plant back immediately using the
+        # in-memory provenance rather than leaving debug noise in the topic.
+        print(f"  Provenance write failed ({exc}); rolling back the plant...")
+        strip_debug_nodes_live(client, provenance)
+        client.publish_bot(bot_id)
+        print("  Rolled back and published; topic restored. Nothing was left planted.")
+        return 1
     print(f"  Planted {node_id!r}; provenance saved to {PROVENANCE_PATH}.")
 
     print("Publishing...")
