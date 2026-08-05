@@ -17,6 +17,9 @@ python scripts/setup_state.py record-check --check-id {CHECK_ID} \
   --evidence-json "{JSON_OBJECT}" [--cause-code {CODE}]
 ```
 
+The command automatically adds a 10–12 word `note` explaining the validation.
+Do not place a separate `note` inside the evidence object.
+
 Never include secrets in evidence. Evidence should contain stable facts such as the
 environment identifier, selected capacity model, solution identifier, starter name,
 attestor role, and timestamp.

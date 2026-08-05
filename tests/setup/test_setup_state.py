@@ -121,8 +121,24 @@ def test_validation_contract_is_persisted() -> None:
     record = state.validations["SETUP-PREREQ-ACCESS-001"]
     assert record.status == "pass"
     assert record.mode == "manual-attested"
+    assert 10 <= len(record.note.split()) <= 12
     assert record.evidence == {"attestor": "maker"}
     assert record.cause_codes == []
+
+
+def test_known_validation_notes_are_specific_and_concise() -> None:
+    check_ids = {
+        check_id
+        for required_checks in setup_state.REQUIRED_CHECKS_BY_STEP.values()
+        for check_id in required_checks
+    }
+    notes = {
+        check_id: setup_state.validation_note(check_id)
+        for check_id in check_ids
+    }
+
+    assert len(set(notes.values())) == len(notes)
+    assert all(10 <= len(note.split()) <= 12 for note in notes.values())
 
 
 def test_json_repository_round_trips_atomically(tmp_path: Path) -> None:
@@ -289,6 +305,13 @@ def test_scope_accepts_discovered_power_platform_environment_type() -> None:
 
     assert state.environment["type"] == "Developer"
     assert state.selected_products == []
+    assert state.validations["SETUP-SCOPE-002"].note == (
+        "Confirms the selected environment type is suitable for this setup."
+    )
+    assert all(
+        10 <= len(record.note.split()) <= 12
+        for record in state.validations.values()
+    )
 
 
 def test_product_selection_has_a_separate_cli_transition() -> None:

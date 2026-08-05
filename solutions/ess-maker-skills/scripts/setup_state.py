@@ -135,6 +135,131 @@ class ValidationMode(StrEnum):
     MANUAL_ATTESTED = "manual-attested"
 
 
+def validation_note(check_id: str) -> str:
+    """Return a concise description for a persisted setup validation."""
+    exact_notes = {
+        "SETUP-SCOPE-001": (
+            "Confirms selected environment identity matches the intended "
+            "foundation setup target."
+        ),
+        "SETUP-SCOPE-002": (
+            "Confirms the selected environment type is suitable for this setup."
+        ),
+        "SETUP-SCOPE-003": (
+            "Records the approved foundation setup intent for this current "
+            "configuration run."
+        ),
+        "SETUP-PREREQ-ACCESS-001": (
+            "Confirms selected environment identity and URL match discovered "
+            "Power Platform records."
+        ),
+        "SETUP-PREREQ-DV-001": (
+            "Confirms Dataverse is provisioned and available in the selected "
+            "environment."
+        ),
+        "SETUP-PREREQ-MCP-001": (
+            "Confirms GitHub Copilot is enabled as an allowed Dataverse MCP "
+            "client."
+        ),
+        "SETUP-PREREQ-CAP-001": (
+            "Records the approved capacity and billing model for this "
+            "environment."
+        ),
+        "SETUP-PREREQ-GOV-001": (
+            "Confirms required DLP, network, and organizational governance "
+            "approvals are complete."
+        ),
+        "SETUP-PREREQ-BLOCK-001": (
+            "Confirms no mandatory prerequisites remain before environment "
+            "configuration can begin."
+        ),
+        "SETUP-ENV-001": (
+            "Confirms FlightCheck correctly resolved the locked environment "
+            "identity and endpoint."
+        ),
+        "SETUP-ENV-002": (
+            "Records locked environment metadata and confirmed Dataverse "
+            "provisioning details for setup."
+        ),
+        "SETUP-ENV-003": (
+            "Confirms environment verification passed and safely unlocks "
+            "preferred solution configuration."
+        ),
+        "SETUP-ALM-001": (
+            "Confirms the selected unmanaged solution exists in the target "
+            "environment."
+        ),
+        "SETUP-ALM-002": (
+            "Confirms the selected solution is configured as the preferred "
+            "solution."
+        ),
+        "SETUP-ALM-003": (
+            "Records required solution identity, publisher, prefix, and version "
+            "metadata details."
+        ),
+        "SETUP-INSTALL-SELECTION-001": (
+            "Confirms exactly one eligible ESS starter product is currently "
+            "selected."
+        ),
+        "SETUP-INSTALL-001": (
+            "Confirms every selected ESS starter is installed in the "
+            "environment."
+        ),
+        "SETUP-INSTALL-002": (
+            "Confirms every installed ESS starter opens successfully in Copilot "
+            "Studio."
+        ),
+        "SETUP-INSTALL-003": (
+            "Confirms every selected ESS product is independently bound to its "
+            "agent."
+        ),
+        "SETUP-INSTALL-004": (
+            "Confirms required invoker connection settings were reviewed and "
+            "maker-attested successfully."
+        ),
+        "SETUP-READINESS-001": (
+            "Confirms Configure and Topics pages are reachable for selected "
+            "agents."
+        ),
+        "SETUP-READINESS-002": (
+            "Confirms required agent shell and starter content are present "
+            "together."
+        ),
+        "SETUP-READINESS-003": (
+            "Confirms persisted starter records match the currently observed "
+            "agent state."
+        ),
+        "SETUP-HANDOFF-001": (
+            "Confirms the setup report accurately matches all persisted setup "
+            "state."
+        ),
+        "SETUP-HANDOFF-002": (
+            "Confirms every required setup gate passed before integration "
+            "configuration begins."
+        ),
+        "SETUP-HANDOFF-003": (
+            "Confirms rerunning setup resumes safely at the completed handoff "
+            "boundary."
+        ),
+        "SETUP-FINAL-001": (
+            "Confirms the complete final setup validation bundle passed "
+            "successfully together."
+        ),
+        "SETUP-FINAL-002": (
+            "Records integration configuration as the next supported action "
+            "after setup."
+        ),
+        "SETUP-FINAL-003": (
+            "Records deterministic failure recovery and resumable blocked-step "
+            "behavior during setup."
+        ),
+    }
+    return exact_notes.get(
+        check_id,
+        "Records validation evidence for this required foundation setup workflow checkpoint.",
+    )
+
+
 @dataclass
 class StepRecord:
     state: str = StepStatus.PENDING
@@ -147,6 +272,7 @@ class ValidationRecord:
     check_id: str
     status: str
     mode: str
+    note: str = ""
     evidence: dict[str, Any] = field(default_factory=dict)
     cause_codes: list[str] = field(default_factory=list)
     recorded_at: str = field(default_factory=lambda: utc_now())
@@ -228,7 +354,12 @@ class SetupState:
                 for step_id, record in steps_raw.items()
             }
             validations = {
-                check_id: ValidationRecord(**record)
+                check_id: ValidationRecord(
+                    **{
+                        **record,
+                        "note": validation_note(check_id),
+                    }
+                )
                 for check_id, record in validations_raw.items()
             }
             products = _default_products()
@@ -705,6 +836,7 @@ class SetupWorkflow:
             check_id=check_id,
             status=status,
             mode=mode,
+            note=validation_note(check_id),
             evidence=evidence,
             cause_codes=cause_codes,
         )

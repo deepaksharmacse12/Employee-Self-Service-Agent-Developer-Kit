@@ -75,6 +75,10 @@ Here's your ESS foundation setup:
 The persisted `active_step` is authoritative. Dispatch to it immediately.
 Resumption does not require user input.
 
+Every persisted validation includes an automatically generated `note` explaining
+the check in 10–12 words. Do not omit, replace, or duplicate that note in
+evidence.
+
 ---
 
 ## Dispatch
