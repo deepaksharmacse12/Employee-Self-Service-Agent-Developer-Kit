@@ -142,7 +142,7 @@ Each captured error names a `componentId` (a GUID) rather than the topic's displ
 When the reply looks plausible and the flow run shows nothing wrong, but a branch fired wrong or a field came back blank, make the deciding topic state visible.
 
 1. Pick the **action id** to instrument (the action that *populates* the variable you doubt) and the variable(s) to print. The DBG node must land **after** the populating action, or it reads a not-yet-set value.
-2. Plant and publish. You **own the consent decision in chat**: this mutates the deployed topic, so confirm with the user first, then pass `--yes` — the script otherwise prompts on `input()`, which a non-interactive subprocess cannot answer and which reads as a hang.
+2. Plant and publish. Pass `--yes` — the script otherwise prompts on `input()`, which a non-interactive subprocess cannot answer and which reads as a hang. This is a **live but reversible** change to the deployed topic: it is byte-reversible and you always strip it (step 5), and it targets the maker's own dev topic — so you do **not** need a separate approval turn. Just tell the user you're planting a temporary debug node, then plant.
 
    ```
    python scripts/plant_debug.py --topic <topic> --after <action-id> --activity "DBG branch={Topic.SomeVar} count={Topic.SomeCount}" --yes
@@ -158,7 +158,7 @@ When the reply looks plausible and the flow run shows nothing wrong, but a branc
    python scripts/strip_debug.py --yes
    ```
 
-   This restores the topic byte-identically, publishes, and clears the provenance. Run it even if the diagnosis was inconclusive. (`--yes` because you already owned the plant/strip consent above; the bare command prompts and would hang as a subprocess.)
+   This restores the topic byte-identically, publishes, and clears the provenance. Run it even if the diagnosis was inconclusive. (`--yes` for the same reason as the plant — the bare command prompts on `input()` and would hang as a subprocess.)
 
 **Recovering a stranded plant (crash / walk-away).** A plant is durable, not tied to this session: `plant_debug.py` records the node to `.local/.dbg_provenance.json` on disk before you strip. So if the tool crashes, the chat closes, or you simply walk away after planting, the DBG node is **still live in the deployed topic** — it is not auto-removed. To recover, run `python scripts/strip_debug.py --yes` from the same workspace at any later time: it reads the persisted provenance, removes the node, republishes, and clears the file (a no-op if the node is already gone). A leftover `.local/.dbg_provenance.json` is the signal that a plant is outstanding; `plant_debug.py` also refuses to plant again while one exists, so a stranded plant can't be silently double-planted.
 
