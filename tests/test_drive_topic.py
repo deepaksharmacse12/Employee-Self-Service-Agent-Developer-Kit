@@ -90,6 +90,7 @@ def test_connect_launch_uses_the_cdp_port_not_the_default(monkeypatch):
 
     monkeypatch.setattr(drive_topic, "launch_browser", _fake_launch)
     monkeypatch.setattr(drive_topic, "input", lambda: "", raising=False)
+    monkeypatch.setattr(drive_topic.sys.stdin, "isatty", lambda: True)
 
     class StubSurface:
         def __init__(self, driver):
@@ -155,6 +156,26 @@ def test_main_drives_and_classifies(monkeypatch, capsys):
     assert rc == 0
     assert f"signal: {ReplySignal.OK.value}" in out
     assert "You have 2 open HR cases." in out
+
+
+def test_main_non_ok_reply_returns_nonzero_even_if_expect_would_match(monkeypatch):
+    # A consent-gate reply is a phantom turn: it must fail (rc 2), NOT pass just
+    # because the gate text happens to contain an --expect substring.
+    from drive_surface import DriveResult
+
+    class StubSurface:
+        def drive(self, prompt, timeout_s):
+            return DriveResult(reply_text="Please connect to continue to proceed.",
+                               timed_out=False, bubble_count=1, had_card=False)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(drive_topic, "_connect", lambda **kw: StubSurface())
+    monkeypatch.setattr(drive_topic, "_load_env_bot", lambda e, b: ("e", "b"))
+    rc = drive_topic.main(
+        ["--prompt", "x", "--env", "e", "--bot", "b", "--expect", "connect"])
+    assert rc == 2  # non-ok signal wins over a would-be-passing assertion
 
 
 class _RecordingSurface:

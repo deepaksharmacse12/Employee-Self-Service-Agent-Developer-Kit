@@ -27,7 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import time
+import sys
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -144,10 +144,12 @@ def _connect(*, env_id, bot_id, allow_launch, cdp_endpoint):
         launch_browser(start_url=url, debug_port=port)
         print("\n>>> Sign in as your TEST account in the InPrivate window, open the "
               "agent's Test pane, then press Enter here. <<<")
-        try:
-            input()
-        except EOFError:
-            time.sleep(20)  # non-interactive: give a window to sign in
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                "launch requires an interactive sign-in, but stdin is not a TTY. "
+                "Launch the browser and sign in out-of-band, then re-run with "
+                "--no-launch --cdp http://localhost:<port>.")
+        input()
     else:
         # Attaching to a browser that was already up — it may belong to another
         # debug session on this port. Show what we're attaching to so a
@@ -161,7 +163,14 @@ def _connect(*, env_id, bot_id, allow_launch, cdp_endpoint):
               "--cdp http://localhost:<other-port>.)")
 
     surface = DriveSurface(CdpDriver(cdp_endpoint))
-    surface.start()  # raises if no signed-in Copilot Studio page is present
+    try:
+        surface.start()  # raises if no signed-in Copilot Studio page is present
+    except RuntimeError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — normalize CDP/Playwright errors
+        raise RuntimeError(
+            f"could not attach to a signed-in test pane on {cdp_endpoint}: {exc}"
+        ) from exc
     return surface
 
 
@@ -235,6 +244,15 @@ def main(argv=None) -> int:
 
     print("--- reply ---")
     print(result.reply_text)
+
+    # A non-OK signal is a phantom reply — a consent gate, a timeout, or an empty
+    # non-reply. Assertions against it are vacuous and success is meaningless, so
+    # the exit code must reflect the signal, not the text. Only an OK turn earns a
+    # content check and a 0 exit.
+    if signal is not ReplySignal.OK:
+        print(f"result: non-ok signal ({signal.value}) — not a drivable reply; "
+              "resolve the remediation above and re-drive.")
+        return 2
 
     if args.expect or args.reject:
         assertion = check_expectations(result.reply_text,

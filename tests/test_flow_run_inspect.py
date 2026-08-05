@@ -137,7 +137,7 @@ _ENVIRONMENTS = [
     {
         "name": "22222222-2222-2222-2222-222222222222",
         "properties": {"linkedEnvironmentMetadata": {
-            "instanceApiUrl": "https://orgfa6bd26e.crm.dynamics.com",
+            "instanceApiUrl": "https://orgexample.crm.dynamics.com",
         }},
     },
 ]
@@ -145,13 +145,13 @@ _ENVIRONMENTS = [
 
 def test_match_environment_id_by_instance_api_url():
     from flow_run_inspect import match_environment_id
-    env_id = match_environment_id(_ENVIRONMENTS, "https://orgfa6bd26e.crm.dynamics.com")
+    env_id = match_environment_id(_ENVIRONMENTS, "https://orgexample.crm.dynamics.com")
     assert env_id == "22222222-2222-2222-2222-222222222222"
 
 
 def test_match_environment_id_ignores_scheme_and_trailing_slash():
     from flow_run_inspect import match_environment_id
-    env_id = match_environment_id(_ENVIRONMENTS, "orgfa6bd26e.crm.dynamics.com/")
+    env_id = match_environment_id(_ENVIRONMENTS, "orgexample.crm.dynamics.com/")
     assert env_id == "22222222-2222-2222-2222-222222222222"
 
 
@@ -173,7 +173,7 @@ def test_cli_resolves_environment_when_not_passed(capsys, monkeypatch):
     import flow_run_inspect
     monkeypatch.setenv("FLOW_API_TOKEN", "tok")
     monkeypatch.setattr(flow_run_inspect, "load_config",
-                        lambda: {"dataverseEndpoint": "https://orgfa6bd26e.crm.dynamics.com"})
+                        lambda: {"dataverseEndpoint": "https://orgexample.crm.dynamics.com"})
     monkeypatch.setattr(flow_run_inspect, "list_environments",
                         lambda token: _ENVIRONMENTS)
     captured = {}
