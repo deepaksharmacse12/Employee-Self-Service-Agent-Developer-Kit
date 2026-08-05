@@ -55,6 +55,7 @@ REQUIRED_CHECKS_BY_STEP = {
         "SETUP-ALM-003",
     ),
     "SETUP-05": (
+        "SETUP-INSTALL-SELECTION-001",
         "SETUP-INSTALL-001",
         "SETUP-INSTALL-002",
         "SETUP-INSTALL-003",
@@ -75,6 +76,7 @@ FINAL_BUNDLE_CHECKS = (
     "SETUP-ENV-001",
     "SETUP-ALM-001",
     "SETUP-ALM-002",
+    "SETUP-INSTALL-SELECTION-001",
     "SETUP-INSTALL-001",
     "SETUP-INSTALL-002",
     "SETUP-INSTALL-004",
@@ -474,12 +476,7 @@ class SetupWorkflow:
         environment_name: str,
         environment_type: str,
         tenant_endpoint: str,
-        selected_products: tuple[ProductId, ...],
     ) -> None:
-        if not selected_products:
-            raise SetupStateError("Select at least one ESS product")
-        if len(selected_products) != len(set(selected_products)):
-            raise SetupStateError("Selected ESS products must be unique")
         proposed_environment = {
             "id": environment_id,
             "name": environment_name,
@@ -503,26 +500,12 @@ class SetupWorkflow:
                     "Setup scope is locked; start a new setup run to change "
                     "the environment"
                 )
-            if state.selected_products != [
-                product_id.value for product_id in selected_products
-            ]:
-                raise SetupStateError(
-                    "Setup scope is locked; start a new setup run to change "
-                    "the selected products"
-                )
 
         state.environment = proposed_environment
-        state.selected_products = [
-            product_id.value for product_id in selected_products
-        ]
-        selected = set(state.selected_products)
+        state.selected_products = []
         for product_id, record in state.products.items():
-            record.selected = product_id in selected
-            record.installation_status = (
-                InstallationStatus.PENDING
-                if record.selected
-                else InstallationStatus.NOT_SELECTED
-            )
+            record.selected = False
+            record.installation_status = InstallationStatus.NOT_SELECTED
             record.connection_name = None
             record.schema_name = None
             record.requires_connection_attestation = False
@@ -543,7 +526,7 @@ class SetupWorkflow:
             ),
             (
                 "SETUP-SCOPE-002",
-                {"selected_products": state.selected_products},
+                {"environment_type": environment_type},
             ),
             (
                 "SETUP-SCOPE-003",
@@ -559,6 +542,36 @@ class SetupWorkflow:
                 [],
             )
         SetupWorkflow.update_step(state, "SETUP-01", StepStatus.DONE)
+
+    @staticmethod
+    def select_initial_product(
+        state: SetupState,
+        product_id: ProductId,
+    ) -> None:
+        if not state.environment.get("locked"):
+            raise SetupStateError(
+                "Cannot select a product before the environment is locked"
+            )
+        if state.selected_products:
+            raise SetupStateError(
+                "An initial ESS product is already selected"
+            )
+
+        product_id = ProductId(product_id)
+        record = state.products[product_id.value]
+        state.selected_products = [product_id.value]
+        record.selected = True
+        record.installation_status = InstallationStatus.PENDING
+        record.updated_at = utc_now()
+        SetupWorkflow.record_validation(
+            state,
+            "SETUP-INSTALL-SELECTION-001",
+            ValidationStatus.PASS,
+            ValidationMode.AUTOMATED,
+            {"selected_product": product_id.value},
+            [],
+        )
+        SetupWorkflow.refresh_active_step(state)
 
     @staticmethod
     def update_step(
@@ -1015,7 +1028,7 @@ class SetupWorkflow:
                 del state.validations[check_id]
         SetupWorkflow.record_validation(
             state,
-            "SETUP-SCOPE-002",
+            "SETUP-INSTALL-SELECTION-001",
             ValidationStatus.PASS,
             ValidationMode.AUTOMATED,
             {
@@ -1216,7 +1229,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     scope.add_argument("--tenant-endpoint", required=True)
-    scope.add_argument(
+
+    select_product = commands.add_parser("select-product")
+    select_product.add_argument(
         "--product",
         required=True,
         choices=[item.value for item in ProductId],
@@ -1333,7 +1348,12 @@ def main() -> int:
                 environment_name=args.environment_name,
                 environment_type=args.environment_type,
                 tenant_endpoint=args.tenant_endpoint,
-                selected_products=(ProductId(args.product),),
+            )
+            service.save(state)
+        elif args.command == "select-product":
+            SetupWorkflow.select_initial_product(
+                state,
+                ProductId(args.product),
             )
             service.save(state)
         elif args.command == "update-step":

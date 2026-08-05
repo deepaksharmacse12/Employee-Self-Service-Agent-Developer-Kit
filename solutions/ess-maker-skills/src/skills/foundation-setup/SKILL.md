@@ -62,11 +62,11 @@ the command:
 
 Here's your ESS foundation setup:
 
-- {marker} Choose and lock the target environment and ESS products
+- {marker} Choose and lock the target environment
 - {marker} Confirm access, MCP, capacity, billing, and governance prerequisites
 - {marker} Verify the environment and Dataverse
 - {marker} Configure the preferred unmanaged solution
-- {marker} Install and bind the selected ESS products
+- {marker} Select, install, and bind an ESS product
 - {marker} Verify baseline agent readiness
 - {marker} Confirm the setup-to-connect handoff
 

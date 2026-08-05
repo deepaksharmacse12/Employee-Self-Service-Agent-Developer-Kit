@@ -25,6 +25,7 @@ def _connection(name, *, connector="shared_alchemy", status="Connected"):
 
 
 def _setup_state(path, *products):
+    assert len(products) == 1
     state = SetupState()
     SetupWorkflow.set_scope(
         state,
@@ -32,8 +33,8 @@ def _setup_state(path, *products):
         environment_name="Development",
         environment_type=EnvironmentType.DEV,
         tenant_endpoint="https://org.crm.dynamics.com",
-        selected_products=tuple(products),
     )
+    SetupWorkflow.select_initial_product(state, products[0])
     JsonSetupStateRepository(path).save(state)
 
 

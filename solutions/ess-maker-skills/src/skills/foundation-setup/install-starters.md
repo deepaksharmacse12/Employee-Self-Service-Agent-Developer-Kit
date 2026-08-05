@@ -1,8 +1,75 @@
 <!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
-# Setup Step 5 — Install ESS Starters
+# Setup Step 5 — Select, Install, and Bind an ESS Starter
 
-Mark the step in progress and read `selected_products` and each product's
-independent `installation_status`:
+Read the locked environment and current product state:
+
+```text
+python scripts/setup_state.py show
+```
+
+If `selected_products` is empty, discover the supported ESS agents already
+installed in the selected environment and the remaining catalog installations:
+
+```text
+python scripts/discover.py \
+  --url "{ENVIRONMENT_URL}" \
+  --inventory-only
+```
+
+Parse `ESS_AGENT_DISCOVERY_JSON:`. Treat `agents` as installed and
+`availableInstallations` as the only products available to install. Do not
+offer an installed product as an installation option.
+
+If `agents` is nonempty, show each installed agent distinctly:
+
+```text
+Installed: **{agent 1 name}**; **{agent 2 name}**
+```
+
+Build the same `vscode_askQuestions` picker used by onboarding:
+
+- Add one option for each `availableInstallations` entry, preserving catalog
+  order and using its `label` and `description`.
+- If `agents` is nonempty, append **Customize an installed agent**.
+- Do not mark any option as recommended in the tool metadata and do not
+  preselect an option. The `(Recommended)` text in a catalog label is
+  informational only.
+- Allow exactly one selection.
+
+If the maker selects an available installation, use its `configKey` as
+`PRODUCT_ID`.
+
+If the maker selects **Customize an installed agent**, ask them to select one
+entry from `agents`. Use its `configKey` as `PRODUCT_ID` and retain its
+`schemaname` as `INSTALLED_SCHEMA_NAME`. This adopts the existing installed
+product into foundation state; it does not reinstall it.
+
+If both `agents` and `availableInstallations` are empty, show the exact
+discovery result and stop.
+
+Persist the selected product:
+
+```text
+python scripts/setup_state.py select-product \
+  --product "{PRODUCT_ID}"
+```
+
+If an installed agent was selected for customization, immediately record its
+existing installation:
+
+```text
+python scripts/setup_state.py set-product-status \
+  --product "{PRODUCT_ID}" \
+  --status installed \
+  --schema-name "{INSTALLED_SCHEMA_NAME}"
+```
+
+Do not collapse the choices into HR, IT, or both. DA and CEA are separate
+installable products with independent lifecycle state. Install one product per
+foundation cycle. After setup completes, onboarding uses `add-product` to offer
+one remaining product at a time while preserving the installed product.
+
+Mark the step in progress and reload the selected product:
 
 ```text
 python scripts/setup_state.py update-step --step SETUP-05 --status in-progress
@@ -142,6 +209,8 @@ binding.
 
 Record:
 
+- `SETUP-INSTALL-SELECTION-001` — exactly one catalog product is selected for
+  this foundation cycle;
 - `SETUP-INSTALL-001` — every selected starter appears;
 - `SETUP-INSTALL-002` — every selected starter opens;
 - `SETUP-INSTALL-003` — every selected product is independently `bound`.

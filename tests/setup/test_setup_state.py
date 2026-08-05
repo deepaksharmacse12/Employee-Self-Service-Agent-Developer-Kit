@@ -223,8 +223,8 @@ def test_locked_scope_cannot_drift() -> None:
         environment_name="Development",
         environment_type=EnvironmentType.DEV,
         tenant_endpoint="https://dev.crm.dynamics.com",
-        selected_products=(ProductId.DA_ESSHR,),
     )
+    SetupWorkflow.select_initial_product(state, ProductId.DA_ESSHR)
 
     with pytest.raises(SetupStateError, match="scope is locked"):
         SetupWorkflow.set_scope(
@@ -233,7 +233,6 @@ def test_locked_scope_cannot_drift() -> None:
             environment_name="Production",
             environment_type=EnvironmentType.PROD,
             tenant_endpoint="https://prod.crm.dynamics.com",
-            selected_products=(ProductId.DA_ESSHR,),
         )
 
 
@@ -246,28 +245,43 @@ def test_scope_accepts_discovered_power_platform_environment_type() -> None:
         environment_name="Developer Environment",
         environment_type="Developer",
         tenant_endpoint="https://dev.crm.dynamics.com",
-        selected_products=(ProductId.DA_ESSHR,),
     )
 
     assert state.environment["type"] == "Developer"
+    assert state.selected_products == []
 
 
-def test_set_scope_cli_accepts_one_initial_product() -> None:
+def test_product_selection_has_a_separate_cli_transition() -> None:
     args = setup_state.build_parser().parse_args([
-        "set-scope",
-        "--environment-id",
-        "environment-id",
-        "--environment-name",
-        "Development",
-        "--environment-type",
-        "Developer",
-        "--tenant-endpoint",
-        "https://dev.crm.dynamics.com",
+        "select-product",
         "--product",
         "da.esshr",
     ])
 
+    assert args.command == "select-product"
     assert args.product == "da.esshr"
+
+
+def test_initial_product_selection_requires_locked_environment() -> None:
+    state = SetupState()
+
+    with pytest.raises(SetupStateError, match="environment is locked"):
+        SetupWorkflow.select_initial_product(state, ProductId.DA_ESSHR)
+
+
+def test_initial_product_can_only_be_selected_once() -> None:
+    state = SetupState()
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="env-1",
+        environment_name="Development",
+        environment_type=EnvironmentType.DEV,
+        tenant_endpoint="https://dev.crm.dynamics.com",
+    )
+    SetupWorkflow.select_initial_product(state, ProductId.DA_ESSHR)
+
+    with pytest.raises(SetupStateError, match="already selected"):
+        SetupWorkflow.select_initial_product(state, ProductId.CEA_ESSIT)
 
 
 def test_product_installation_states_are_independent() -> None:
@@ -278,10 +292,12 @@ def test_product_installation_states_are_independent() -> None:
         environment_name="Development",
         environment_type=EnvironmentType.DEV,
         tenant_endpoint="https://dev.crm.dynamics.com",
-        selected_products=(
-            ProductId.DA_ESSHR,
-            ProductId.CEA_ESSIT,
-        ),
+    )
+    SetupWorkflow.select_initial_product(state, ProductId.DA_ESSHR)
+    state.selected_products.append(ProductId.CEA_ESSIT)
+    state.products[ProductId.CEA_ESSIT].selected = True
+    state.products[ProductId.CEA_ESSIT].installation_status = (
+        InstallationStatus.PENDING
     )
 
     SetupWorkflow.update_product_installation(
@@ -335,6 +351,7 @@ def test_install_step_requires_every_selected_product_to_be_bound() -> None:
         state.steps[step_id].state = StepStatus.DONE
     state.active_step = "SETUP-05"
     for check_id in (
+        "SETUP-INSTALL-SELECTION-001",
         "SETUP-INSTALL-001",
         "SETUP-INSTALL-002",
         "SETUP-INSTALL-003",
@@ -388,8 +405,8 @@ def test_invoker_connection_requires_maker_attestation_before_bound() -> None:
         environment_name="Development",
         environment_type=EnvironmentType.DEV,
         tenant_endpoint="https://dev.crm.dynamics.com",
-        selected_products=(ProductId.DA_ESSIT,),
     )
+    SetupWorkflow.select_initial_product(state, ProductId.DA_ESSIT)
     SetupWorkflow.update_product_installation(
         state,
         ProductId.DA_ESSIT,
@@ -510,7 +527,7 @@ def test_adding_product_reopens_only_dependent_foundation_steps() -> None:
     assert state.completed_at is None
     assert "SETUP-INSTALL-001" not in state.validations
     assert "SETUP-FINAL-001" not in state.validations
-    assert state.validations["SETUP-SCOPE-002"].evidence[
+    assert state.validations["SETUP-INSTALL-SELECTION-001"].evidence[
         "scope_extended"
     ] is True
 
@@ -564,6 +581,7 @@ def test_finalize_marks_connect_ready() -> None:
             "SETUP-ALM-003",
         ),
         (
+            "SETUP-INSTALL-SELECTION-001",
             "SETUP-INSTALL-001",
             "SETUP-INSTALL-002",
             "SETUP-INSTALL-003",
