@@ -8,11 +8,7 @@ Guides a maker through debugging a topic they just created or updated — drivin
 
 Debugging a topic is one loop, repeated per probe until the behaviour is right. It is not a heavyweight process — it is the loop you already run naturally — but the moves are:
 
-1. **Pick a probe** — the input you drive the topic with. It is one of two kinds, and you usually use both in a session:
-   - an **eval-case input** — the `input` of an `EvaluationData` case, driven to check a fix still preserves the intent that case encodes; or
-   - an **exploratory probe** — an ad-hoc prompt you drive to build or harden behaviour that no eval case covers yet (what you do while a topic is still coming together).
-
-   Drive the failure-handling probes first — backend error, missing record, unauthorized — they are the hardest and the highest-value.
+1. **Build the probe set** — the inputs you will drive, and you drive a *set*, not one prompt. It always includes **failure-triggering probes** (missing record, unauthorized / needs-consent, malformed or out-of-range input) alongside the **happy path**, because error handling is the behaviour most likely to be wrong and least likely to be exercised by hand. Derive the set from the topic's trigger phrases, its backend calls, and any eval cases — you do not wait for the maker to invent the failure prompts. Two kinds feed the set: **eval-case inputs** (the `input` of an `EvaluationData` case, driven to check a fix still preserves the intent that case encodes) and **exploratory probes** (ad-hoc prompts for behaviour no case covers yet). Drive the failure probes **first** — they are the hardest and the highest-value.
 2. **Drive and capture** the full reply.
 3. **Confirm the reply is real** — classify it (`ok` vs consent gate / timeout / empty) so you never diagnose a phantom reply.
 4. **Check the behaviour against intent** — by the kind of probe: where an eval case covers this behaviour, confirm the fix doesn't break the intent it encodes; on an exploratory probe, judge against your own intent for the behaviour you are building. Use deterministic substring checks (`--expect` / `--reject`) as a quick sanity signal, and — where a substring match can't tell whether the reply matches the intent — a **best-effort LLM judge over the capture** (a semantic "does this reply satisfy what this probe is checking for?"). This is a guardrail on your fix, not a grade of the topic — both signals are advisory and inform your diagnosis.
@@ -71,10 +67,22 @@ The drive is automated, but the **sign-in is not** — a test account has to sig
 
    Subsequent drives in the same session reuse that window — no re-launch, no re-sign-in.
 
+## Build the probe set (failure paths first)
+
+Before driving, assemble the **set** of prompts you will exercise — and drive the set by default, don't wait for the maker to think of test inputs. Every set has two halves:
+
+- **Happy path** — the normal request the topic exists to serve, built from its trigger phrases (e.g. "create a ticket for a broken laptop").
+- **Failure paths** — the error conditions the topic must handle. Derive these from what the topic actually does:
+  - **backend-call topics** (a `BeginDialog` to a `...System...` topic or an `InvokeFlowAction`) → a **missing record** ("get details for ticket ZZZ0000"), an **unauthorized / needs-consent** call, and a **backend error** (bad request the connector rejects).
+  - **input-collecting topics** (cards, prompts, parsed values) → **malformed / out-of-range input**, an **empty required field**, and a value that trips the topic's own validation.
+
+Present the set to the maker so they can adjust it, but the default is to **exercise it** — the failure prompts are the point, and they are the ones a maker skips when testing by hand. Prefer real eval-case `input`s where they exist; fill the gaps with exploratory prompts you generate. Then drive each through the loop below, **failure probes first**.
+
 ## Drive, confirm, and validate the reply
 
-1. Pick a probe to drive — an **eval-case input** (`{agent.folder}/evaluations/`; each `EvaluationData` case's `input` is a behaviour the topic must handle) or an **exploratory prompt** for behaviour no case covers yet. Drive the failure-handling probes first (backend error, missing record, unauthorized) — they are the highest-value.
-2. Drive it and classify the reply in one step (the browser is already up and signed in from the step above):
+Work through the probe set (failure first). For each probe:
+
+1. Drive it and classify the reply in one step (the browser is already up and signed in from the step above):
 
    ```
    python scripts/drive_topic.py --prompt "<probe input>" --no-launch --cdp http://localhost:9222
@@ -87,7 +95,7 @@ The drive is automated, but the **sign-in is not** — a test account has to sig
    - **After a publish** (e.g. you just planted a DBG node or edited the topic), add `--new-session` so the drive starts a fresh test conversation — otherwise stale routing from the pre-publish session can answer the turn.
    - **Sanity-check the content** with `--expect "<text the reply must contain>"` and/or `--reject "<text it must not>"` (both repeatable). A failed assertion returns a non-zero exit — this is the axis that separates a real success from a `400`/runtime error, since **both are `ok` turns** (a real error reply is a real turn). Where an eval case names expected content, use its `expectedOutput` substrings here as the intent to hold to.
 
-3. Act on the signal:
+2. Act on the signal:
    - **`consent_gate`** — the backend never ran; the reply is a "Connect to continue" / connection-manager prompt. Authorize the connection in the test pane, then re-drive. Do NOT diagnose logic on this reply.
    - **`timeout`** — re-drive; a hibernating backend may need a warm-up call first.
    - **`empty`** — confirm the topic actually triggered (right trigger phrase, no conflicting topic), then re-drive.

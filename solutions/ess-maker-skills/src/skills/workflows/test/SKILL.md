@@ -37,6 +37,8 @@ Pick the mode by the question you're answering:
 
 Either way, the flow produces a run you then inspect.
 
+**Exercise the failure inputs, not just the happy path.** By default, drive the flow with a **set** of inputs that includes its error conditions — a **missing record** (an id/key that doesn't exist), an **unauthorized / needs-consent** call, and a **malformed / out-of-range** input the connector rejects — alongside the valid request. These are the runs where the scope-vs-handler trap below actually bites, and they are the ones skipped when testing by hand. Derive them from the flow's trigger inputs and the scenario's template config; run the failure inputs first.
+
 ## Read the run history (the decisive surface)
 
 Dump the latest run's action cascade:
