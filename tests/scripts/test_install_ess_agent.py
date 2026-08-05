@@ -178,12 +178,10 @@ class FakePowerPlatformClient:
         *,
         packages,
         install_result=None,
-        statuses=None,
     ):
         self.tenant_id = tenant_id
         self.packages = list(packages)
         self.install_result = install_result or {}
-        self.statuses = list(statuses or [])
         self.authenticated = False
         self.install_calls = []
 
@@ -198,13 +196,6 @@ class FakePowerPlatformClient:
     def install_application_package(self, environment_id, unique_name):
         self.install_calls.append((environment_id, unique_name))
         return self.install_result
-
-    def get_application_package_install_status(
-        self,
-        _environment_id,
-        _operation_id,
-    ):
-        return self.statuses.pop(0)
 
 
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")
@@ -265,7 +256,7 @@ def test_install_without_connection_requirement_skips_connection_api(
 
 
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")
-def test_install_resolves_environment_and_polls_api(
+def test_install_resolves_environment_and_polls_package_state(
     _mock_discover_tenant,
     capsys,
 ):
@@ -274,10 +265,16 @@ def test_install_resolves_environment_and_polls_api(
     pp_admin = FakePPAdminClient("tenant-123")
     powerplatform = FakePowerPlatformClient(
         "tenant-123",
-        packages=[{
-            "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT",
-            "state": "None",
-        }],
+        packages=[
+            [{
+                "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT",
+                "state": "None",
+            }],
+            [{
+                "uniqueName": "msdyn_CopilotForEmployeeSelfServiceDAIT",
+                "state": "Installed",
+            }],
+        ],
         install_result={
             "lastOperation": {
                 "state": "InstallRequested",
@@ -285,7 +282,6 @@ def test_install_resolves_environment_and_polls_api(
             },
             "_operationId": "operation-123",
         },
-        statuses=[{"status": "Succeeded"}],
     )
     states = []
 
@@ -308,7 +304,7 @@ def test_install_resolves_environment_and_polls_api(
         ("env-123", "msdyn_CopilotForEmployeeSelfServiceDAIT")
     ]
     assert states == ["installing", "automatic-complete"]
-    assert "Installation status (poll 1, 0s elapsed): Succeeded" in (
+    assert "Installation status (poll 1, 0s elapsed): Installed" in (
         capsys.readouterr().out
     )
 
@@ -418,7 +414,7 @@ def test_install_skips_request_when_application_is_already_installed(
 
 
 @patch("install_ess_agent.discover_tenant", return_value="tenant-123")
-def test_install_falls_back_to_package_state_when_operation_id_is_absent(
+def test_install_polls_package_state_when_operation_id_is_absent(
     _mock_discover_tenant,
 ):
     import install_ess_agent
@@ -500,9 +496,12 @@ def test_install_times_out_after_ten_minutes_and_reports_last_status(
     schema_name = "msdyn_CopilotForEmployeeSelfServiceDAHR"
     powerplatform = FakePowerPlatformClient(
         "tenant-123",
-        packages=[{"uniqueName": schema_name, "state": "None"}],
+        packages=[
+            [{"uniqueName": schema_name, "state": "None"}],
+            [{"uniqueName": schema_name, "state": "Installing"}],
+            [{"uniqueName": schema_name, "state": "Installing"}],
+        ],
         install_result={"_operationId": "operation-123"},
-        statuses=[{"status": "Running"}, {"status": "Running"}],
     )
     now = [0]
     messages = []
@@ -527,6 +526,6 @@ def test_install_times_out_after_ten_minutes_and_reports_last_status(
         )
 
     assert messages == [
-        "Installation status (poll 1, 0s elapsed): Running",
-        "Installation status (poll 2, 300s elapsed): Running",
+        "Installation status (poll 1, 0s elapsed): Installing",
+        "Installation status (poll 2, 300s elapsed): Installing",
     ]

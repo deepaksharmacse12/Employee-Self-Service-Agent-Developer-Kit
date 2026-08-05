@@ -11,7 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from auth import APIError, authenticate, dataverse_get
+from auth import authenticate, dataverse_get
 
 
 RESULT_MARKER = "ENVIRONMENT_ROLE_ACCESS_JSON:"
@@ -152,7 +152,7 @@ def main() -> int:
         ).inspect()
         print(f"{RESULT_MARKER}{json.dumps(result.to_dict())}")
         return 0
-    except (APIError, OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}")
         return 1
 

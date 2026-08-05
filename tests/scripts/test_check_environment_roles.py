@@ -11,6 +11,7 @@ from check_environment_roles import (
     EnvironmentRoleAccessService,
     EnvironmentRoleGateway,
 )
+from http_errors import APIError
 
 
 class FakeGateway(EnvironmentRoleGateway):
@@ -145,3 +146,27 @@ def test_unrelated_roles_cannot_use_environment() -> None:
         ),
         ("roles", "22222222-2222-2222-2222-222222222222"),
     ]
+
+
+def test_main_handles_api_error_through_oserror_base(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        check_environment_roles,
+        "authenticate",
+        lambda _url: (_ for _ in ()).throw(
+            APIError(status_code=401, message="Session expired")
+        ),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_environment_roles.py",
+            "--url",
+            "https://org.crm.dynamics.com",
+        ],
+    )
+
+    assert check_environment_roles.main() == 1
+    assert "ERROR: Session expired" in capsys.readouterr().out

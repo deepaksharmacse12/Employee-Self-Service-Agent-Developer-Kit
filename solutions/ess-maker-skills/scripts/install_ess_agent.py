@@ -446,7 +446,6 @@ def _wait_for_install(
     client: PowerPlatformClient,
     environment_id: str,
     unique_name: str,
-    operation_id: str | None,
     *,
     timeout_seconds: int,
     poll_interval_seconds: int,
@@ -454,7 +453,7 @@ def _wait_for_install(
     clock,
     status_callback,
 ) -> None:
-    """Poll the operation endpoint, falling back to package state if needed."""
+    """Poll the documented application-package collection until completion."""
     started_at = clock()
     deadline = started_at + timeout_seconds
     poll_number = 0
@@ -465,59 +464,33 @@ def _wait_for_install(
             break
         poll_number += 1
         observed_status = "Unknown"
-        if operation_id:
-            status_response = client.get_application_package_install_status(
-                environment_id,
-                operation_id,
-            )
-            if status_response.get("_error"):
-                raise RuntimeError(
-                    "Your account cannot read application installation status."
-                )
-            status = status_response.get("status")
-            observed_status = status or "InProgress"
+        package = _find_package(
+            _list_packages(client, environment_id),
+            unique_name,
+        )
+        if package:
+            state = package.get("state")
+            observed_status = state or "Unknown"
             status_callback(
                 "Installation status "
                 f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
                 f"{observed_status}"
             )
-            if status == "Succeeded":
+            if state in INSTALLED_STATES:
                 return
-            if status in {"Failed", "Canceled"}:
+            if state in FAILED_STATES:
                 raise RuntimeError(
                     _error_message(
-                        status_response,
-                        f"Application installation ended with status {status}.",
+                        package,
+                        f"Application installation ended with state {state}.",
                     )
                 )
         else:
-            package = _find_package(
-                _list_packages(client, environment_id),
-                unique_name,
+            status_callback(
+                "Installation status "
+                f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
+                f"{observed_status}"
             )
-            if package:
-                state = package.get("state")
-                observed_status = state or "Unknown"
-                status_callback(
-                    "Installation status "
-                    f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
-                    f"{observed_status}"
-                )
-                if state in INSTALLED_STATES:
-                    return
-                if state in FAILED_STATES:
-                    raise RuntimeError(
-                        _error_message(
-                            package,
-                            f"Application installation ended with state {state}.",
-                        )
-                    )
-            else:
-                status_callback(
-                    "Installation status "
-                    f"(poll {poll_number}, {int(now - started_at)}s elapsed): "
-                    f"{observed_status}"
-                )
 
         sleep(poll_interval_seconds)
 
@@ -592,7 +565,6 @@ def install_agent(
 
     if state in IN_PROGRESS_STATES:
         installation_state_callback("installing")
-        operation_id = None
     else:
         result = client.install_application_package(
             environment_id,
@@ -604,7 +576,6 @@ def install_agent(
                 "environment. Use a Power Platform or Dynamics 365 "
                 "administrator account."
             )
-        operation_id = result.get("_operationId")
         last_state = result.get("lastOperation", {}).get("state")
         if last_state in INSTALLED_STATES:
             installation_state_callback("automatic-complete")
@@ -619,7 +590,6 @@ def install_agent(
         client,
         environment_id,
         unique_name,
-        operation_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
         sleep=sleep,
