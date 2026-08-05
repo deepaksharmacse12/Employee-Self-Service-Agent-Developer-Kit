@@ -203,3 +203,43 @@ def test_cli_env_resolution_failure_is_actionable(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert rc == 2
     assert "--environment" in out  # tells the operator to pass it explicitly
+
+
+def test_validate_run_id_rejects_path_separators():
+    import pytest
+
+    from flow_run_inspect import _validate_run_id
+    _validate_run_id("08585237123456789")          # opaque token — ok
+    _validate_run_id("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")  # guid — ok
+    for bad in ("../actions", "x/y", "a?b", "a b", ""):
+        with pytest.raises(ValueError):
+            _validate_run_id(bad)
+
+
+def test_sas_fetch_failure_does_not_log_the_signed_url(monkeypatch, caplog):
+    import logging
+
+    import flow_run_inspect
+
+    signed = "https://blob.example/outputs?sig=SECRET-SAS-TOKEN"
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"value": [{
+                "name": "Invoke", "properties": {
+                    "status": "Failed",
+                    "outputsLink": {"uri": signed}}}]}
+
+    def _raise(url, headers=None, timeout=None):
+        if url == signed:
+            raise ConnectionError(f"failed connecting to {signed}")
+        return _Resp()
+
+    monkeypatch.setattr(flow_run_inspect, "_get_json",
+                        lambda url, headers: _Resp())
+    monkeypatch.setattr(flow_run_inspect.requests, "get", _raise)
+    with caplog.at_level(logging.WARNING):
+        flow_run_inspect.get_run_actions("f" * 32, "f" * 32, "run-1", "tok")
+    assert "SECRET-SAS-TOKEN" not in caplog.text  # the signed url must never leak

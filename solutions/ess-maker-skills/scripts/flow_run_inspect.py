@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 import requests
 
@@ -52,6 +53,9 @@ def load_config():
 _FLOW_API_HOST = "https://api.flow.microsoft.com"
 API_TIMEOUT_SECONDS = 30
 _GUID_NODASH_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+# Flow run ids are GUIDs or opaque alphanumeric tokens; anything outside this set
+# (path/query separators, whitespace) could reshape the request path.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _validate_https_url(url: str) -> None:
@@ -61,6 +65,29 @@ def _validate_https_url(url: str) -> None:
             f"url must use https:// (got: {url!r}). Refusing to send a bearer "
             "token over an unencrypted channel."
         )
+
+
+_RETRY_STATUSES = (429, 500, 502, 503, 504)
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 1.0
+
+
+def _get_json(url: str, *, headers: dict) -> requests.Response:
+    """GET with a bounded retry on transient throttling / 5xx.
+
+    The run-history reads are the decisive diagnostic surface, so a 429 or a
+    transient 5xx should back off and retry rather than fail the whole dump. A
+    4xx other than 429 is a real error and returned immediately for the caller's
+    ``raise_api_error`` to handle.
+    """
+    _validate_https_url(url)
+    resp = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        resp = requests.get(url, headers=headers, timeout=API_TIMEOUT_SECONDS)
+        if resp.status_code not in _RETRY_STATUSES or attempt == _RETRY_ATTEMPTS - 1:
+            return resp
+        time.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
+    return resp
 
 
 def _validate_guid_nodashes(value: str, *, name: str = "value") -> str:
@@ -77,6 +104,19 @@ def _validate_guid_nodashes(value: str, *, name: str = "value") -> str:
     return no_dashes
 
 
+def _validate_run_id(value: str) -> str:
+    """Raise ValueError unless ``value`` is a safe run-id token.
+
+    Guards the run id interpolated into the request path so a value carrying a
+    path/query separator can't reshape the URL.
+    """
+    if not (isinstance(value, str) and _RUN_ID_RE.match(value)):
+        raise ValueError(
+            f"run_id must be an alphanumeric token (got: {value!r})"
+        )
+    return value
+
+
 def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
@@ -89,8 +129,7 @@ def get_latest_run(environment: str, flow_id: str, token: str) -> dict | None:
         f"{_FLOW_API_HOST}/providers/Microsoft.ProcessSimple/environments/"
         f"{environment}/flows/{flow_id}/runs?api-version=2016-11-01&$top=1"
     )
-    _validate_https_url(url)
-    resp = requests.get(url, headers=_auth_headers(token), timeout=API_TIMEOUT_SECONDS)
+    resp = _get_json(url, headers=_auth_headers(token))
     raise_api_error(resp, resource_name="cloud flows", operation="read")
     runs = resp.json().get("value", [])
     return runs[0] if runs else None
@@ -100,12 +139,12 @@ def get_run_by_id(environment: str, flow_id: str, run_id: str, token: str) -> di
     """Return a specific run by id. Returns None if the run is gone (404)."""
     _validate_guid_nodashes(environment, name="environment")
     _validate_guid_nodashes(flow_id, name="flow_id")
+    _validate_run_id(run_id)
     url = (
         f"{_FLOW_API_HOST}/providers/Microsoft.ProcessSimple/environments/"
         f"{environment}/flows/{flow_id}/runs/{run_id}?api-version=2016-11-01"
     )
-    _validate_https_url(url)
-    resp = requests.get(url, headers=_auth_headers(token), timeout=API_TIMEOUT_SECONDS)
+    resp = _get_json(url, headers=_auth_headers(token))
     if resp.status_code == 404:
         return None
     raise_api_error(resp, resource_name="cloud flows", operation="read")
@@ -127,12 +166,12 @@ def get_run_actions(environment: str, flow_id: str, run_id: str, token: str) -> 
     """
     _validate_guid_nodashes(environment, name="environment")
     _validate_guid_nodashes(flow_id, name="flow_id")
+    _validate_run_id(run_id)
     url = (
         f"{_FLOW_API_HOST}/providers/Microsoft.ProcessSimple/environments/"
         f"{environment}/flows/{flow_id}/runs/{run_id}/actions?api-version=2016-11-01"
     )
-    _validate_https_url(url)
-    resp = requests.get(url, headers=_auth_headers(token), timeout=API_TIMEOUT_SECONDS)
+    resp = _get_json(url, headers=_auth_headers(token))
     raise_api_error(resp, resource_name="cloud flows", operation="read")
 
     actions: list[dict] = []
@@ -154,8 +193,11 @@ def get_run_actions(environment: str, flow_id: str, run_id: str, token: str) -> 
                         action["name"], out_resp.status_code,
                     )
             except Exception as exc:
+                # Never stringify the exception — a requests error can embed the
+                # signed outputsLink (SAS token) in its message. Log type only.
                 logger.warning(
-                    "SAS outputs fetch for action %s failed: %s", action["name"], exc
+                    "SAS outputs fetch for action %s failed: %s",
+                    action["name"], type(exc).__name__,
                 )
         actions.append(entry)
     return actions
@@ -198,8 +240,7 @@ def list_environments(token: str) -> list[dict]:
         f"{_FLOW_API_HOST}/providers/Microsoft.ProcessSimple/environments"
         "?api-version=2016-11-01"
     )
-    _validate_https_url(url)
-    resp = requests.get(url, headers=_auth_headers(token), timeout=API_TIMEOUT_SECONDS)
+    resp = _get_json(url, headers=_auth_headers(token))
     raise_api_error(resp, resource_name="environments", operation="read")
     return resp.json().get("value", [])
 
