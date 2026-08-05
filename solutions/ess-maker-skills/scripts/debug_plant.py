@@ -9,7 +9,7 @@ node after a named action to project internal topic state into the transcript,
 then strip it so debug noise never ships. Both transforms are pure and
 byte-reversible, so a live orchestration can guarantee an exact revert.
 
-Design choices, each grounded in a real fragility of the ad-hoc technique:
+Design choices, each addressing a real fragility of manual debug-node insertion:
 
 - Anchor by ACTION ID, not by field text — a field like
   ``ServiceNowData: Topic.ServiceNowData`` recurs across branches and is

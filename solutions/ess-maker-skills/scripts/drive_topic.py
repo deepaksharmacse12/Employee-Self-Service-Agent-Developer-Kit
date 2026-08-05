@@ -232,7 +232,7 @@ def main(argv=None) -> int:
     # Per-bubble breakdown when the turn is more than a single plain-text bubble
     # (a card, or a card followed by a generative/confirmation follow-up). The
     # aggregate had_card flag alone hides this — surfacing each bubble keeps a
-    # card submission from reading as plain text (ADK gap #16).
+    # card submission from reading as plain text.
     if result.bubble_count > 1 or result.had_card:
         print("--- bubbles ---")
         for i, b in enumerate(result.bubbles, 1):

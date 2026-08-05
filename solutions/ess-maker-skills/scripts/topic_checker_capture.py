@@ -35,7 +35,7 @@ flow run or connector instead, not the authoring canvas.
 Usage:
     python scripts/topic_checker_capture.py [--topic-id <GUID>] [--json]
 
-Known limitation (ADK gap #17): when Copilot Studio omits ``data-node-id`` on an
+Known limitation: when Copilot Studio omits ``data-node-id`` on an
 error node, the linked node/field ancestry is not fully recovered — the message
 is captured but ``node`` may be empty.
 """

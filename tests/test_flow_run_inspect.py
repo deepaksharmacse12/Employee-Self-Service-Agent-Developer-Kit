@@ -3,17 +3,18 @@
 
 """Tests for the pure run-action interpreter (``summarize_actions``).
 
-Feeds a recorded run-action list — including the G23 cascade shape (a failure
-handler that Succeeded while the containing scope Failed, then a catch-all
-Response) — through the interpreter and pins the ``{name, status, statusCode}``
-contract the caller reasons about. The REST GET helpers are thin and live-only;
-this suite covers the offline consumer contract.
+Feeds a recorded run-action list — including the scope-vs-handler cascade shape
+(a failure handler that Succeeded while the containing scope Failed, then a
+catch-all Response) — through the interpreter and pins the
+``{name, status, statusCode}`` contract the caller reasons about. The REST GET
+helpers are thin and live-only; this suite covers the offline consumer contract.
 """
 from __future__ import annotations
 
 from flow_run_inspect import _extract_status_code, summarize_actions
 
-# A recorded cascade mirroring the G23 trap: the connector call Failed with a
+# A recorded cascade mirroring the scope-vs-handler trap: the connector call
+# Failed with a
 # 400, its runAfter:[Failed] handler Succeeded (it set the raw error into a
 # body), the containing Switch scope is nonetheless marked Failed, a Skipped
 # success branch shows the path not taken, and a catch-all Response returns a

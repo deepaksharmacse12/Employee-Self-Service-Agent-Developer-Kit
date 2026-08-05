@@ -9,13 +9,11 @@ and signed into, then driving the agent test pane and capturing the turn's reply
 as bubbles. The surface above it (``DriveSurface`` / ``aggregate_turn``) turns
 those into the browser-agnostic ``DriveResult`` the diagnostic tools consume.
 
-Attribution: the DOM logic here is ported (copy-and-adapt) from the internal ESS
-``bot-test/probe/probe.py`` — selectors, article-based bubble capture, the
-pvaruntime turn-completion signal, consent/reset handling. It is duplicated here
-(not imported) because the ADK is a standalone public kit; see the port ledger
-`adk-drive-capture-port-ledger.md` for the per-piece mapping and the switch-back
-path. The pure re-typing/aggregation and the completion *decision* live in
-``drive_surface`` and are reused, not re-copied.
+Attribution: the DOM interaction logic (test-pane selectors, article-based
+bubble capture, the pvaruntime turn-completion signal, consent/reset handling)
+is adapted from an internal Microsoft ESS bot-test harness and duplicated here
+so this kit stays self-contained. The pure re-typing/aggregation and the
+completion *decision* live in ``drive_surface`` and are reused, not re-copied.
 
 Launch (operator, once): Edge InPrivate with a dedicated user-data-dir and the
 debug port — InPrivate disables Windows SSO so a test account signs in cleanly:

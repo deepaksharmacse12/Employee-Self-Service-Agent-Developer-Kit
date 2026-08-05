@@ -27,7 +27,7 @@ from reply_signal import ReplySignal, classify_reply_signal
 
 
 # --------------------------------------------------------------------------- #
-# aggregate_turn — the all-bubble join (ported from capture_turn_reply)
+# aggregate_turn — the all-bubble join
 # --------------------------------------------------------------------------- #
 
 def test_aggregate_joins_all_bubbles_in_order():
@@ -61,7 +61,7 @@ def test_aggregate_carries_timeout_flag():
 # --------------------------------------------------------------------------- #
 # per-bubble granularity — the aggregate MUST also preserve the individual
 # bubbles so a caller can distinguish a submitted card from a deterministic
-# topic confirmation from a later generative follow-up (ADK gap #16). Only the
+# topic confirmation from a later generative follow-up. Only the
 # turn-level had_card flag is not enough.
 # --------------------------------------------------------------------------- #
 
@@ -90,7 +90,7 @@ def test_card_and_text_bubble_partitions():
 
 def test_trailing_text_after_card_detected():
     # A card followed by a separate generated text bubble is the exact shape that
-    # read as "plain text" under the aggregate flag (gap #16).
+    # reads as "plain text" under the aggregate flag.
     with_followup = aggregate_turn([Bubble("<card>", True), Bubble("done", False)])
     assert with_followup.had_card is True
     assert with_followup.has_text_after_card is True

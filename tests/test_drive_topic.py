@@ -306,7 +306,7 @@ def test_main_prints_per_bubble_breakdown(monkeypatch, capsys):
     # A card followed by a text bubble is surfaced per-bubble, not just aggregate.
     assert "card" in out.lower()
     assert "Ticket created." in out
-    # The card+follow-up shape (gap #16) is called out so it isn't read as plain text.
+    # The card+follow-up shape is called out so it isn't read as plain text.
     assert "follow-up" in out.lower() or "after card" in out.lower()
 
 

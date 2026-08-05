@@ -4,8 +4,8 @@
 """Tests for CdpDriver's pure helpers (no browser).
 
 The browser-touching code (attach, drive, capture) is validated live, not in CI.
-These cover the pure article-classification and chrome-stripping ported from the
-internal probe — the parts that decide role/card/body from a bubble's raw text.
+These cover the pure article-classification and chrome-stripping — the parts that
+decide role/card/body from a bubble's raw text.
 """
 from __future__ import annotations
 

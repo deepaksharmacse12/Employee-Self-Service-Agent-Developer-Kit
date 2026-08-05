@@ -17,8 +17,8 @@ Layers:
     ``DriveResult``s. The concrete browser ``Driver`` is a separate adapter,
     validated live; this module is fully unit-testable with a fake driver.
 
-The chosen driver is Python launch + CDP-attach (see the port ledger); the
-contract here keeps that decision swappable.
+The chosen driver is Python launch + CDP-attach; the contract here keeps that
+decision swappable.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class DriveResult:
     not an exception. ``bubbles`` preserves the individual bubbles (in order, with
     per-bubble ``had_card``) so a caller can distinguish a submitted card from a
     deterministic topic confirmation from a later generative follow-up — the
-    turn-level ``had_card`` aggregate alone loses that (ADK gap #16).
+    turn-level ``had_card`` aggregate alone loses that.
     """
     reply_text: str
     timed_out: bool
@@ -65,7 +65,7 @@ class DriveResult:
     def has_text_after_card(self) -> bool:
         """True when a plain-text bubble follows a card bubble — the shape that
         reads as 'plain text' under the aggregate flag and hides a card
-        submission's later generative/confirmation follow-up (ADK gap #16)."""
+        submission's later generative/confirmation follow-up."""
         seen_card = False
         for b in self.bubbles:
             if b.had_card:
@@ -78,11 +78,10 @@ class DriveResult:
 def aggregate_turn(bubbles: list[Bubble], *, timed_out: bool = False) -> DriveResult:
     """Join every bubble of a turn into one ``DriveResult``.
 
-    Ported from the internal ``capture_turn_reply`` aggregation: the joined text
-    includes every bubble in order so a separate-bubble plant (a DBG line, a card
-    plus interim text) is never missed. The individual bubbles are preserved on
-    ``DriveResult.bubbles`` (immutable) so per-bubble card/text identity survives
-    the aggregation. An empty turn yields ``reply_text=""``.
+    The joined text includes every bubble in order so a separate-bubble plant (a
+    DBG line, a card plus interim text) is never missed. The individual bubbles
+    are preserved on ``DriveResult.bubbles`` (immutable) so per-bubble card/text
+    identity survives the aggregation. An empty turn yields ``reply_text=""``.
     """
     texts = [b.text for b in bubbles]
     return DriveResult(
@@ -98,8 +97,8 @@ def turn_complete(*, seen_any: bool, in_flight: int, quiet_elapsed: float,
                   quiet_s: float) -> bool:
     """Decide whether a turn is complete, as a pure state function.
 
-    Ported from the internal network-completion signal: a turn is done once at
-    least one turn request has been seen (``seen_any``), none remain in flight
+    Based on the network-completion signal: a turn is done once at least one turn
+    request has been seen (``seen_any``), none remain in flight
     (``in_flight == 0``), and the transcript has been quiet for ``quiet_s``
     seconds (``quiet_elapsed >= quiet_s``). Keeping this pure lets the completion
     logic be tested without a live network stream.
