@@ -327,7 +327,7 @@ A new **topic** only goes live once the agent is **published** (a new flow's `cl
 python scripts/publish.py --yes
 ```
 
-If a **workflow** was created (e.g. a ServiceNow options flow for runtime dependent dropdowns), also offer to confirm it is agent-invocable — this verifies it is activated, `modernflowtype=1`, has kind:Skills Response actions, a bound flow-scoped connection reference, and a system-topic link:
+If a **workflow** was created (e.g. a ServiceNow options flow for runtime dependent dropdowns), also run `validate.py` to confirm it is agent-invocable — this is **read-only** (it only reads registration state), so just run it without asking. It verifies the flow is activated, `modernflowtype=1`, has kind:Skills Response actions, a bound flow-scoped connection reference, and a system-topic link:
 
 ```
 python scripts/validate.py "<flow name>"

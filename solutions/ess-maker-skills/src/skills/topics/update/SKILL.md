@@ -145,7 +145,7 @@ Topic (botcomponent) changes only go live once the agent is **published** (flow 
 python scripts/publish.py --yes
 ```
 
-If the change added or modified a ServiceNow ITSM flow (e.g. the runtime dependent-dropdowns options flow), also offer to confirm the flow is agent-invocable — this verifies it is activated, `modernflowtype=1`, has kind:Skills Response actions, a bound flow-scoped connection reference, and a system-topic link:
+If the change added or modified a ServiceNow ITSM flow (e.g. the runtime dependent-dropdowns options flow), also run `validate.py` to confirm the flow is agent-invocable — this is **read-only** (it only reads registration state), so just run it without asking. It verifies the flow is activated, `modernflowtype=1`, has kind:Skills Response actions, a bound flow-scoped connection reference, and a system-topic link:
 
 ```
 python scripts/validate.py "<flow name>"
