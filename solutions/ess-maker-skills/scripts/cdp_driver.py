@@ -52,7 +52,6 @@ INPUT_CANDIDATES = [
     'input[placeholder*="Ask" i]',
     'textarea[data-testid*="webchat" i]',
     '[data-testid="chat-input"] textarea',
-    'textarea',
 ]
 
 # Article a11y role prefixes: card reply, text reply, the user's own echo.
@@ -65,6 +64,10 @@ _ARTICLE_ROLES = (
 _RESET_BUTTON_NAMES = (
     "Refresh", "Start new test session", "New test session", "New chat", "Restart",
 )
+
+_TEST_PANE_READY_TIMEOUT_MS = 120_000
+_TEST_PANE_OPEN_GRACE_MS = 5_000
+_TEST_PANE_POLL_MS = 500
 
 
 # --------------------------------------------------------------------------- #
@@ -190,6 +193,54 @@ def _find_input(page):
     return frame.locator(sel).first, sel
 
 
+def _wait_for_input(page, timeout_ms=_TEST_PANE_READY_TIMEOUT_MS,
+                    poll_ms=_TEST_PANE_POLL_MS):
+    """Wait for the test-pane input and return it once interactive."""
+    attempts = max(1, (timeout_ms + poll_ms - 1) // poll_ms)
+    for attempt in range(attempts):
+        box, selector = _find_input(page)
+        if box is not None:
+            return box, selector
+        if attempt < attempts - 1:
+            page.wait_for_timeout(poll_ms)
+    return None, None
+
+
+def _find_test_button(page):
+    for frame in _all_frames(page):
+        try:
+            button = frame.get_by_role("button", name="Test", exact=True)
+            if button.is_visible(timeout=500):
+                return button
+        except Exception:
+            continue
+    return None
+
+
+def _ensure_test_pane_ready(page, timeout_ms=_TEST_PANE_READY_TIMEOUT_MS,
+                            open_grace_ms=_TEST_PANE_OPEN_GRACE_MS):
+    """Reuse an open test pane, or open it once and wait for hydration."""
+    box, selector = _wait_for_input(page, timeout_ms=open_grace_ms)
+    if box is not None:
+        return box, selector
+
+    attempts = max(1, (timeout_ms + _TEST_PANE_POLL_MS - 1)
+                   // _TEST_PANE_POLL_MS)
+    opened = False
+    for attempt in range(attempts):
+        box, selector = _find_input(page)
+        if box is not None:
+            return box, selector
+        if not opened:
+            button = _find_test_button(page)
+            if button is not None:
+                button.click()
+                opened = True
+        if attempt < attempts - 1:
+            page.wait_for_timeout(_TEST_PANE_POLL_MS)
+    return None, None
+
+
 def _chat_frame(page):
     """The frame holding the transcript — the one with the most <article> bubbles."""
     best, best_n = None, 0
@@ -298,7 +349,8 @@ def _reset_conversation(page, settle_ms=2500) -> bool:
                 if btn.is_visible(timeout=800):
                     btn.click()
                     page.wait_for_timeout(settle_ms)
-                    return True
+                    box, _selector = _wait_for_input(page)
+                    return box is not None
             except Exception:
                 continue
     return False
@@ -318,11 +370,11 @@ def _drive_turn(page, text, timeout_s, *, arm_window_s=10, quiet_s=1.5, poll_ms=
     pvaruntime stream-close signal (reusing ``turn_complete``), and return
     ``(bubbles, timed_out)``. ``timed_out`` is True only when the wait hit the
     deadline without a completion signal."""
-    box, _sel = _find_input(page)
+    box, _sel = _ensure_test_pane_ready(page)
     if box is None:
         raise RuntimeError(
-            "no message input found on the test pane; is the browser on the "
-            "agent test pane and signed in?")
+            "test pane did not become ready; confirm the browser is on the "
+            "agent overview and signed in")
 
     client = page.context.new_cdp_session(page)
     client.send("Network.enable")
@@ -430,22 +482,57 @@ class CdpDriver:
             self._pw = self._browser = self._page = None
             raise
         _dismiss_consent(self._page)
+        box, _selector = _ensure_test_pane_ready(self._page)
+        if box is None:
+            self.close()
+            raise RuntimeError("test pane did not become ready after attach")
 
     @staticmethod
     def _pick_page(browser, expected_match=None):
-        """Pick a Copilot Studio page. When ``expected_match`` is given (an env or
-        bot id from the requested test-pane URL), require it in the page URL so we
-        attach to THIS agent's pane, not whichever Copilot Studio tab another
-        session left open. Falls back to any Copilot Studio page only when no
-        match token is supplied."""
+        """Pick the Copilot Studio page to drive.
+
+        When ``expected_match`` is given (an env or bot id from the requested
+        test-pane URL), restrict to pages whose URL contains it, so a drive
+        attaches to THIS agent's pane and never another agent's tab left open by
+        a concurrent session. Among the eligible pages, prefer the most
+        *drivable* one (has an input, has a Test button, is the overview /
+        adaptive pane) so a hydrated test pane wins over a stale tab.
+        """
+        candidates = []
         for ctx in browser.contexts:
             for page in ctx.pages:
-                url = page.url or ""
-                if "copilotstudio" not in url:
-                    continue
-                if expected_match is None or expected_match in url:
-                    return page
-        return None
+                if "copilotstudio" in (page.url or ""):
+                    candidates.append(page)
+        if expected_match:
+            candidates = [p for p in candidates
+                          if expected_match in (p.url or "")]
+        if not candidates:
+            return None
+
+        def drive_score(page):
+            has_input = False
+            has_test_button = False
+            try:
+                has_input = _find_input(page)[0] is not None
+            except Exception:
+                pass
+            try:
+                has_test_button = _find_test_button(page) is not None
+            except Exception:
+                pass
+            url = page.url or ""
+            return (
+                has_input,
+                has_test_button,
+                "/overview" in url,
+                "/adaptive/" in url,
+                "/actions-adaptive/" not in url,
+            )
+
+        return max(
+            candidates,
+            key=drive_score,
+        )
 
     def send(self, text: str, timeout_s: int) -> tuple[list[Bubble], bool]:
         if self._page is None:

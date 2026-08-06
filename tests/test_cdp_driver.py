@@ -102,3 +102,52 @@ def test_pick_page_with_match_returns_none_when_no_page_matches():
     from cdp_driver import CdpDriver
     browser = _FakeBrowser(["https://copilotstudio.microsoft.com/bots/OTHER/overview"])
     assert CdpDriver._pick_page(browser, "2731c539") is None
+
+
+def test_ensure_test_pane_ready_returns_input_when_already_present(monkeypatch):
+    # Fast path: the input is already interactive, so no Test-button click.
+    import cdp_driver
+    monkeypatch.setattr(cdp_driver, "_find_input", lambda page: ("box", "sel"))
+    box, sel = cdp_driver._ensure_test_pane_ready(object())
+    assert box == "box" and sel == "sel"
+
+
+def test_ensure_test_pane_ready_opens_pane_then_finds_input(monkeypatch):
+    # The pane isn't hydrated yet: the first look finds nothing, so the helper
+    # clicks the Test button, then the input appears on a later poll.
+    import cdp_driver
+    calls = {"find": 0, "clicked": 0}
+
+    def fake_find(page):
+        calls["find"] += 1
+        return (("box", "sel") if calls["find"] >= 3 else (None, None))
+
+    class _Btn:
+        def click(self):
+            calls["clicked"] += 1
+
+    monkeypatch.setattr(cdp_driver, "_find_input", fake_find)
+    monkeypatch.setattr(cdp_driver, "_find_test_button", lambda page: _Btn())
+
+    class _Page:
+        def wait_for_timeout(self, ms):
+            pass
+
+    box, _sel = cdp_driver._ensure_test_pane_ready(
+        _Page(), timeout_ms=5_000, open_grace_ms=0)
+    assert box == "box"
+    assert calls["clicked"] == 1  # opened the pane exactly once
+
+
+def test_ensure_test_pane_ready_gives_up_when_never_ready(monkeypatch):
+    import cdp_driver
+    monkeypatch.setattr(cdp_driver, "_find_input", lambda page: (None, None))
+    monkeypatch.setattr(cdp_driver, "_find_test_button", lambda page: None)
+
+    class _Page:
+        def wait_for_timeout(self, ms):
+            pass
+
+    box, sel = cdp_driver._ensure_test_pane_ready(
+        _Page(), timeout_ms=1_000, open_grace_ms=0)
+    assert box is None and sel is None
