@@ -170,10 +170,10 @@ def test_selected_environment_requires_approved_maker_role() -> None:
     assert "When `eligible` is true, continue immediately" in scope
     assert "do not lock the environment" in scope
     assert (
-        "both the **Environment Maker** and **System Administrator** roles"
+        "needs the **System Administrator** role"
         in normalized
     )
-    assert "Missing roles: **{missing role names}**." in normalized
+    assert "needs both the **Environment Maker**" not in normalized
     assert "directly and through team membership" in scope
 
 
@@ -244,7 +244,7 @@ def test_scope_guides_and_verifies_new_environment_creation() -> None:
     assert "Set `Add a Dataverse data store` to `Yes`." in scope
     assert "Keep the release cycle standard" in scope
     assert (
-        "assign both **Environment Maker** and **System Administrator**"
+        "assign **System Administrator**"
         in normalized
     )
     assert "create-an-environment-with-a-database" in scope

@@ -15,10 +15,7 @@ from auth import authenticate, dataverse_get
 
 
 RESULT_MARKER = "ENVIRONMENT_ROLE_ACCESS_JSON:"
-REQUIRED_ROLE_NAMES = frozenset({
-    "environment maker",
-    "system administrator",
-})
+REQUIRED_ROLE_NAMES = ("System Administrator",)
 
 
 @dataclass(frozen=True)
@@ -32,10 +29,7 @@ class EnvironmentRoleAccess:
             "eligible": self.eligible,
             "matchedRoles": list(self.matched_roles),
             "missingRoles": list(self.missing_roles),
-            "requiredRoles": [
-                "Environment Maker",
-                "System Administrator",
-            ],
+            "requiredRoles": list(REQUIRED_ROLE_NAMES),
         }
 
 
@@ -108,7 +102,7 @@ class DataverseEnvironmentRoleGateway(EnvironmentRoleGateway):
 
 
 class EnvironmentRoleAccessService:
-    """Determine whether the current user has an approved maker role."""
+    """Determine whether the current user has the required environment role."""
 
     def __init__(self, gateway: EnvironmentRoleGateway) -> None:
         self._gateway = gateway
@@ -124,12 +118,12 @@ class EnvironmentRoleAccessService:
         }
         matched_roles = tuple(
             role_name
-            for role_name in ("Environment Maker", "System Administrator")
+            for role_name in REQUIRED_ROLE_NAMES
             if role_name.casefold() in role_names
         )
         missing_roles = tuple(
             role_name
-            for role_name in ("Environment Maker", "System Administrator")
+            for role_name in REQUIRED_ROLE_NAMES
             if role_name.casefold() not in role_names
         )
         return EnvironmentRoleAccess(

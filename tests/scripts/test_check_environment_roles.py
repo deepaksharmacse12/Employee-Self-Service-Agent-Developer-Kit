@@ -93,21 +93,21 @@ def test_environment_maker_alone_cannot_use_environment() -> None:
     result = EnvironmentRoleAccessService(gateway).inspect()
 
     assert result.eligible is False
-    assert result.matched_roles == ("Environment Maker",)
+    assert result.matched_roles == ()
     assert result.missing_roles == ("System Administrator",)
 
 
-def test_system_administrator_alone_cannot_use_environment() -> None:
+def test_system_administrator_alone_can_use_environment() -> None:
     gateway = FakeGateway([{"name": "System Administrator"}])
 
     result = EnvironmentRoleAccessService(gateway).inspect()
 
-    assert result.eligible is False
+    assert result.eligible is True
     assert result.matched_roles == ("System Administrator",)
-    assert result.missing_roles == ("Environment Maker",)
+    assert result.missing_roles == ()
 
 
-def test_both_required_roles_allow_environment_use_case_insensitively() -> None:
+def test_required_role_allows_environment_use_case_insensitively() -> None:
     gateway = FakeGateway([
         {"name": "environment maker"},
         {"name": "SYSTEM ADMINISTRATOR"},
@@ -116,12 +116,10 @@ def test_both_required_roles_allow_environment_use_case_insensitively() -> None:
     result = EnvironmentRoleAccessService(gateway).inspect()
 
     assert result.eligible is True
-    assert result.matched_roles == (
-        "Environment Maker",
-        "System Administrator",
-    )
+    assert result.matched_roles == ("System Administrator",)
     assert result.missing_roles == ()
     assert result.to_dict()["missingRoles"] == []
+    assert result.to_dict()["requiredRoles"] == ["System Administrator"]
 
 
 def test_unrelated_roles_cannot_use_environment() -> None:
@@ -134,10 +132,7 @@ def test_unrelated_roles_cannot_use_environment() -> None:
 
     assert result.eligible is False
     assert result.matched_roles == ()
-    assert result.missing_roles == (
-        "Environment Maker",
-        "System Administrator",
-    )
+    assert result.missing_roles == ("System Administrator",)
     assert gateway.calls == [
         "current-user",
         (

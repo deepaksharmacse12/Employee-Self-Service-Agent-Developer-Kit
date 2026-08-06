@@ -65,8 +65,7 @@ Use `vscode_askQuestions` to collect and lock one target environment.
       group.
    8. Select `Save` and wait until provisioning finishes.
    9. In the new environment, open `Settings` → `Users + permissions` →
-      `Users`, select the setup user, and assign both **Environment Maker** and
-      **System Administrator**.
+      `Users`, select the setup user, and assign **System Administrator**.
 
    Link to the
    [Microsoft environment creation instructions](https://learn.microsoft.com/power-platform/admin/create-environment?tabs=new#create-an-environment-with-a-database).
@@ -90,11 +89,9 @@ Use `vscode_askQuestions` to collect and lock one target environment.
      confirmation.
    - When `eligible` is false, do not lock the environment. Show:
 
-     Your account needs both the **Environment Maker** and **System
-     Administrator** roles in **{environment name}** to use this environment for
-     ESS setup. Missing roles: **{missing role names}**. Ask your Power Platform
-     administrator to assign the missing roles, or select a different
-     environment.
+     Your account needs the **System Administrator** role in **{environment
+     name}** to use this environment for ESS setup. Ask your Power Platform
+     administrator to assign the role, or select a different environment.
 
      Then return to environment selection.
    - If the command fails, show the exact error and stop. Do not treat an
