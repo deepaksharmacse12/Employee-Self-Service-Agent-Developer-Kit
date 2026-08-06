@@ -244,3 +244,44 @@ def test_sas_fetch_failure_does_not_log_the_signed_url(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         flow_run_inspect.get_run_actions("f" * 32, "f" * 32, "run-1", "tok")
     assert "SECRET-SAS-TOKEN" not in caplog.text  # the signed url must never leak
+
+
+# --------------------------------------------------------------------------- #
+# Auth header: every Flow Management GET must carry the acquired bearer token.
+# These pin the HTTP-request layer the pure-interpreter suite above does not
+# reach — a regression that dropped or failed to interpolate the token would
+# make the whole "why did the flow fail" surface silently 401.
+# --------------------------------------------------------------------------- #
+
+
+def test_auth_headers_interpolates_bearer_token():
+    from flow_run_inspect import _auth_headers
+    token = "abc123.def456"
+    headers = _auth_headers(token)
+    # Built by concatenation so the assertion proves the token was interpolated,
+    # not that a literal template string was returned.
+    assert headers["Authorization"] == "Bearer " + token
+    assert token in headers["Authorization"]
+    assert "{token}" not in headers["Authorization"]
+
+
+def test_outgoing_request_carries_bearer_token(monkeypatch):
+    import flow_run_inspect
+
+    token = "sentinel-token-9f8e7d"
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"value": [{"name": "run-1"}]}
+
+    def _fake_get(url, headers=None, timeout=None):
+        captured["headers"] = headers
+        return _Resp()
+
+    monkeypatch.setattr(flow_run_inspect.requests, "get", _fake_get)
+    flow_run_inspect.get_latest_run("e" * 32, "f" * 32, token)
+    assert captured["headers"]["Authorization"] == "Bearer " + token
+
