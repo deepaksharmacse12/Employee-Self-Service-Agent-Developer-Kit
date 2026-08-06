@@ -5,7 +5,7 @@ Mark the step in progress and read the selected starter matrix:
 
 ```text
 python scripts/setup_state.py update-step --step SETUP-06 --status in-progress
-python scripts/setup_state.py show
+python scripts/setup_state.py show --view products
 ```
 
 For each selected installed starter:
@@ -35,9 +35,6 @@ python scripts/setup_state.py record-step-result \
   --step SETUP-06 \
   --mode automated
 ```
-
-Evidence must include Configure/Topics reachability, shell and starter content,
-and persisted-versus-observed product state.
 
 Complete only after every selected starter passes:
 

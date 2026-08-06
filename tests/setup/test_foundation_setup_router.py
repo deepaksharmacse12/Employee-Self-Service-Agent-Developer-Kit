@@ -155,6 +155,8 @@ def test_scope_asks_how_to_provide_environment_before_discovery() -> None:
     assert "Create a new environment" in scope
     assert "What's your Power Platform environment URL?" in scope
     assert "--resolve-environment-url" in scope
+    assert "ENVIRONMENT_LIST_JSON:" in scope
+    assert "--list-environments --select" not in scope
 
 
 def test_scope_uses_discovered_environment_type_without_prompting() -> None:
@@ -234,6 +236,7 @@ def test_environment_access_does_not_require_redundant_attestation() -> None:
     assert "Do not ask whether the maker can" in prerequisites
     assert "Persist the selected model with `set-prerequisite`" in prerequisites
     assert "do not replace a failed automated result" in prerequisites
+    assert "discover.py --list-environments" not in prerequisites
 
 
 def test_locked_environment_is_not_reconfirmed() -> None:
@@ -247,6 +250,8 @@ def test_locked_environment_is_not_reconfirmed() -> None:
     assert environment.count('--environment-url "{ENVIRONMENT_URL}"') == 1
     assert environment.count('--environment-id "{ENVIRONMENT_ID}"') == 1
     assert "Do not read `.local/config.json`" in environment
+    assert "no more than 15 minutes old" in environment
+    assert "--quiet-auth" in environment
 
 
 def test_foundation_flightchecks_use_locked_environment_context() -> None:
@@ -258,12 +263,24 @@ def test_foundation_flightchecks_use_locked_environment_context() -> None:
     assert prerequisites.count(
         '--environment-id "{ENVIRONMENT_ID}"'
     ) == 2
+    assert prerequisites.count("--quiet-auth") == 2
+
+
+def test_foundation_uses_targeted_state_views_and_compact_transitions() -> None:
+    router = _FOUNDATION.read_text(encoding="utf-8")
+    prerequisites = _PREREQUISITES.read_text(encoding="utf-8")
+    installation = _INSTALL_STARTERS.read_text(encoding="utf-8")
+
+    assert "show --view current" in router
+    assert "Do not rerender the full checklist between steps." in router
+    assert "show --view environment" in prerequisites
+    assert "show --view products" in installation
 
 
 def test_onboarding_reuses_locked_foundation_environment() -> None:
     onboarding = _ONBOARDING_STEP1.read_text(encoding="utf-8")
 
-    assert "python scripts/setup_state.py show" in onboarding
+    assert "python scripts/setup_state.py show --view report" in onboarding
     assert "environment.tenant_endpoint" in onboarding
     assert "Do not list environments" in onboarding
 

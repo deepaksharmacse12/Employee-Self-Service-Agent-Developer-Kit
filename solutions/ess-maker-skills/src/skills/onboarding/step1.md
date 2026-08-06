@@ -10,7 +10,7 @@ Do not rephrase, add commentary, or tell the user what tools you are calling.
 Run:
 
 ```text
-python scripts/setup_state.py show
+python scripts/setup_state.py show --view report
 ```
 
 Parse the printed state. If `connect_ready` is true and `environment.locked` is
@@ -19,7 +19,8 @@ true:
 1. Set ENV_URL to `environment.tenant_endpoint`, stripping any trailing slash.
 2. Do not list environments, ask how to provide an environment, or ask the
    maker to select it again.
-3. Continue directly to section 1.2.
+3. Set FOUNDATION_REUSED to true.
+4. Continue directly to section 1.2.
 
 Only continue to section 1.0 when no completed foundation state with a locked
 environment exists.
@@ -73,9 +74,10 @@ A browser window will open for sign-in. Wait for the script to finish.
 
 ## 1.1a — Ask the user to pick an environment
 
-Build options from the script's environment table. Each row becomes an
-option with the environment name as the label and the URL + type as
-the description.
+Build options from the script's environment table. Each row becomes an option
+with `{environment name} — {URL}` as the label and the environment type as the
+description. Including the URL in the label keeps duplicate display names
+unambiguous.
 
 Use the `vscode_askQuestions` tool:
 
@@ -85,29 +87,22 @@ Use the `vscode_askQuestions` tool:
     "header": "Select environment",
     "question": "Which environment is your ESS agent deployed in?",
     "options": [
-      { "label": "{env 1 name}", "description": "{URL} [{type}]" },
-      { "label": "{env 2 name}", "description": "{URL} [{type}]" }
+      { "label": "{env 1 name} — {URL}", "description": "{type}" },
+      { "label": "{env 2 name} — {URL}", "description": "{type}" }
     ],
     "allowFreeformInput": false
   }
 ]
 ```
 
-Map the selected environment name back to its row number from the script
-output.
+Map the selected URL to the unique matching `instanceUrl` in
+`ENVIRONMENT_LIST_JSON:` from the same script output.
 
 ---
 
-## 1.1b — Confirm selection
+## 1.1b — Use selection
 
-Run the selection command in the terminal:
-
-```
-python scripts/discover.py --list-environments --select {NUMBER}
-```
-
-Find the line starting with `SELECTED_ENV_JSON:` in the output. Parse the
-JSON after the colon to get the `instanceUrl` field. Save it as ENV_URL.
+Read the selected object's `instanceUrl` field. Save it as ENV_URL.
 **Strip any trailing slash** from ENV_URL before using it (e.g.,
 `https://org.crm.dynamics.com/` becomes `https://org.crm.dynamics.com`).
 
@@ -151,6 +146,9 @@ Create `.vscode/mcp.json` with this exact content (replace the entire
   }
 }
 ```
+
+If FOUNDATION_REUSED is true, do not rerun the Allowed MCP Client prerequisite;
+it already passed in foundation `SETUP-02.2`. Continue directly to section 1.3.
 
 Check the server-side Allowed MCP Client record:
 

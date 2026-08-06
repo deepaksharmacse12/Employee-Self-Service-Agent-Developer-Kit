@@ -7,26 +7,30 @@ Mark the access and Dataverse substep in progress:
 python scripts/setup_state.py update-step --step SETUP-02.1 --status in-progress
 ```
 
-Read the locked environment from `python scripts/setup_state.py show`.
+Read the locked environment without loading unrelated state:
+
+```text
+python scripts/setup_state.py show --view environment
+```
 
 ## Access and Dataverse
 
 Run:
 
 ```text
-python scripts/discover.py --list-environments
 python scripts/flightcheck/cli.py \
   --checkpoint ENV-002 \
+  --quiet-auth \
   --environment-url "{ENVIRONMENT_URL}" \
   --environment-id "{ENVIRONMENT_ID}"
 ```
 
-The selected environment must be present in environment discovery and `ENV-002`
-must pass.
+The environment was already resolved and locked by `SETUP-01`; do not list all
+environments again. `ENV-002` must pass for that locked environment.
 
-Continue immediately when both checks pass. Do not ask whether the maker can
-open the environment in Power Platform or Copilot Studio. If discovery or
-`ENV-002` fails, show the exact command error and block the prerequisite step;
+Continue immediately when the check passes. Do not ask whether the maker can
+open the environment in Power Platform or Copilot Studio. If `ENV-002` fails,
+show the exact command error and block the prerequisite step;
 do not replace a failed automated result with manual attestation.
 
 Persist and complete the first substep:
@@ -76,6 +80,7 @@ Run:
 ```text
 python scripts/flightcheck/cli.py \
   --checkpoint ENV-CAPACITY-001 \
+  --quiet-auth \
   --environment-url "{ENVIRONMENT_URL}" \
   --environment-id "{ENVIRONMENT_ID}"
 ```
@@ -102,7 +107,7 @@ If any mandatory prerequisite failed or remains unknown:
 1. Set `SETUP-02.2` to `blocked` with one normalized cause per missing item.
 2. Show the missing items and stop.
 
-If all five prerequisite checks pass, persist one consolidated step result:
+If all prerequisite checks pass, persist one consolidated step result:
 
 ```text
 python scripts/setup_state.py record-step-result \

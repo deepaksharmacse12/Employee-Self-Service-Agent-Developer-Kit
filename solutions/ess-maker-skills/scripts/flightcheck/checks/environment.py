@@ -233,7 +233,7 @@ def run_environment_checks(runner) -> list[CheckResult]:
         if "_error" in env:
             results.append(CheckResult(roles=[Role.POWER_PLATFORM_ADMIN.value],
                 checkpoint_id="ENV-001", category="Environment",
-                priority=Priority.CRITICAL.value, status=Status.WARNING.value,
+                priority=Priority.CRITICAL.value, status=Status.FAILED.value,
                 description="Power Platform environment exists",
                 result=f"Unable to query environment: {env['_error']}",
                 remediation="Requires Power Platform Administrator role.",

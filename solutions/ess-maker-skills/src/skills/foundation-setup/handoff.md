@@ -4,7 +4,7 @@
 Load canonical state:
 
 ```text
-python scripts/setup_state.py show
+python scripts/setup_state.py show --view report
 ```
 
 Build the completion report only from that output. Include:
@@ -25,9 +25,6 @@ python scripts/setup_state.py record-step-result \
   --step SETUP-07 \
   --mode manual-attested
 ```
-
-Evidence must include report confirmation, all completed setup steps, the
-deterministic resume boundary, and `/connect` as the next action.
 
 Run the final bundle by invoking:
 

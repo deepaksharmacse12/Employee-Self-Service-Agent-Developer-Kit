@@ -36,9 +36,9 @@ Initialize or load state:
 python scripts/setup_state.py init
 ```
 
-The command validates the state schema, imports only reusable S1/S2 foundation
-progress from a legacy Workday run, and prints the canonical state. If it fails,
-show the specific error and stop. Never recreate or overwrite corrupt state silently.
+The command validates the state schema and prints only the current step
+summary. If it fails, show the specific error and stop. Never recreate or
+overwrite corrupt state silently.
 
 If `connect_ready` is true, inspect `.local/config.json`:
 
@@ -50,8 +50,9 @@ If `connect_ready` is true, inspect `.local/config.json`:
   ask the maker to select the environment again. When onboarding completes,
   return here and show the completed handoff.
 
-Render the checklist from `src/skills/foundation-setup/tasks.md` using the states returned by
-the command:
+On the first invocation or when explicitly resuming `/setup`, render the
+checklist from `src/skills/foundation-setup/tasks.md`. Derive completed rows from
+`completed_steps` and the current row from `active_step`:
 
 - `done` = ✅
 - `in-progress` = 🔄
@@ -63,8 +64,9 @@ the command:
 Here's your ESS foundation setup:
 
 - {marker} Choose and lock the target environment
-- {marker} Confirm access, MCP, capacity, billing, and governance prerequisites
-- {marker} Verify the environment and Dataverse
+- {marker} Verify environment access and Dataverse
+- {marker} Confirm MCP, capacity, billing, and governance prerequisites
+- {marker} Reverify the locked environment
 - {marker} Configure the preferred unmanaged solution
 - {marker} Select, install, and bind an ESS product
 - {marker} Verify baseline agent readiness
@@ -94,7 +96,9 @@ sections; do not create a separate validations collection or duplicate evidence.
 | `SETUP-06` | `src/skills/foundation-setup/readiness.md` |
 | `SETUP-07` | `src/skills/foundation-setup/handoff.md` |
 
-Read and follow the playbook for the active step. After it returns, restart at
-**Start** so the state is reloaded and the next step is resolved deterministically.
+Read and follow the playbook for the active step. After it returns, run
+`python scripts/setup_state.py show --view current`, show only the completed
+result and next required action, then dispatch directly to the returned
+`active_step`. Do not rerender the full checklist between steps.
 
 Never route from `/setup` into an integration or topic playbook.

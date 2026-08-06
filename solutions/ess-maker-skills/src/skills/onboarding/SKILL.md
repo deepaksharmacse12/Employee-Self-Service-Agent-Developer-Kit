@@ -12,6 +12,18 @@ agent, product, and connector names before displaying them.
 
 ## Start
 
+Run `python scripts/setup_state.py show --view current`. When `connect_ready` is
+true, this is workspace bootstrap after foundation setup:
+
+1. Initialize `workspace/onboarding/tasks.md` from the template only when it is
+   missing.
+2. Do not render another setup checklist or repeat foundation prerequisites.
+3. Resume from the first unchecked workspace-bootstrap task.
+4. Go directly to **Step 1 and Step 2** below.
+
+Only use the legacy standalone onboarding messages below when foundation setup
+is not complete.
+
 Read `workspace/onboarding/tasks.md`.
 
 If the file does not exist, copy `src/skills/onboarding/tasks.md` to

@@ -27,7 +27,7 @@ A browser window will open for sign-in. Wait for the script to finish.
 **Check the terminal output:**
 
 - Parse the JSON after `ESS_AGENT_DISCOVERY_JSON:` as DISCOVERY.
-- Run `python scripts/setup_state.py show` and remove any entry from
+- Run `python scripts/setup_state.py show --view products` and remove any entry from
   `DISCOVERY.availableInstallations` whose `configKey` is already present in
   `selected_products`. This prevents a package that is installed but still
   provisioning its bot from being offered for installation again.

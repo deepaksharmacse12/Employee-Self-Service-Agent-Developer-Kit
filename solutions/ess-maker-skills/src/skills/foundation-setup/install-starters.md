@@ -4,7 +4,7 @@
 Read the locked environment and current product state:
 
 ```text
-python scripts/setup_state.py show
+python scripts/setup_state.py show --view products
 ```
 
 If `selected_products` is empty, discover the supported ESS agents already
@@ -73,7 +73,7 @@ Mark the step in progress and reload the selected product:
 
 ```text
 python scripts/setup_state.py update-step --step SETUP-05 --status in-progress
-python scripts/setup_state.py show
+python scripts/setup_state.py show --view products
 ```
 
 Process selected products in catalog order: `da.esshr`, `da.essit`,

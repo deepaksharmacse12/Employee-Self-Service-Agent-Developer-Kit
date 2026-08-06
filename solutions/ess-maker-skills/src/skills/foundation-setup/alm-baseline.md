@@ -107,6 +107,7 @@ Verify the resulting live Dataverse configuration:
 ```text
 python scripts/flightcheck/cli.py \
   --checkpoint ENV-009 \
+  --quiet-auth \
   --environment-url "{ENVIRONMENT_URL}"
 ```
 

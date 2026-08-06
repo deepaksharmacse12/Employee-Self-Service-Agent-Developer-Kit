@@ -15,7 +15,6 @@ from setup_state import (
     EnvironmentType,
     InstallationStatus,
     JsonSetupStateRepository,
-    LegacyWorkdayStateMigrator,
     ProductId,
     SetupState,
     SetupStateError,
@@ -48,15 +47,25 @@ def _record_step(
     )
 
 
-def _complete_through_alm(state: SetupState) -> None:
+def _complete_through_environment(state: SetupState) -> None:
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="env-1",
+        environment_name="Development",
+        environment_type=EnvironmentType.DEV,
+        tenant_endpoint="https://dev.crm.dynamics.com",
+    )
     for step_id, checkpoint in (
-        ("SETUP-01", None),
         ("SETUP-02.1", "ENV-002"),
         ("SETUP-02.2", "ENV-CAPACITY-001"),
         ("SETUP-03", "ENV-001"),
     ):
         _record_step(state, step_id, checkpoint=checkpoint)
         SetupWorkflow.update_step(state, step_id, StepStatus.DONE)
+
+
+def _complete_through_alm(state: SetupState) -> None:
+    _complete_through_environment(state)
     SetupWorkflow.skip_alm(state)
     SetupWorkflow.update_step(state, "SETUP-04", StepStatus.DONE)
 
@@ -88,8 +97,13 @@ def test_workflow_rejects_multiple_in_progress_steps() -> None:
 
 def test_step_updates_advance_to_first_incomplete_step() -> None:
     state = SetupState()
-    _record_step(state, "SETUP-01")
-    SetupWorkflow.update_step(state, "SETUP-01", StepStatus.DONE)
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="env-1",
+        environment_name="Development",
+        environment_type=EnvironmentType.DEV,
+        tenant_endpoint="https://dev.crm.dynamics.com",
+    )
     _record_step(state, "SETUP-02.1", checkpoint="ENV-002")
     SetupWorkflow.update_step(state, "SETUP-02.1", StepStatus.DONE)
 
@@ -98,8 +112,13 @@ def test_step_updates_advance_to_first_incomplete_step() -> None:
 
 def test_done_step_cannot_regress() -> None:
     state = SetupState()
-    _record_step(state, "SETUP-01")
-    SetupWorkflow.update_step(state, "SETUP-01", StepStatus.DONE)
+    SetupWorkflow.set_scope(
+        state,
+        environment_id="env-1",
+        environment_name="Development",
+        environment_type=EnvironmentType.DEV,
+        tenant_endpoint="https://dev.crm.dynamics.com",
+    )
 
     with pytest.raises(SetupStateError, match="Invalid transition"):
         SetupWorkflow.update_step(
@@ -136,6 +155,83 @@ def test_step_notes_are_specific_and_concise() -> None:
     )
 
 
+def test_current_state_view_is_compact() -> None:
+    state = SetupState()
+    view = setup_state._state_view(state, "current")
+
+    assert view == {
+        "active_step": "SETUP-01",
+        "state": "pending",
+        "note": None,
+        "failure_causes": [],
+        "connect_ready": False,
+        "environment": {
+            "locked": False,
+            "tenant_endpoint": None,
+        },
+        "completed_steps": [],
+    }
+    assert "products" not in view
+    assert "steps" not in view
+
+
+def test_targeted_state_views_include_only_requested_domain() -> None:
+    state = SetupState()
+    state.environment = {"name": "Development"}
+    state.selected_products = [ProductId.DA_ESSHR]
+    state.products[ProductId.DA_ESSHR].selected = True
+
+    environment = setup_state._state_view(state, "environment")
+    products = setup_state._state_view(state, "products")
+
+    assert environment == {
+        "active_step": "SETUP-01",
+        "environment": {"name": "Development"},
+    }
+    assert set(products) == {
+        "active_step",
+        "selected_products",
+        "products",
+    }
+    assert set(products["products"]) == {"da.esshr"}
+
+
+def test_mutation_result_reports_only_delta_and_next_step() -> None:
+    state = SetupState()
+
+    result = setup_state._mutation_result(
+        state,
+        command="update-step",
+        changed="SETUP-01 is in-progress",
+    )
+
+    assert result == {
+        "status": "ok",
+        "command": "update-step",
+        "changed": "SETUP-01 is in-progress",
+        "active_step": "SETUP-01",
+    }
+
+
+def test_environment_checkpoint_refreshes_verification_time() -> None:
+    state = SetupState()
+    state.environment = {
+        "locked": True,
+        "verified_at": "2026-08-05T00:00:00+00:00",
+    }
+
+    SetupWorkflow.record_step_result(
+        state,
+        step_id="SETUP-03",
+        checkpoint="ENV-001",
+        mode=StepMode.AUTOMATED,
+    )
+
+    assert state.environment["verified_at"] == (
+        state.steps["SETUP-03"].recorded_at
+    )
+
+
 def test_json_repository_round_trips_atomically(tmp_path: Path) -> None:
     state_path = tmp_path / ".local" / "setup" / "config.json"
     repository = JsonSetupStateRepository(state_path)
@@ -161,30 +257,14 @@ def test_json_repository_round_trips_atomically(tmp_path: Path) -> None:
     assert not list(state_path.parent.glob("*.tmp"))
 
 
-def test_legacy_validation_records_restore_step_result_without_evidence() -> None:
+def test_legacy_validation_collection_is_rejected() -> None:
     raw = SetupState().to_dict()
-    raw["steps"]["SETUP-01"]["state"] = "done"
-    raw["active_step"] = "SETUP-02.1"
     raw["validations"] = {
-        "SETUP-SCOPE-001": {
-            "status": "pass",
-            "mode": "automated",
-            "evidence": {"environment_id": "env-1"},
-            "recorded_at": "2026-08-05T00:00:00+00:00",
-        },
-        "SETUP-SCOPE-002": {
-            "status": "pass",
-            "mode": "automated",
-            "evidence": {"environment_type": "Developer"},
-            "recorded_at": "2026-08-05T00:00:01+00:00",
-        },
+        "SETUP-SCOPE-001": {"status": "pass"},
     }
 
-    state = SetupState.from_dict(raw)
-
-    assert state.steps["SETUP-01"].mode == StepMode.AUTOMATED
-    assert not hasattr(state.steps["SETUP-01"], "evidence")
-    assert "validations" not in state.to_dict()
+    with pytest.raises(SetupStateError, match="unexpected fields"):
+        SetupState.from_dict(raw)
 
 
 def test_repository_rejects_corrupt_state(tmp_path: Path) -> None:
@@ -219,34 +299,6 @@ def test_repository_normalizes_malformed_records(
 
     with pytest.raises(SetupStateError, match="malformed"):
         JsonSetupStateRepository(state_path).load()
-
-
-def test_legacy_migration_imports_only_common_foundation(
-    tmp_path: Path,
-) -> None:
-    legacy_path = tmp_path / "workday.json"
-    legacy_path.write_text(json.dumps({
-        "setupStatus": {
-            "S1.1": {"state": "done"},
-            "S1.2": {"state": "done"},
-            "S2.1": {"state": "done"},
-            "S3.1": {"state": "done"},
-        }
-    }), encoding="utf-8")
-    state_path = tmp_path / "setup.json"
-    service = SetupStateService(
-        JsonSetupStateRepository(state_path),
-        LegacyWorkdayStateMigrator(legacy_path),
-    )
-
-    state = service.initialize()
-
-    assert all(record.state == "pending" for record in state.steps.values())
-    assert state.legacy_migration["observed"] == [
-        "legacy-environment-ready",
-        "legacy-ess-solution-installed",
-    ]
-    assert "S3.1" not in state.legacy_migration["observed"]
 
 
 def test_manual_attestation_records_mode_without_duplicate_evidence() -> None:
@@ -303,6 +355,7 @@ def test_scope_accepts_discovered_power_platform_environment_type() -> None:
     )
 
     assert state.environment["type"] == "Developer"
+    assert state.environment["verified_at"] == state.environment["selected_at"]
     assert state.selected_products == []
     assert not hasattr(state.steps["SETUP-01"], "evidence")
     assert state.steps["SETUP-01"].mode == StepMode.AUTOMATED
@@ -399,12 +452,12 @@ def test_unselected_product_cannot_be_updated() -> None:
 
 def test_install_step_requires_every_selected_product_to_be_bound() -> None:
     state = SetupState()
+    _complete_through_alm(state)
     state.selected_products = [ProductId.DA_ESSHR]
     state.products[ProductId.DA_ESSHR].selected = True
     state.products[ProductId.DA_ESSHR].installation_status = (
         InstallationStatus.INSTALLED
     )
-    _complete_through_alm(state)
     _record_step(state, "SETUP-05")
 
     with pytest.raises(SetupStateError, match="not installed and bound"):
@@ -525,19 +578,12 @@ def test_alm_solution_metadata_cannot_be_incomplete() -> None:
 
 def test_optional_alm_step_can_complete_without_env009() -> None:
     state = SetupState()
-    for step_id, checkpoint in (
-        ("SETUP-01", None),
-        ("SETUP-02.1", "ENV-002"),
-        ("SETUP-02.2", "ENV-CAPACITY-001"),
-        ("SETUP-03", "ENV-001"),
-    ):
-        _record_step(state, step_id, checkpoint=checkpoint)
-        SetupWorkflow.update_step(state, step_id, StepStatus.DONE)
+    _complete_through_environment(state)
     SetupWorkflow.skip_alm(state)
     SetupWorkflow.update_step(state, "SETUP-04", StepStatus.DONE)
 
     assert state.steps["SETUP-04"].state == StepStatus.DONE
-    assert state.steps["SETUP-04"].checkpoint == "ENV-009"
+    assert state.steps["SETUP-04"].checkpoint is None
     assert state.steps["SETUP-04"].mode == "skipped"
     assert state.steps["SETUP-04"].recorded_at is not None
     assert state.alm["status"] == "skipped"
@@ -546,14 +592,7 @@ def test_optional_alm_step_can_complete_without_env009() -> None:
 
 def test_configured_alm_step_requires_env009_to_pass() -> None:
     state = SetupState()
-    for step_id, checkpoint in (
-        ("SETUP-01", None),
-        ("SETUP-02.1", "ENV-002"),
-        ("SETUP-02.2", "ENV-CAPACITY-001"),
-        ("SETUP-03", "ENV-001"),
-    ):
-        _record_step(state, step_id, checkpoint=checkpoint)
-        SetupWorkflow.update_step(state, step_id, StepStatus.DONE)
+    _complete_through_environment(state)
     SetupWorkflow.set_alm(
         state,
         solution_id="11111111-1111-1111-1111-111111111111",
@@ -634,11 +673,14 @@ def test_final_step_cannot_bypass_bundle() -> None:
 
 def test_finalize_marks_connect_ready() -> None:
     state = SetupState()
-    for step_id in tuple(state.steps)[:-1]:
-        if step_id == "SETUP-04":
-            SetupWorkflow.skip_alm(state)
-        else:
-            _record_step(state, step_id)
+    _complete_through_alm(state)
+    SetupWorkflow.select_initial_product(state, ProductId.DA_ESSHR)
+    state.products[ProductId.DA_ESSHR].installation_status = (
+        InstallationStatus.BOUND
+    )
+    state.products[ProductId.DA_ESSHR].ready = True
+    for step_id in ("SETUP-05", "SETUP-06"):
+        _record_step(state, step_id)
         SetupWorkflow.update_step(state, step_id, StepStatus.DONE)
     _record_step(
         state,
@@ -651,3 +693,12 @@ def test_finalize_marks_connect_ready() -> None:
     assert state.steps["SETUP-07"].state == "done"
     assert state.connect_ready is True
     assert state.completed_at is not None
+
+
+def test_setup_cannot_complete_without_selected_product() -> None:
+    state = SetupState()
+    _complete_through_alm(state)
+    _record_step(state, "SETUP-05")
+
+    with pytest.raises(SetupStateError, match="no ESS product"):
+        SetupWorkflow.update_step(state, "SETUP-05", StepStatus.DONE)

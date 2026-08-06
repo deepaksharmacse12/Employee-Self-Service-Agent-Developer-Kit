@@ -162,6 +162,7 @@ def main():
             sys.exit(1)
 
         print_environment_table(dv_environments)
+        print(f"ENVIRONMENT_LIST_JSON:{json.dumps(dv_environments)}")
 
         if args.select is not None:
             idx = args.select
@@ -181,11 +182,7 @@ def main():
 
     env_url = args.url.rstrip("/")
 
-    print("Authenticating to Dataverse...")
     token = authenticate(env_url)
-    print("Authenticated.\n")
-
-    print("Discovering agents...")
     try:
         inventory = build_ess_agent_inventory(
             discover_agents(env_url, token),

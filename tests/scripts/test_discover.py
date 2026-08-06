@@ -261,6 +261,32 @@ class TestDiscoverListEnvironmentsMode:
     """Tests for discover.py --list-environments integration with list_environments."""
 
     @patch("list_environments.PPAdminClient")
+    def test_list_outputs_reusable_environment_json(
+        self, mock_cls, capsys, monkeypatch
+    ):
+        mock_instance = mock_cls.return_value
+        mock_instance.authenticate.return_value = "token"
+        mock_instance.get_environments.return_value = _make_environments(count=2)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["discover.py", "--list-environments"],
+        )
+
+        import discover
+
+        discover.main()
+
+        output = capsys.readouterr().out
+        json_line = [
+            line
+            for line in output.splitlines()
+            if line.startswith("ENVIRONMENT_LIST_JSON:")
+        ][0]
+        payload = json.loads(json_line.split("ENVIRONMENT_LIST_JSON:", 1)[1])
+        assert len(payload) == 2
+        assert payload[0]["displayName"] == "Test Environment 0"
+
+    @patch("list_environments.PPAdminClient")
     def test_select_outputs_json(self, mock_cls, capsys, monkeypatch):
         """--list-environments --select N outputs SELECTED_ENV_JSON."""
         mock_instance = mock_cls.return_value

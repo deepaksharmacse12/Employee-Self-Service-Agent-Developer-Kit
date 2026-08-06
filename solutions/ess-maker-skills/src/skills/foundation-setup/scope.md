@@ -31,10 +31,12 @@ Use `vscode_askQuestions` to collect and lock one target environment.
 
 2. If the maker chooses to list environments:
    - Run `python scripts/discover.py --list-environments`.
-   - Present the returned environments with name, URL, and platform type.
+   - Present each option as `{name} — {URL}` with platform type in its
+     description so duplicate environment names remain unambiguous.
    - Ask the maker to select one.
-   - Run `python scripts/discover.py --list-environments --select {NUMBER}`.
-   - Parse `SELECTED_ENV_JSON:` for the environment ID, name, type, and URL.
+   - Parse `ENVIRONMENT_LIST_JSON:` from that same command and select the
+     corresponding object by environment ID or exact URL. Do not list
+     environments a second time.
 
 3. If the maker chooses manual entry, ask:
 
@@ -70,9 +72,8 @@ Use `vscode_askQuestions` to collect and lock one target environment.
    [Microsoft environment creation instructions](https://learn.microsoft.com/power-platform/admin/create-environment?tabs=new#create-an-environment-with-a-database).
    After the maker confirms creation is complete, run
    `python scripts/discover.py --list-environments`, present the returned
-   environments, ask them to select the newly created environment, and run
-   `python scripts/discover.py --list-environments --select {NUMBER}`. Parse
-   `SELECTED_ENV_JSON:` for its ID, name, type, and URL. Never assume creation
+   environments, and ask them to select the newly created environment. Parse
+   the selected object from `ENVIRONMENT_LIST_JSON:`. Never assume creation
    succeeded without rediscovering the environment.
 
 5. As soon as an environment URL is selected, entered, or obtained after

@@ -8,8 +8,7 @@
 - `SetupState` owns the versioned domain data.
 - `SetupWorkflow` enforces transitions, deterministic resume, and readiness.
 - `JsonSetupStateRepository` owns atomic JSON persistence.
-- `LegacyWorkdayStateMigrator` imports only common environment/base-install progress.
-- `SetupStateService` coordinates repository and migration behavior.
+- `SetupStateService` coordinates repository behavior.
 - `ProductInstallationRecord` owns one product's installation, connection, and
   readiness outcome.
 
@@ -30,7 +29,7 @@ Completed steps retain only workflow metadata:
 state: done
 checkpoint: optional FlightCheck ID
 note: concise step outcome
-mode: automated | manual-attested
+mode: automated | manual-attested | skipped
 recorded_at: UTC timestamp
 ```
 

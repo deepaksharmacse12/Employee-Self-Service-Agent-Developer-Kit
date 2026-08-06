@@ -10,7 +10,7 @@ import json
 import os
 import tempfile
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -19,7 +19,6 @@ from typing import Any
 
 SCHEMA_VERSION = 2
 DEFAULT_STATE_PATH = Path(".local/setup/config.json")
-DEFAULT_LEGACY_WORKDAY_PATH = Path(".local/connect/workday/config.json")
 SETUP_INTENT = "prereqs + base ESS install only"
 STEP_ORDER = (
     "SETUP-01",
@@ -166,7 +165,6 @@ class SetupState:
     created_at: str = field(default_factory=lambda: utc_now())
     updated_at: str = field(default_factory=lambda: utc_now())
     completed_at: str | None = None
-    legacy_migration: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "SetupState":
@@ -174,48 +172,16 @@ class SetupState:
             raise SetupStateError(
                 f"Unsupported setup schema version: {raw.get('schema_version')!r}"
             )
+        unexpected = set(raw) - {item.name for item in fields(cls)}
+        if unexpected:
+            raise SetupStateError(
+                "Setup state contains unexpected fields: "
+                f"{', '.join(sorted(unexpected))}"
+            )
 
         steps_raw = raw.get("steps")
         if not isinstance(steps_raw, dict):
             raise SetupStateError("Setup state must contain a steps object")
-        legacy_step_order = (
-            "SETUP-01",
-            "SETUP-02",
-            "SETUP-03",
-            "SETUP-04",
-            "SETUP-05",
-            "SETUP-06",
-            "SETUP-07",
-        )
-        if set(steps_raw) == set(legacy_step_order):
-            old_prerequisites = dict(steps_raw["SETUP-02"])
-            first_prerequisite = dict(old_prerequisites)
-            second_prerequisite = dict(old_prerequisites)
-            if old_prerequisites.get("state") != StepStatus.DONE:
-                second_prerequisite = asdict(StepRecord())
-            for step_id, record, checkpoint in (
-                ("SETUP-02.1", first_prerequisite, "ENV-002"),
-                ("SETUP-02.2", second_prerequisite, "ENV-CAPACITY-001"),
-            ):
-                if record.get("recorded_at"):
-                    record["checkpoint"] = checkpoint
-                    record["note"] = STEP_NOTES[step_id]
-            environment_step = dict(steps_raw["SETUP-03"])
-            if environment_step.get("recorded_at"):
-                environment_step["checkpoint"] = "ENV-001"
-                environment_step["note"] = STEP_NOTES["SETUP-03"]
-            steps_raw = {
-                "SETUP-01": steps_raw["SETUP-01"],
-                "SETUP-02.1": first_prerequisite,
-                "SETUP-02.2": second_prerequisite,
-                "SETUP-03": environment_step,
-                **{
-                    step_id: steps_raw[step_id]
-                    for step_id in legacy_step_order[3:]
-                },
-            }
-            if raw.get("active_step") == "SETUP-02":
-                raw["active_step"] = "SETUP-02.1"
         if set(steps_raw) != set(STEP_ORDER):
             raise SetupStateError("Setup state contains an unexpected step set")
 
@@ -227,11 +193,7 @@ class SetupState:
 
         try:
             steps = {
-                step_id: StepRecord(**{
-                    key: value
-                    for key, value in record.items()
-                    if key != "evidence"
-                })
+                step_id: StepRecord(**record)
                 for step_id, record in steps_raw.items()
             }
             products = _default_products()
@@ -243,59 +205,6 @@ class SetupState:
             raise SetupStateError(
                 "Setup state contains malformed step or product records"
             ) from exc
-
-        legacy_validations = raw.get("validations")
-        if isinstance(legacy_validations, dict):
-            legacy_prefixes = {
-                "SETUP-01": ("SETUP-SCOPE-",),
-                "SETUP-02.1": (
-                    "SETUP-PREREQ-ACCESS-",
-                    "SETUP-PREREQ-DV-",
-                ),
-                "SETUP-02.2": (
-                    "SETUP-PREREQ-MCP-",
-                    "SETUP-PREREQ-CAP-",
-                    "SETUP-PREREQ-GOV-",
-                    "SETUP-PREREQ-BLOCK-",
-                ),
-                "SETUP-03": ("SETUP-ENV-",),
-                "SETUP-05": ("SETUP-INSTALL-",),
-                "SETUP-06": ("SETUP-READINESS-",),
-                "SETUP-07": ("SETUP-HANDOFF-", "SETUP-FINAL-"),
-            }
-            legacy_checkpoints = {
-                "SETUP-02.1": "ENV-002",
-                "SETUP-02.2": "ENV-CAPACITY-001",
-                "SETUP-03": "ENV-001",
-            }
-            for step_id, prefixes in legacy_prefixes.items():
-                step = steps[step_id]
-                if step.recorded_at or step.state != StepStatus.DONE:
-                    continue
-                matched = {
-                    check_id: record
-                    for check_id, record in legacy_validations.items()
-                    if check_id.startswith(prefixes)
-                    and isinstance(record, dict)
-                }
-                if not matched:
-                    continue
-                step.checkpoint = legacy_checkpoints.get(step_id)
-                step.note = STEP_NOTES[step_id]
-                step.mode = (
-                    StepMode.MANUAL_ATTESTED
-                    if any(
-                        record.get("mode") == StepMode.MANUAL_ATTESTED
-                        for record in matched.values()
-                    )
-                    else StepMode.AUTOMATED
-                )
-                timestamps = [
-                    record.get("recorded_at")
-                    for record in matched.values()
-                    if record.get("recorded_at")
-                ]
-                step.recorded_at = max(timestamps) if timestamps else utc_now()
 
         state = cls(
             schema_version=raw["schema_version"],
@@ -312,7 +221,6 @@ class SetupState:
             created_at=raw.get("created_at", utc_now()),
             updated_at=raw.get("updated_at", utc_now()),
             completed_at=raw.get("completed_at"),
-            legacy_migration=raw.get("legacy_migration", {}),
         )
         SetupWorkflow.validate(state)
         return state
@@ -383,51 +291,6 @@ class JsonSetupStateRepository(SetupStateRepository):
         finally:
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
-
-
-class LegacyWorkdayStateMigrator:
-    """Imports only common foundation progress from legacy Workday setup state."""
-
-    def __init__(self, legacy_path: Path) -> None:
-        self._legacy_path = legacy_path
-
-    def migrate(self, state: SetupState) -> SetupState:
-        if not self._legacy_path.is_file() or state.legacy_migration:
-            return state
-
-        try:
-            raw = json.loads(self._legacy_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise SetupStateError(f"Legacy Workday state is unreadable: {exc}") from exc
-
-        setup_status = raw.get("setupStatus", {})
-        observed_steps: list[str] = []
-        if self._is_done(setup_status, "S1.1") and self._is_done(
-            setup_status, "S1.2"
-        ):
-            observed_steps.append("legacy-environment-ready")
-        if self._is_done(setup_status, "S2.1"):
-            observed_steps.append("legacy-ess-solution-installed")
-
-        state.legacy_migration = {
-            "source": str(self._legacy_path).replace("\\", "/"),
-            "migrated_at": utc_now(),
-            "observed": observed_steps,
-            "note": (
-                "Legacy evidence is retained for fast re-verification but does "
-                "not complete new setup steps because environment identity and "
-                "selected ESS products are not proven."
-            ),
-        }
-        SetupWorkflow.refresh_active_step(state)
-        return state
-
-    @staticmethod
-    def _is_done(setup_status: Any, step_id: str) -> bool:
-        if not isinstance(setup_status, dict):
-            return False
-        record = setup_status.get(step_id)
-        return isinstance(record, dict) and record.get("state") == StepStatus.DONE
 
 
 class SetupWorkflow:
@@ -505,14 +368,15 @@ class SetupWorkflow:
             )
         if state.steps["SETUP-04"].state == StepStatus.DONE:
             alm_step = state.steps["SETUP-04"]
-            expected_mode = (
-                StepMode.AUTOMATED
-                if state.alm.get("status") == "configured"
-                else StepMode.SKIPPED
-            )
-            if alm_step.checkpoint != "ENV-009" or alm_step.mode != expected_mode:
+            configured = state.alm.get("status") == "configured"
+            expected_mode = StepMode.AUTOMATED if configured else StepMode.SKIPPED
+            expected_checkpoint = "ENV-009" if configured else None
+            if (
+                alm_step.checkpoint != expected_checkpoint
+                or alm_step.mode != expected_mode
+            ):
                 raise SetupStateError(
-                    "Completed SETUP-04 requires persisted ENV-009 step details"
+                    "Completed SETUP-04 has inconsistent ALM step details"
                 )
         if len(state.selected_products) != len(set(state.selected_products)):
             raise SetupStateError("Selected ESS products must be unique")
@@ -605,13 +469,15 @@ class SetupWorkflow:
         environment_type: str,
         tenant_endpoint: str,
     ) -> None:
+        verified_at = utc_now()
         proposed_environment = {
             "id": environment_id,
             "name": environment_name,
             "type": environment_type,
             "tenant_endpoint": tenant_endpoint.rstrip("/"),
             "locked": True,
-            "selected_at": utc_now(),
+            "selected_at": verified_at,
+            "verified_at": verified_at,
         }
         current_environment = state.environment
         if current_environment.get("locked"):
@@ -735,6 +601,25 @@ class SetupWorkflow:
                 raise SetupStateError(
                     f"Cannot complete {step_id}; step result is not recorded"
                 )
+            if step_id == "SETUP-01":
+                required_environment = (
+                    "id",
+                    "name",
+                    "type",
+                    "tenant_endpoint",
+                    "verified_at",
+                )
+                if (
+                    not state.environment.get("locked")
+                    or any(
+                        not state.environment.get(key)
+                        for key in required_environment
+                    )
+                ):
+                    raise SetupStateError(
+                        "Cannot complete SETUP-01; environment is not locked "
+                        "and verified"
+                    )
             if step_id == "SETUP-04":
                 alm_status = state.alm.get("status")
                 if alm_status not in {"configured", "skipped"}:
@@ -753,6 +638,10 @@ class SetupWorkflow:
                             "Cannot complete SETUP-04; ENV-009 has not passed"
                         )
             if step_id == "SETUP-05":
+                if not state.selected_products:
+                    raise SetupStateError(
+                        "Cannot complete SETUP-05; no ESS product is selected"
+                    )
                 incomplete_products = [
                     product_id
                     for product_id in state.selected_products
@@ -765,6 +654,10 @@ class SetupWorkflow:
                         f"and bound: {', '.join(incomplete_products)}"
                     )
             if step_id == "SETUP-06":
+                if not state.selected_products:
+                    raise SetupStateError(
+                        "Cannot complete SETUP-06; no ESS product is selected"
+                    )
                 unready_products = [
                     product_id
                     for product_id in state.selected_products
@@ -812,9 +705,18 @@ class SetupWorkflow:
             "SETUP-02.1": "ENV-002",
             "SETUP-02.2": "ENV-CAPACITY-001",
             "SETUP-03": "ENV-001",
-            "SETUP-04": "ENV-009",
         }
-        expected_checkpoint = expected_checkpoints.get(step_id)
+        if step_id == "SETUP-04":
+            expected_checkpoint = (
+                None if mode == StepMode.SKIPPED else "ENV-009"
+            )
+            if checkpoint != expected_checkpoint:
+                expected = expected_checkpoint or "no checkpoint"
+                raise SetupStateError(
+                    f"SETUP-04 in {mode} mode requires {expected}"
+                )
+        else:
+            expected_checkpoint = expected_checkpoints.get(step_id)
         if expected_checkpoint and checkpoint != expected_checkpoint:
             raise SetupStateError(
                 f"{step_id} only accepts checkpoint {expected_checkpoint}"
@@ -826,6 +728,8 @@ class SetupWorkflow:
         record.note = STEP_NOTES[step_id]
         record.mode = mode
         record.recorded_at = utc_now()
+        if step_id == "SETUP-03":
+            state.environment["verified_at"] = record.recorded_at
         state.updated_at = record.recorded_at
 
     @staticmethod
@@ -1061,7 +965,6 @@ class SetupWorkflow:
         SetupWorkflow.record_step_result(
             state,
             step_id="SETUP-04",
-            checkpoint="ENV-009",
             mode=StepMode.SKIPPED,
         )
         state.updated_at = state.alm["updated_at"]
@@ -1132,6 +1035,28 @@ class SetupWorkflow:
             raise SetupStateError(
                 f"Cannot finalize setup; incomplete steps: {', '.join(missing)}"
             )
+        if not state.environment.get("locked"):
+            raise SetupStateError(
+                "Cannot finalize setup; environment is not locked"
+            )
+        if not state.selected_products:
+            raise SetupStateError(
+                "Cannot finalize setup; no ESS product is selected"
+            )
+        incomplete_products = [
+            product_id
+            for product_id in state.selected_products
+            if (
+                state.products[product_id].installation_status
+                != InstallationStatus.BOUND
+                or not state.products[product_id].ready
+            )
+        ]
+        if incomplete_products:
+            raise SetupStateError(
+                "Cannot finalize setup; products are not bound and ready: "
+                f"{', '.join(incomplete_products)}"
+            )
         SetupWorkflow.update_step(
             state,
             "SETUP-07",
@@ -1149,15 +1074,11 @@ class SetupStateService:
     def __init__(
         self,
         repository: SetupStateRepository,
-        migrator: LegacyWorkdayStateMigrator | None = None,
     ) -> None:
         self._repository = repository
-        self._migrator = migrator
 
     def initialize(self) -> SetupState:
         state = self._repository.load() if self._repository.exists() else SetupState()
-        if self._migrator is not None:
-            state = self._migrator.migrate(state)
         SetupWorkflow.refresh_active_step(state)
         self._repository.save(state)
         return state
@@ -1223,21 +1144,90 @@ def persist_alm_solution(
 
 def _service(args: argparse.Namespace) -> SetupStateService:
     repository = JsonSetupStateRepository(Path(args.state))
-    migrator = LegacyWorkdayStateMigrator(Path(args.legacy_workday))
-    return SetupStateService(repository, migrator)
+    return SetupStateService(repository)
+
+
+def _state_view(state: SetupState, view: str) -> dict[str, Any]:
+    if view == "full":
+        return state.to_dict()
+    if view == "environment":
+        return {
+            "active_step": state.active_step,
+            "environment": state.environment,
+        }
+    if view == "products":
+        return {
+            "active_step": state.active_step,
+            "selected_products": state.selected_products,
+            "products": {
+                product_id: asdict(state.products[product_id])
+                for product_id in state.selected_products
+            },
+        }
+    if view == "report":
+        return {
+            "environment": state.environment,
+            "prerequisites": state.prerequisites,
+            "alm": state.alm,
+            "selected_products": state.selected_products,
+            "products": {
+                product_id: asdict(record)
+                for product_id, record in state.products.items()
+            },
+            "open_issues": state.open_issues,
+            "connect_ready": state.connect_ready,
+            "completed_at": state.completed_at,
+        }
+    active = state.steps[state.active_step]
+    return {
+        "active_step": state.active_step,
+        "state": active.state,
+        "note": active.note,
+        "failure_causes": active.failure_causes,
+        "connect_ready": state.connect_ready,
+        "environment": {
+            "locked": bool(state.environment.get("locked")),
+            "tenant_endpoint": state.environment.get("tenant_endpoint"),
+        },
+        "completed_steps": [
+            step_id
+            for step_id, record in state.steps.items()
+            if record.state == StepStatus.DONE
+        ],
+    }
+
+
+def _mutation_result(
+    state: SetupState,
+    *,
+    command: str,
+    changed: str,
+) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "command": command,
+        "changed": changed,
+        "active_step": state.active_step,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", default=str(DEFAULT_STATE_PATH))
-    parser.add_argument(
-        "--legacy-workday",
-        default=str(DEFAULT_LEGACY_WORKDAY_PATH),
-    )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    commands.add_parser("init")
-    commands.add_parser("show")
+    init = commands.add_parser("init")
+    init.add_argument(
+        "--view",
+        choices=("current", "full"),
+        default="current",
+    )
+    show = commands.add_parser("show")
+    show.add_argument(
+        "--view",
+        choices=("current", "environment", "products", "report", "full"),
+        default="current",
+    )
 
     scope = commands.add_parser("set-scope")
     scope.add_argument("--environment-id", required=True)
@@ -1349,7 +1339,10 @@ def main() -> int:
         else:
             state = service.load()
 
-        if args.command == "set-scope":
+        output: dict[str, Any]
+        if args.command in {"init", "show"}:
+            output = _state_view(state, args.view)
+        elif args.command == "set-scope":
             SetupWorkflow.set_scope(
                 state,
                 environment_id=args.environment_id,
@@ -1358,12 +1351,22 @@ def main() -> int:
                 tenant_endpoint=args.tenant_endpoint,
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed="SETUP-01 completed",
+            )
         elif args.command == "select-product":
             SetupWorkflow.select_initial_product(
                 state,
                 ProductId(args.product),
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"selected {args.product}",
+            )
         elif args.command == "update-step":
             SetupWorkflow.update_step(
                 state,
@@ -1372,6 +1375,11 @@ def main() -> int:
                 args.cause,
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"{args.step} is {args.status}",
+            )
         elif args.command == "record-step-result":
             SetupWorkflow.record_step_result(
                 state,
@@ -1380,6 +1388,11 @@ def main() -> int:
                 checkpoint=args.checkpoint,
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"recorded result for {args.step}",
+            )
         elif args.command == "set-prerequisite":
             state.prerequisites[args.name] = {
                 "status": args.status,
@@ -1388,6 +1401,11 @@ def main() -> int:
             }
             state.updated_at = utc_now()
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"prerequisite {args.name} is {args.status}",
+            )
         elif args.command == "set-alm":
             SetupWorkflow.set_alm(
                 state,
@@ -1397,9 +1415,19 @@ def main() -> int:
                 version=args.version,
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed="preferred solution configured",
+            )
         elif args.command == "skip-alm":
             SetupWorkflow.skip_alm(state)
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed="preferred solution skipped",
+            )
         elif args.command == "set-product-status":
             SetupWorkflow.update_product_installation(
                 state,
@@ -1410,6 +1438,11 @@ def main() -> int:
                 failure_cause=args.failure_cause,
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"{args.product} is {args.status}",
+            )
         elif args.command == "set-product-readiness":
             SetupWorkflow.set_product_readiness(
                 state,
@@ -1417,18 +1450,34 @@ def main() -> int:
                 args.ready,
             )
             service.save(state)
+            readiness = "ready" if args.ready else "not ready"
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"{args.product} is {readiness}",
+            )
         elif args.command == "attest-product-connection":
             SetupWorkflow.attest_product_connection(
                 state,
                 ProductId(args.product),
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"{args.product} connection attested",
+            )
         elif args.command == "add-product":
             SetupWorkflow.add_products(
                 state,
                 tuple(ProductId(product_id) for product_id in args.products),
             )
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed=f"added {', '.join(args.products)}",
+            )
         elif args.command == "finalize":
             try:
                 SetupWorkflow.finalize(state)
@@ -1456,8 +1505,13 @@ def main() -> int:
                 service.save(state)
                 raise
             service.save(state)
+            output = _mutation_result(
+                state,
+                command=args.command,
+                changed="foundation setup completed",
+            )
 
-        print(json.dumps(state.to_dict(), indent=2))
+        print(json.dumps(output, indent=2))
         return 0
     except SetupStateError as exc:
         print(f"ERROR: {exc}", file=os.sys.stderr)
