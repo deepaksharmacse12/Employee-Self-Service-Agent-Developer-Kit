@@ -639,7 +639,6 @@ def main() -> None:
         mapped_status = {
             "installing": "installing",
             "automatic-complete": "installed",
-            "manual-required": "manual-required",
         }[status]
         persist_product_installation_status(
             product_id,

@@ -33,8 +33,11 @@ After every selected starter passes, persist one consolidated result:
 ```text
 python scripts/setup_state.py record-step-result \
   --step SETUP-06 \
-  --mode automated
+  --mode {automated|manual-attested}
 ```
+
+Use `manual-attested` when any selected starter required manual readiness
+attestation; otherwise use `automated`.
 
 Complete only after every selected starter passes:
 

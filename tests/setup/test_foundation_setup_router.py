@@ -49,6 +49,9 @@ _INSTALL_STARTERS = (
     / "foundation-setup"
     / "install-starters.md"
 )
+_READINESS = (
+    _SOLUTION / "src" / "skills" / "foundation-setup" / "readiness.md"
+)
 _INSTALLATION_CATALOG = (
     _SOLUTION / "src" / "reference" / "ess-agent-installation" / "config.json"
 )
@@ -263,6 +266,15 @@ def test_dataverse_mcp_enablement_is_checked_automatically() -> None:
     assert "scripts/check_dataverse_mcp.py" in onboarding
     assert "without asking the maker anything" in prerequisites
     assert "Type **done**" not in onboarding
+
+
+def test_readiness_records_manual_attestation_provenance() -> None:
+    readiness = " ".join(_READINESS.read_text(encoding="utf-8").split())
+
+    assert "--mode {automated|manual-attested}" in readiness
+    assert "when any selected starter required manual readiness attestation" in (
+        readiness
+    )
 
 
 def test_environment_access_does_not_require_redundant_attestation() -> None:
