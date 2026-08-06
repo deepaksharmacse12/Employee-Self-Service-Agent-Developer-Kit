@@ -40,7 +40,7 @@ STEP_NOTES = {
         "is provisioned."
     ),
     "SETUP-02.2": (
-        "Confirms MCP, capacity, billing, and governance prerequisites are fully "
+        "Confirms MCP, allocated capacity, and governance prerequisites are fully "
         "satisfied."
     ),
     "SETUP-03": (

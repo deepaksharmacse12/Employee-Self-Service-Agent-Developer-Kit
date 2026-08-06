@@ -35,6 +35,13 @@ _ONBOARDING_STEP3 = (
     _SOLUTION / "src" / "skills" / "onboarding" / "step3-flightcheck.md"
 )
 _ONBOARDING = _SOLUTION / "src" / "skills" / "onboarding" / "SKILL.md"
+_FOUNDATION_BOOTSTRAP = (
+    _SOLUTION
+    / "src"
+    / "skills"
+    / "onboarding"
+    / "foundation-bootstrap.md"
+)
 _INSTALL_STARTERS = (
     _SOLUTION
     / "src"
@@ -86,6 +93,35 @@ def test_foundation_dispatches_all_playbooks() -> None:
 
     assert expected <= set(_PATH_RE.findall(text))
     assert ".local/connect/workday/config.json" not in text
+
+
+def test_capacity_is_an_automated_blocking_gate() -> None:
+    text = " ".join(_PREREQUISITES.read_text(encoding="utf-8").split())
+
+    assert "Do not ask the maker to select or confirm a billing model" in text
+    assert "Continue only when the checkpoint reports `Passed`" in text
+    assert '"allowFreeformInput": false' in text
+    assert '--cause "Copilot Studio message capacity is not allocated"' in text
+    assert "Show this message verbatim once" in text
+    assert "admin.powerplatform.microsoft.com/billing/licenses/copilotStudio/overview" in text
+    assert "Open the `Manage capacity` tab" in text
+    assert "Find `{ENVIRONMENT_NAME}`" in text
+    assert "Render the verbatim remediation only once" in text
+    assert "do not print another blocked-state summary" in text
+    assert "Do not ask governance questions" in text
+    assert "There is no skip, continue, defer" in text
+    assert "replies with `skip`" in text
+    assert "Do not accept Pay-as-you-go" in text
+
+
+def test_resume_never_replays_completed_prerequisites() -> None:
+    router = " ".join(_FOUNDATION.read_text(encoding="utf-8").split())
+    prerequisites = " ".join(_PREREQUISITES.read_text(encoding="utf-8").split())
+
+    assert "Never infer the active step from prior conversation" in router
+    assert "do not read or execute `foundation-setup/prerequisites.md`" in router
+    assert "only when the current persisted `active_step`" in prerequisites
+    assert "Do not rerun Dataverse MCP, capacity, or governance" in prerequisites
 
 
 def test_alm_step_reuses_env009_as_an_optional_step_checkpoint() -> None:
@@ -234,7 +270,7 @@ def test_environment_access_does_not_require_redundant_attestation() -> None:
 
     assert "both Power Platform and Copilot Studio" not in prerequisites
     assert "Do not ask whether the maker can" in prerequisites
-    assert "Persist the selected model with `set-prerequisite`" in prerequisites
+    assert "Do not ask the maker to select or confirm a billing model" in prerequisites
     assert "do not replace a failed automated result" in prerequisites
     assert "discover.py --list-environments" not in prerequisites
 
@@ -294,6 +330,21 @@ def test_onboarding_offers_install_or_customize_for_existing_agents() -> None:
     assert "setup_state.py add-product" in discovery
     assert "Installed: **{agent 1 name}**; **{agent 2 name}**" in discovery
     assert "Do not render installed agent names as plain text." in normalized
+
+
+def test_foundation_handoff_routes_directly_to_agent_inventory() -> None:
+    handoff = (
+        _SOLUTION / "src" / "skills" / "foundation-setup" / "handoff.md"
+    ).read_text(encoding="utf-8")
+    bootstrap = _FOUNDATION_BOOTSTRAP.read_text(encoding="utf-8")
+    extraction = _ONBOARDING_STEP2.read_text(encoding="utf-8")
+
+    assert "onboarding/foundation-bootstrap.md" in handoff
+    assert "onboarding/SKILL.md" not in handoff
+    assert "Do not display that checklist." in bootstrap
+    assert "onboarding/step1b.md" in bootstrap
+    assert "FOUNDATION_REUSED" in bootstrap
+    assert "| # | Task | Status |" not in extraction
 
 
 def test_onboarding_does_not_offer_legacy_optional_readiness_check() -> None:

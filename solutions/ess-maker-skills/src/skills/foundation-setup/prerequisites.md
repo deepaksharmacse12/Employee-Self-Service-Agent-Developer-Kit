@@ -1,6 +1,12 @@
 <!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
 # Setup Steps 2.1 and 2.2 — Prerequisites
 
+This playbook may run only when the current persisted `active_step` is
+`SETUP-02.1` or `SETUP-02.2`. If state reports any other active step, stop this
+playbook immediately and return to the foundation router. Do not rerun
+Dataverse MCP, capacity, or governance checks for a completed prerequisite
+step.
+
 Mark the access and Dataverse substep in progress:
 
 ```text
@@ -85,9 +91,73 @@ python scripts/flightcheck/cli.py \
   --environment-id "{ENVIRONMENT_ID}"
 ```
 
-Ask the maker to select exactly one approved model: `licensed users`, `PayG`, or
-`prepaid`. Persist the selected model with `set-prerequisite`.
-The capacity checkpoint may use manual-attested fallback.
+Do not ask the maker to select or confirm a billing model. Continue only when
+the checkpoint reports `Passed` because message capacity is allocated to the
+environment.
+
+Treat every other result and command failure as immediately blocking:
+
+1. Run:
+
+   ```text
+   python scripts/setup_state.py update-step \
+     --step SETUP-02.2 \
+     --status blocked \
+     --cause "Copilot Studio message capacity is not allocated"
+   ```
+
+2. Show this message verbatim once. Do not summarize, rephrase, or replace it
+   with the checkpoint remediation:
+
+   ```text
+   Copilot Studio message capacity must be allocated to `{ENVIRONMENT_NAME}`
+   before setup can continue.
+
+   1. Open [Power Platform admin center](https://admin.powerplatform.microsoft.com/billing/licenses/copilotStudio/overview).
+   2. Select `Licensing` in the left navigation.
+   3. Under **Copilot Studio**, select `Manage`.
+   4. Open the `Manage capacity` tab.
+   5. Find `{ENVIRONMENT_NAME}`.
+   6. Allocate Copilot Studio message capacity to the environment.
+   7. Select `Save`, then return here and choose **Check again**.
+   ```
+
+   If the visible Power Platform admin center labels differ, use the linked
+   **Copilot Studio capacity** page and locate `{ENVIRONMENT_NAME}` in its
+   environment allocation table. Do not invent alternate navigation labels.
+3. Ask only this non-freeform question:
+
+   ```json
+   [
+     {
+       "header": "Capacity required",
+       "question": "After allocating Copilot Studio message capacity to `{ENVIRONMENT_NAME}`, what would you like to do?",
+       "options": [
+         {
+           "label": "Check again",
+           "description": "Rerun the required capacity validation."
+         }
+       ],
+       "allowFreeformInput": false
+     }
+   ]
+   ```
+
+4. Rerun the checkpoint only when **Check again** is selected.
+
+Render the verbatim remediation only once, before the question. After asking
+the question, do not print another blocked-state summary, repeat the portal
+steps, paraphrase them, or add a second capacity message. The question is the
+final rendered content until the maker responds.
+
+**STOP here while capacity remains unverified.** Do not ask governance
+questions, collect any other prerequisite answers, or continue to another setup
+step. There is no skip, continue, defer, or manual-attestation path. If a maker
+nevertheless replies with `skip` or any response other than **Check again**,
+repeat that capacity is mandatory and stop without asking another question.
+
+Do not accept Pay-as-you-go, a billing-model selection, or manual attestation in
+place of allocated capacity.
 
 ## Governance
 

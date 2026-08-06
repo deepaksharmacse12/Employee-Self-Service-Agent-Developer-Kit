@@ -9,12 +9,12 @@ You should already have ENV_URL from Step 1.
 
 ## 1.4 — Run the discovery script
 
-**Message (do NOT wait for user response — continue immediately):**
+When FOUNDATION_REUSED is not true, show:
 
 Looking for ESS agents in your environment — this takes a few
 seconds...
 
-**End message.**
+When FOUNDATION_REUSED is true, do not show a discovery preamble.
 
 Run this command in the terminal (substitute ENV_URL):
 

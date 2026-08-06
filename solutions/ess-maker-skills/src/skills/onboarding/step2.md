@@ -41,13 +41,6 @@ change step 3 from `- [ ]` to `- [x]`.
 One more step — we need to start the **Dataverse MCP** server so the kit can
 work with your environment going forward.
 
-| # | Task | Status |
-|---|------|--------|
-| 1 | Dataverse configured | ✅ |
-| 2 | Agent discovered | ✅ |
-| 3 | Agent extracted | ✅ |
-| 4 | MCP server started | ⬜ |
-
 **End message.**
 
 ---
@@ -79,13 +72,6 @@ Update `workspace/onboarding/tasks.md` — change step 4 from `- [ ]` to `- [x]`
 **Message:**
 
 ✅ Core setup complete!
-
-| # | Task | Status |
-|---|------|--------|
-| 1 | Dataverse configured | ✅ |
-| 2 | Agent discovered | ✅ |
-| 3 | Agent extracted | ✅ |
-| 4 | MCP server started | ✅ |
 
 You can now customize your agent or connect an integration.
 

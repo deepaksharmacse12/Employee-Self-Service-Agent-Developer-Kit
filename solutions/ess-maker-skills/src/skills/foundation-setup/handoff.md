@@ -10,7 +10,7 @@ python scripts/setup_state.py show --view report
 Build the completion report only from that output. Include:
 
 - locked environment name, type, and endpoint;
-- approved capacity model and governance status;
+- verified allocated capacity and governance status;
 - preferred solution and publisher prefix, or `Not configured (skipped)`;
 - HR and IT installed/ready matrix;
 - open issues;
@@ -38,15 +38,9 @@ step result. On failure it blocks `SETUP-07` with the returned causes and stops.
 If it passes, record the final module result in the displayed report. The command
 sets setup to done, records the completion timestamp, and marks `/connect` ready.
 
-**Message:**
-
-Your ESS foundation is ready. I'll now initialize the local ADK workspace from the
-installed starter so the integration and authoring commands can use it.
-
-**End message.**
-
-Read `src/skills/onboarding/SKILL.md` and follow it. The onboarding flow is a common
-local workspace bootstrap, not integration setup. When it completes:
+Read `src/skills/onboarding/foundation-bootstrap.md` and follow it. This routes
+directly to installed-agent inventory without rendering another setup
+checklist. When it completes:
 
 **Message:**
 

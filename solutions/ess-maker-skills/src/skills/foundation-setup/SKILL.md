@@ -44,11 +44,10 @@ If `connect_ready` is true, inspect `.local/config.json`:
 
 - If its `setup` value is `"complete"`, show that foundation and workspace setup
   are complete and direct the maker to `/connect`.
-- Otherwise read `src/skills/onboarding/SKILL.md` and follow it to initialize the
-  local ADK workspace from the installed starter. Onboarding must reuse
-  `environment.tenant_endpoint` from this locked foundation state and must not
-  ask the maker to select the environment again. When onboarding completes,
-  return here and show the completed handoff.
+- Otherwise read `src/skills/onboarding/foundation-bootstrap.md` and follow it.
+  The bootstrap must reuse `environment.tenant_endpoint`, must not render
+  another setup checklist, and must proceed directly to the installed-agent
+  inventory choice.
 
 On the first invocation or when explicitly resuming `/setup`, render the
 checklist from `src/skills/foundation-setup/tasks.md`. Derive completed rows from
@@ -76,6 +75,12 @@ Here's your ESS foundation setup:
 
 The persisted `active_step` is authoritative. Dispatch to it immediately.
 Resumption does not require user input.
+
+Never infer the active step from prior conversation, a previously read
+playbook, or the last command that ran. If persisted `active_step` is not
+`SETUP-02.1` or `SETUP-02.2`, do not read or execute
+`foundation-setup/prerequisites.md`. A completed prerequisite step must never be
+rechecked during resume unless state is explicitly reopened by a state command.
 
 Every step persists only its note, mode, checkpoint, and recorded timestamp.
 Keep canonical facts in the environment, prerequisites, ALM, and product
