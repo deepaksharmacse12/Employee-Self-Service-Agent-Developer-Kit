@@ -44,7 +44,10 @@ from typing import Callable, Optional
 
 from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
-from flightcheck.checks.environment import run_environment_checks
+from flightcheck.checks.environment import (
+    run_environment_checks,
+    run_preferred_solution_check,
+)
 from flightcheck.checks.external_systems import run_external_systems_checks
 from flightcheck.checks.solution import run_solution_checks
 from flightcheck.checks.workday import run_workday_checks
@@ -181,6 +184,16 @@ _SPECS: list[CheckpointSpec] = [
         requires_dataverse_endpoint=True,
         prereqs=("ENV-001",),
         priority=Priority.CRITICAL.value,
+        roles=(Role.POWER_PLATFORM_ADMIN.value,),
+    ),
+    CheckpointSpec(
+        key="ENV-009",
+        category_fn=run_preferred_solution_check,
+        category_label="Environment",
+        clients=frozenset({DATAVERSE}),
+        requires_config=False,
+        requires_dataverse_endpoint=True,
+        priority=Priority.HIGH.value,
         roles=(Role.POWER_PLATFORM_ADMIN.value,),
     ),
     # ---- Solution: ESS-SOLN-001 (skill-2 install-ess) ----
@@ -545,6 +558,7 @@ REGISTRY: dict[str, CheckpointSpec] = {spec.key: spec for spec in _SPECS}
 OWNED_PREFIXES: tuple = (
     "ENV-001",
     "ENV-002",
+    "ENV-009",
     "ENV-CAPACITY",
     "ESS-SOLN",
     "WD-PKG",

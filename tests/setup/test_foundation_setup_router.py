@@ -88,6 +88,23 @@ def test_foundation_dispatches_all_playbooks() -> None:
     assert ".local/connect/workday/config.json" not in text
 
 
+def test_alm_step_reuses_env009_as_an_optional_step_checkpoint() -> None:
+    alm = (
+        _SOLUTION / "src" / "skills" / "foundation-setup" / "alm-baseline.md"
+    ).read_text(encoding="utf-8")
+    tasks = (
+        _SOLUTION / "src" / "skills" / "foundation-setup" / "tasks.md"
+    ).read_text(encoding="utf-8")
+
+    assert "--checkpoint ENV-009" in alm
+    assert "Skip preferred solution setup" in alm
+    assert "exactly three options" in alm
+    assert "checks:" not in tasks
+    assert "When the maker skips, no validation is required." in alm
+    assert "SETUP-ALM-" not in alm
+    assert "SETUP-ALM-" not in tasks
+
+
 def test_foundation_router_paths_resolve() -> None:
     referenced = set(_PATH_RE.findall(_FOUNDATION.read_text(encoding="utf-8")))
     missing = [
@@ -215,8 +232,8 @@ def test_environment_access_does_not_require_redundant_attestation() -> None:
 
     assert "both Power Platform and Copilot Studio" not in prerequisites
     assert "Do not ask whether the maker can" in prerequisites
-    assert "Record both checks in automated mode" in prerequisites
-    assert "do not replace failed automated evidence" in prerequisites
+    assert "Persist the selected model with `set-prerequisite`" in prerequisites
+    assert "do not replace a failed automated result" in prerequisites
 
 
 def test_locked_environment_is_not_reconfirmed() -> None:
@@ -227,8 +244,8 @@ def test_locked_environment_is_not_reconfirmed() -> None:
     assert "do not show a confirmation popup" in normalized
     assert "Ask the maker to confirm" not in environment
     assert "ENVIRONMENT_DRIFT" in environment
-    assert environment.count('--environment-url "{ENVIRONMENT_URL}"') == 2
-    assert environment.count('--environment-id "{ENVIRONMENT_ID}"') == 2
+    assert environment.count('--environment-url "{ENVIRONMENT_URL}"') == 1
+    assert environment.count('--environment-id "{ENVIRONMENT_ID}"') == 1
     assert "Do not read `.local/config.json`" in environment
 
 

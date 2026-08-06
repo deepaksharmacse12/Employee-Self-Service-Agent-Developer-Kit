@@ -208,23 +208,21 @@ changing successful products. When resuming a product already at
 URL to show the same mandatory attestation; do not rerun installation or
 binding.
 
-Record:
+After every selected product is installed, opens successfully, is bound, and
+has any required invoker connection attested, persist one consolidated result:
 
-- `SETUP-INSTALL-SELECTION-001` — exactly one catalog product is selected for
-  this foundation cycle;
-- `SETUP-INSTALL-001` — every selected starter appears;
-- `SETUP-INSTALL-002` — every selected starter opens;
-- `SETUP-INSTALL-003` — every selected product is independently `bound`.
-- `SETUP-INSTALL-004` — every selected `invoker` product has maker-attested
-  connection settings, or no selected product uses an `invoker` connection.
+```text
+python scripts/setup_state.py record-step-result \
+  --step SETUP-05 \
+  --mode {automated|manual-attested}
+```
 
-The attestation command records `SETUP-INSTALL-004` in `manual-attested` mode.
-If no selected product uses an `invoker` connection, record it in `automated`
-mode with evidence `{"attestation_required": false}`.
+Use `manual-attested` when any selected product required invoker connection
+attestation; otherwise use `automated`.
 
-Automated verification may be supplemented by manual-attested starter-specific
-evidence because `ESS-SOLN-001` covers the solution family rather than uniquely
-identifying both starter experiences.
+Automated verification may be supplemented by manual attestation because
+`ESS-SOLN-001` covers the solution family rather than uniquely identifying both
+starter experiences. Product-specific state remains in the `products` object.
 
 Complete only after all selected starters pass:
 

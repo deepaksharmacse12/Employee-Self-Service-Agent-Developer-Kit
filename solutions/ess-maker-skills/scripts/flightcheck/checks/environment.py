@@ -372,6 +372,11 @@ def run_environment_checks(runner) -> list[CheckResult]:
     return results
 
 
+def run_preferred_solution_check(runner) -> list[CheckResult]:
+    """Run ENV-009 independently for single-checkpoint setup validation."""
+    return _check_preferred_solution(runner)
+
+
 def _env_capacity(status: str, result: str, remediation: str = "") -> CheckResult:
     """Build an ENV-CAPACITY-001 row (every branch shares id/category/role)."""
     return CheckResult(

@@ -123,8 +123,8 @@ python scripts/setup_state.py set-scope \
   --tenant-endpoint "{ENVIRONMENT_URL}"
 ```
 
-The command records `SETUP-SCOPE-001`, `SETUP-SCOPE-002`, and
-`SETUP-SCOPE-003`, then completes the step atomically.
+The command records the locked environment, type, endpoint, and setup intent
+directly on `SETUP-01`, then completes the step atomically.
 
 **Message:**
 

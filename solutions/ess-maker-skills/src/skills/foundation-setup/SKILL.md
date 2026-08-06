@@ -75,9 +75,9 @@ Here's your ESS foundation setup:
 The persisted `active_step` is authoritative. Dispatch to it immediately.
 Resumption does not require user input.
 
-Every persisted validation includes an automatically generated `note` explaining
-the check in 10–12 words. Do not omit, replace, or duplicate that note in
-evidence.
+Every step persists only its note, mode, checkpoint, and recorded timestamp.
+Keep canonical facts in the environment, prerequisites, ALM, and product
+sections; do not create a separate validations collection or duplicate evidence.
 
 ---
 
@@ -86,7 +86,8 @@ evidence.
 | Active step | Playbook |
 |---|---|
 | `SETUP-01` | `src/skills/foundation-setup/scope.md` |
-| `SETUP-02` | `src/skills/foundation-setup/prerequisites.md` |
+| `SETUP-02.1` | `src/skills/foundation-setup/prerequisites.md` |
+| `SETUP-02.2` | `src/skills/foundation-setup/prerequisites.md` |
 | `SETUP-03` | `src/skills/foundation-setup/environment.md` |
 | `SETUP-04` | `src/skills/foundation-setup/alm-baseline.md` |
 | `SETUP-05` | `src/skills/foundation-setup/install-starters.md` |

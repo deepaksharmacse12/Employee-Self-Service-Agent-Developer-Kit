@@ -28,11 +28,16 @@ python scripts/setup_state.py set-product-readiness \
   --ready
 ```
 
-Record:
+After every selected starter passes, persist one consolidated result:
 
-- `SETUP-READINESS-001` — Configure/Topics reachable;
-- `SETUP-READINESS-002` — shell and starter content footprint present;
-- `SETUP-READINESS-003` — persisted starter matrix matches observed state.
+```text
+python scripts/setup_state.py record-step-result \
+  --step SETUP-06 \
+  --mode automated
+```
+
+Evidence must include Configure/Topics reachability, shell and starter content,
+and persisted-versus-observed product state.
 
 Complete only after every selected starter passes:
 

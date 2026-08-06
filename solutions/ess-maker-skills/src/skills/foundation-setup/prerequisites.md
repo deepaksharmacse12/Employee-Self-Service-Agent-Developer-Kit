@@ -1,10 +1,10 @@
 <!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
-# Setup Step 2 — Prerequisites
+# Setup Steps 2.1 and 2.2 — Prerequisites
 
-Mark the step in progress:
+Mark the access and Dataverse substep in progress:
 
 ```text
-python scripts/setup_state.py update-step --step SETUP-02 --status in-progress
+python scripts/setup_state.py update-step --step SETUP-02.1 --status in-progress
 ```
 
 Read the locked environment from `python scripts/setup_state.py show`.
@@ -22,16 +22,23 @@ python scripts/flightcheck/cli.py \
 ```
 
 The selected environment must be present in environment discovery and `ENV-002`
-must pass. Record both checks in automated mode:
-
-- `SETUP-PREREQ-ACCESS-001` — selected environment ID, name, and URL match the
-  discovered environment;
-- `SETUP-PREREQ-DV-001` — `ENV-002` confirms Dataverse is provisioned.
+must pass.
 
 Continue immediately when both checks pass. Do not ask whether the maker can
 open the environment in Power Platform or Copilot Studio. If discovery or
 `ENV-002` fails, show the exact command error and block the prerequisite step;
-do not replace failed automated evidence with manual attestation.
+do not replace a failed automated result with manual attestation.
+
+Persist and complete the first substep:
+
+```text
+python scripts/setup_state.py record-step-result \
+  --step SETUP-02.1 \
+  --checkpoint ENV-002 \
+  --mode automated
+python scripts/setup_state.py update-step --step SETUP-02.1 --status done
+python scripts/setup_state.py update-step --step SETUP-02.2 --status in-progress
+```
 
 ## Dataverse MCP client
 
@@ -43,11 +50,9 @@ python scripts/check_dataverse_mcp.py --url "{ENVIRONMENT_URL}"
 
 Parse `DATAVERSE_MCP_STATUS_JSON:`:
 
-- `enabled`: record `SETUP-PREREQ-MCP-001` as `pass` with the application ID,
-  record ID, and active/enabled flags as automated evidence. Continue
-  immediately without asking the maker anything.
-- `disabled` or `missing`: record `SETUP-PREREQ-MCP-001` as `fail`, show the
-  following guidance, then offer **Check again**:
+- `enabled`: continue immediately without asking the maker anything.
+- `disabled` or `missing`: show the following guidance, then offer **Check
+  again**:
 
   1. Open [Power Platform admin center](https://admin.powerplatform.microsoft.com/environments).
   2. Select the `{ENVIRONMENT_NAME}` environment.
@@ -76,7 +81,7 @@ python scripts/flightcheck/cli.py \
 ```
 
 Ask the maker to select exactly one approved model: `licensed users`, `PayG`, or
-`prepaid`. Record `SETUP-PREREQ-CAP-001` with the selected model in evidence.
+`prepaid`. Persist the selected model with `set-prerequisite`.
 The capacity checkpoint may use manual-attested fallback.
 
 ## Governance
@@ -87,19 +92,27 @@ Ask for explicit status of:
 - firewall/outbound allowlisting required for planned integrations;
 - organization approvals.
 
-Record `SETUP-PREREQ-GOV-001`. A required item that is pending is a failure.
+A required item that is pending is a failure. Persist each answer with
+`set-prerequisite`.
 
 ## Blocking guard
 
 If any mandatory prerequisite failed or remains unknown:
 
-1. Record `SETUP-PREREQ-BLOCK-001` as `fail`.
-2. Set `SETUP-02` to `blocked` with one normalized cause per missing item.
-3. Show the missing items and stop.
+1. Set `SETUP-02.2` to `blocked` with one normalized cause per missing item.
+2. Show the missing items and stop.
 
-If all five prerequisite checks pass, record `SETUP-PREREQ-BLOCK-001` as `pass`
-with evidence that no mandatory item remains, then complete the step:
+If all five prerequisite checks pass, persist one consolidated step result:
 
 ```text
-python scripts/setup_state.py update-step --step SETUP-02 --status done
+python scripts/setup_state.py record-step-result \
+  --step SETUP-02.2 \
+  --checkpoint ENV-CAPACITY-001 \
+  --mode manual-attested
+```
+
+Then complete the step:
+
+```text
+python scripts/setup_state.py update-step --step SETUP-02.2 --status done
 ```

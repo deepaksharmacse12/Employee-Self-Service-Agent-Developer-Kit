@@ -19,7 +19,16 @@ _TEMPLATE = (
     / "foundation-setup"
     / "tasks.md"
 )
-_EXPECTED_STEPS = {f"SETUP-{number:02d}" for number in range(1, 8)}
+_EXPECTED_STEPS = {
+    "SETUP-01",
+    "SETUP-02.1",
+    "SETUP-02.2",
+    "SETUP-03",
+    "SETUP-04",
+    "SETUP-05",
+    "SETUP-06",
+    "SETUP-07",
+}
 _ITEM_RE = re.compile(
     r"^-\s*\[(?P<box>[ xX])\]\s+.*\n\s*<!--(?P<meta>.*?)-->\s*$",
     re.MULTILINE,
@@ -38,11 +47,11 @@ def _parse_items() -> list[dict[str, str]]:
     return items
 
 
-def test_template_has_seven_unique_foundation_steps() -> None:
+def test_template_has_eight_unique_foundation_steps() -> None:
     items = _parse_items()
     step_ids = [item["id"] for item in items]
 
-    assert len(items) == 7
+    assert len(items) == 8
     assert set(step_ids) == _EXPECTED_STEPS
     assert len(step_ids) == len(set(step_ids))
 
@@ -51,4 +60,4 @@ def test_template_starts_pending_and_unchecked() -> None:
     for item in _parse_items():
         assert item["status"] == "pending"
         assert item["checkbox"] == " "
-        assert item["checks"].startswith("SETUP-")
+        assert set(item) == {"id", "status", "checkbox"}

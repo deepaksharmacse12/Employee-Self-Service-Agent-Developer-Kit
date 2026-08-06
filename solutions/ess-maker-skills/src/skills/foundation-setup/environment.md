@@ -20,19 +20,19 @@ python scripts/flightcheck/cli.py \
   --checkpoint ENV-001 \
   --environment-url "{ENVIRONMENT_URL}" \
   --environment-id "{ENVIRONMENT_ID}"
-python scripts/flightcheck/cli.py \
-  --checkpoint ENV-002 \
-  --environment-url "{ENVIRONMENT_URL}" \
-  --environment-id "{ENVIRONMENT_ID}"
 ```
 
-Record:
+After the check passes, persist the result:
 
-- `SETUP-ENV-001` when FlightCheck resolves the explicitly supplied locked
-  environment ID and URL;
-- `SETUP-ENV-002` when environment id, name, tenant endpoint, type, and timestamp
-  are present;
-- `SETUP-ENV-003` when both prior checks pass and the next step may be unlocked.
+```text
+python scripts/setup_state.py record-step-result \
+  --step SETUP-03 \
+  --checkpoint ENV-001 \
+  --mode automated
+```
+
+Evidence must include the locked environment ID, name, endpoint, type,
+timestamp, and both checkpoint outcomes.
 
 Do not read `.local/config.json` or invoke environment selection during this
 step; local workspace configuration is created later. No manual pass is allowed

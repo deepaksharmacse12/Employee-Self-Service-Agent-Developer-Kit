@@ -174,6 +174,15 @@ class TestTransitiveRequirements:
         # Shares run_environment_checks with its ENV-001 prereq -> one fn.
         assert len(plan.ordered_fns) == 1
 
+    def test_env009_is_individually_targetable_with_dataverse_only(self):
+        spec = registry.resolve("ENV-009")
+        assert spec is not None and spec.key == "ENV-009"
+        assert spec.clients == frozenset({registry.DATAVERSE})
+        plan = registry.transitive_requirements("ENV-009")
+        assert plan.requires_config is False
+        assert plan.requires_dataverse_endpoint is True
+        assert len(plan.ordered_fns) == 1
+
     def test_ess_soln_001_resolves_and_pulls_env_prereqs(self):
         spec = registry.resolve("ESS-SOLN-001")
         assert spec is not None and spec.key == "ESS-SOLN-001"

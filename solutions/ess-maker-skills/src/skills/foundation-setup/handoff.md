@@ -11,22 +11,23 @@ Build the completion report only from that output. Include:
 
 - locked environment name, type, and endpoint;
 - approved capacity model and governance status;
-- preferred solution and publisher prefix;
+- preferred solution and publisher prefix, or `Not configured (skipped)`;
 - HR and IT installed/ready matrix;
 - open issues;
 - statement that ISV connection and topic work were not performed.
 
 Ask the maker to confirm the report is accurate.
 
-Record:
+After the maker confirms the report, persist one consolidated handoff result:
 
-- `SETUP-HANDOFF-001` — report matches persisted state;
-- `SETUP-HANDOFF-002` — all required setup gates passed;
-- `SETUP-HANDOFF-003` — rerun will resume at this boundary.
+```text
+python scripts/setup_state.py record-step-result \
+  --step SETUP-07 \
+  --mode manual-attested
+```
 
-Use `src/skills/foundation-setup/shared/validation.md` to persist all three. Handoff summary
-confirmation is manual-attested; readiness and deterministic resume are automated.
-`SETUP-HANDOFF-002` evidence must list the required setup modules that passed.
+Evidence must include report confirmation, all completed setup steps, the
+deterministic resume boundary, and `/connect` as the next action.
 
 Run the final bundle by invoking:
 
@@ -34,9 +35,8 @@ Run the final bundle by invoking:
 python scripts/setup_state.py finalize
 ```
 
-The domain service requires every prior step and every check in
-`SETUP-FINAL-BUNDLE`. On failure it records `SETUP-FINAL-001`, blocks `SETUP-07`
-with the returned causes, and stops.
+The domain service requires every prior step to be complete with a persisted
+step result. On failure it blocks `SETUP-07` with the returned causes and stops.
 
 If it passes, record the final module result in the displayed report. The command
 sets setup to done, records the completion timestamp, and marks `/connect` ready.

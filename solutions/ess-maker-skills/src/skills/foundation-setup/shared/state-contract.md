@@ -18,25 +18,25 @@ never be added to this file.
 
 ## Step state
 
-The seven canonical steps support `pending`, `in-progress`, `blocked`, and `done`.
+The eight canonical steps support `pending`, `in-progress`, `blocked`, and `done`.
 Only one step may be `in-progress`. `active_step` always resolves to the first step
 that is not `done`.
 
-## Validation result
+## Step result
 
-Every check is recorded with:
+Completed steps retain only workflow metadata:
 
 ```text
-check_id
-status: pass | fail
+state: done
+checkpoint: optional FlightCheck ID
+note: concise step outcome
 mode: automated | manual-attested
-evidence: object
-cause_codes: list
 recorded_at: UTC timestamp
 ```
 
-A failed or unknown mandatory check cannot be converted into success-shaped state.
-Manual completion requires an explicit positive attestation and evidence.
+Canonical facts belong in `environment`, `prerequisites`, `alm`, or `products`
+and must not be duplicated inside steps. A failed or unknown mandatory check
+cannot be converted into success-shaped state.
 
 ## Product installation state
 

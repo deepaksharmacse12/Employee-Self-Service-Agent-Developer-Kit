@@ -72,7 +72,12 @@ class TestGates:
     def test_environment_checkpoints_accept_explicit_foundation_context(
         self,
     ) -> None:
-        for checkpoint in ("ENV-001", "ENV-002", "ENV-CAPACITY-001"):
+        for checkpoint in (
+            "ENV-001",
+            "ENV-002",
+            "ENV-009",
+            "ENV-CAPACITY-001",
+        ):
             plan = registry.transitive_requirements(checkpoint)
             assert plan.requires_config is False
             assert plan.requires_dataverse_endpoint is True

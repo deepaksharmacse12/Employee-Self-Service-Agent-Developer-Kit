@@ -23,67 +23,48 @@ DEFAULT_LEGACY_WORKDAY_PATH = Path(".local/connect/workday/config.json")
 SETUP_INTENT = "prereqs + base ESS install only"
 STEP_ORDER = (
     "SETUP-01",
-    "SETUP-02",
+    "SETUP-02.1",
+    "SETUP-02.2",
     "SETUP-03",
     "SETUP-04",
     "SETUP-05",
     "SETUP-06",
     "SETUP-07",
 )
-REQUIRED_CHECKS_BY_STEP = {
+STEP_NOTES = {
     "SETUP-01": (
-        "SETUP-SCOPE-001",
-        "SETUP-SCOPE-002",
-        "SETUP-SCOPE-003",
+        "Records locked environment identity, type, endpoint, and foundation "
+        "setup intent."
     ),
-    "SETUP-02": (
-        "SETUP-PREREQ-ACCESS-001",
-        "SETUP-PREREQ-DV-001",
-        "SETUP-PREREQ-CAP-001",
-        "SETUP-PREREQ-GOV-001",
-        "SETUP-PREREQ-MCP-001",
-        "SETUP-PREREQ-BLOCK-001",
+    "SETUP-02.1": (
+        "Confirms selected environment is accessible and its Dataverse database "
+        "is provisioned."
+    ),
+    "SETUP-02.2": (
+        "Confirms MCP, capacity, billing, and governance prerequisites are fully "
+        "satisfied."
     ),
     "SETUP-03": (
-        "SETUP-ENV-001",
-        "SETUP-ENV-002",
-        "SETUP-ENV-003",
+        "Confirms locked Power Platform environment identity remains valid for "
+        "setup."
     ),
     "SETUP-04": (
-        "SETUP-ALM-001",
-        "SETUP-ALM-002",
-        "SETUP-ALM-003",
+        "Confirms preferred solution configuration or records the maker's "
+        "explicit skip decision."
     ),
     "SETUP-05": (
-        "SETUP-INSTALL-SELECTION-001",
-        "SETUP-INSTALL-001",
-        "SETUP-INSTALL-002",
-        "SETUP-INSTALL-003",
-        "SETUP-INSTALL-004",
+        "Confirms selected ESS products are installed, accessible, bound, and "
+        "connection-ready."
     ),
     "SETUP-06": (
-        "SETUP-READINESS-001",
-        "SETUP-READINESS-002",
-        "SETUP-READINESS-003",
+        "Confirms selected ESS agents meet baseline readiness requirements "
+        "before handoff."
+    ),
+    "SETUP-07": (
+        "Confirms setup completed successfully and integration configuration "
+        "can begin safely."
     ),
 }
-FINAL_BUNDLE_CHECKS = (
-    "SETUP-PREREQ-ACCESS-001",
-    "SETUP-PREREQ-DV-001",
-    "SETUP-PREREQ-CAP-001",
-    "SETUP-PREREQ-GOV-001",
-    "SETUP-PREREQ-MCP-001",
-    "SETUP-ENV-001",
-    "SETUP-ALM-001",
-    "SETUP-ALM-002",
-    "SETUP-INSTALL-SELECTION-001",
-    "SETUP-INSTALL-001",
-    "SETUP-INSTALL-002",
-    "SETUP-INSTALL-004",
-    "SETUP-READINESS-001",
-    "SETUP-READINESS-002",
-    "SETUP-HANDOFF-002",
-)
 
 
 class SetupStateError(ValueError):
@@ -125,139 +106,10 @@ class EnvironmentType(StrEnum):
     PROD = "Prod"
 
 
-class ValidationStatus(StrEnum):
-    PASS = "pass"
-    FAIL = "fail"
-
-
-class ValidationMode(StrEnum):
+class StepMode(StrEnum):
     AUTOMATED = "automated"
     MANUAL_ATTESTED = "manual-attested"
-
-
-def validation_note(check_id: str) -> str:
-    """Return a concise description for a persisted setup validation."""
-    exact_notes = {
-        "SETUP-SCOPE-001": (
-            "Confirms selected environment identity matches the intended "
-            "foundation setup target."
-        ),
-        "SETUP-SCOPE-002": (
-            "Confirms the selected environment type is suitable for this setup."
-        ),
-        "SETUP-SCOPE-003": (
-            "Records the approved foundation setup intent for this current "
-            "configuration run."
-        ),
-        "SETUP-PREREQ-ACCESS-001": (
-            "Confirms selected environment identity and URL match discovered "
-            "Power Platform records."
-        ),
-        "SETUP-PREREQ-DV-001": (
-            "Confirms Dataverse is provisioned and available in the selected "
-            "environment."
-        ),
-        "SETUP-PREREQ-MCP-001": (
-            "Confirms GitHub Copilot is enabled as an allowed Dataverse MCP "
-            "client."
-        ),
-        "SETUP-PREREQ-CAP-001": (
-            "Records the approved capacity and billing model for this "
-            "environment."
-        ),
-        "SETUP-PREREQ-GOV-001": (
-            "Confirms required DLP, network, and organizational governance "
-            "approvals are complete."
-        ),
-        "SETUP-PREREQ-BLOCK-001": (
-            "Confirms no mandatory prerequisites remain before environment "
-            "configuration can begin."
-        ),
-        "SETUP-ENV-001": (
-            "Confirms FlightCheck correctly resolved the locked environment "
-            "identity and endpoint."
-        ),
-        "SETUP-ENV-002": (
-            "Records locked environment metadata and confirmed Dataverse "
-            "provisioning details for setup."
-        ),
-        "SETUP-ENV-003": (
-            "Confirms environment verification passed and safely unlocks "
-            "preferred solution configuration."
-        ),
-        "SETUP-ALM-001": (
-            "Confirms the selected unmanaged solution exists in the target "
-            "environment."
-        ),
-        "SETUP-ALM-002": (
-            "Confirms the selected solution is configured as the preferred "
-            "solution."
-        ),
-        "SETUP-ALM-003": (
-            "Records required solution identity, publisher, prefix, and version "
-            "metadata details."
-        ),
-        "SETUP-INSTALL-SELECTION-001": (
-            "Confirms exactly one eligible ESS starter product is currently "
-            "selected."
-        ),
-        "SETUP-INSTALL-001": (
-            "Confirms every selected ESS starter is installed in the "
-            "environment."
-        ),
-        "SETUP-INSTALL-002": (
-            "Confirms every installed ESS starter opens successfully in Copilot "
-            "Studio."
-        ),
-        "SETUP-INSTALL-003": (
-            "Confirms every selected ESS product is independently bound to its "
-            "agent."
-        ),
-        "SETUP-INSTALL-004": (
-            "Confirms required invoker connection settings were reviewed and "
-            "maker-attested successfully."
-        ),
-        "SETUP-READINESS-001": (
-            "Confirms Configure and Topics pages are reachable for selected "
-            "agents."
-        ),
-        "SETUP-READINESS-002": (
-            "Confirms required agent shell and starter content are present "
-            "together."
-        ),
-        "SETUP-READINESS-003": (
-            "Confirms persisted starter records match the currently observed "
-            "agent state."
-        ),
-        "SETUP-HANDOFF-001": (
-            "Confirms the setup report accurately matches all persisted setup "
-            "state."
-        ),
-        "SETUP-HANDOFF-002": (
-            "Confirms every required setup gate passed before integration "
-            "configuration begins."
-        ),
-        "SETUP-HANDOFF-003": (
-            "Confirms rerunning setup resumes safely at the completed handoff "
-            "boundary."
-        ),
-        "SETUP-FINAL-001": (
-            "Confirms the complete final setup validation bundle passed "
-            "successfully together."
-        ),
-        "SETUP-FINAL-002": (
-            "Records integration configuration as the next supported action "
-            "after setup."
-        ),
-        "SETUP-FINAL-003": (
-            "Records deterministic failure recovery and resumable blocked-step "
-            "behavior during setup."
-        ),
-    }
-    return exact_notes.get(
-        check_id,
-        "Records validation evidence for this required foundation setup workflow checkpoint.",
-    )
+    SKIPPED = "skipped"
 
 
 @dataclass
@@ -265,17 +117,10 @@ class StepRecord:
     state: str = StepStatus.PENDING
     updated_at: str | None = None
     failure_causes: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ValidationRecord:
-    check_id: str
-    status: str
-    mode: str
-    note: str = ""
-    evidence: dict[str, Any] = field(default_factory=dict)
-    cause_codes: list[str] = field(default_factory=list)
-    recorded_at: str = field(default_factory=lambda: utc_now())
+    checkpoint: str | None = None
+    note: str | None = None
+    mode: str | None = None
+    recorded_at: str | None = None
 
 
 @dataclass
@@ -315,7 +160,6 @@ class SetupState:
     steps: dict[str, StepRecord] = field(default_factory=lambda: {
         step_id: StepRecord() for step_id in STEP_ORDER
     })
-    validations: dict[str, ValidationRecord] = field(default_factory=dict)
     active_step: str = STEP_ORDER[0]
     connect_ready: bool = False
     open_issues: list[str] = field(default_factory=list)
@@ -334,14 +178,47 @@ class SetupState:
         steps_raw = raw.get("steps")
         if not isinstance(steps_raw, dict):
             raise SetupStateError("Setup state must contain a steps object")
+        legacy_step_order = (
+            "SETUP-01",
+            "SETUP-02",
+            "SETUP-03",
+            "SETUP-04",
+            "SETUP-05",
+            "SETUP-06",
+            "SETUP-07",
+        )
+        if set(steps_raw) == set(legacy_step_order):
+            old_prerequisites = dict(steps_raw["SETUP-02"])
+            first_prerequisite = dict(old_prerequisites)
+            second_prerequisite = dict(old_prerequisites)
+            if old_prerequisites.get("state") != StepStatus.DONE:
+                second_prerequisite = asdict(StepRecord())
+            for step_id, record, checkpoint in (
+                ("SETUP-02.1", first_prerequisite, "ENV-002"),
+                ("SETUP-02.2", second_prerequisite, "ENV-CAPACITY-001"),
+            ):
+                if record.get("recorded_at"):
+                    record["checkpoint"] = checkpoint
+                    record["note"] = STEP_NOTES[step_id]
+            environment_step = dict(steps_raw["SETUP-03"])
+            if environment_step.get("recorded_at"):
+                environment_step["checkpoint"] = "ENV-001"
+                environment_step["note"] = STEP_NOTES["SETUP-03"]
+            steps_raw = {
+                "SETUP-01": steps_raw["SETUP-01"],
+                "SETUP-02.1": first_prerequisite,
+                "SETUP-02.2": second_prerequisite,
+                "SETUP-03": environment_step,
+                **{
+                    step_id: steps_raw[step_id]
+                    for step_id in legacy_step_order[3:]
+                },
+            }
+            if raw.get("active_step") == "SETUP-02":
+                raw["active_step"] = "SETUP-02.1"
         if set(steps_raw) != set(STEP_ORDER):
             raise SetupStateError("Setup state contains an unexpected step set")
 
-        validations_raw = raw.get("validations", {})
-        if not isinstance(validations_raw, dict):
-            raise SetupStateError(
-                "Setup state contains a malformed validations object"
-            )
         products_raw = raw.get("products", {})
         if not isinstance(products_raw, dict):
             raise SetupStateError(
@@ -350,28 +227,75 @@ class SetupState:
 
         try:
             steps = {
-                step_id: StepRecord(**record)
+                step_id: StepRecord(**{
+                    key: value
+                    for key, value in record.items()
+                    if key != "evidence"
+                })
                 for step_id, record in steps_raw.items()
-            }
-            validations = {
-                check_id: ValidationRecord(
-                    **{
-                        **record,
-                        "note": validation_note(check_id),
-                    }
-                )
-                for check_id, record in validations_raw.items()
             }
             products = _default_products()
             products.update({
                 product_id: ProductInstallationRecord(**record)
                 for product_id, record in products_raw.items()
             })
-        except (TypeError, ValueError) as exc:
+        except (AttributeError, TypeError, ValueError) as exc:
             raise SetupStateError(
-                "Setup state contains malformed step, validation, or product "
-                "records"
+                "Setup state contains malformed step or product records"
             ) from exc
+
+        legacy_validations = raw.get("validations")
+        if isinstance(legacy_validations, dict):
+            legacy_prefixes = {
+                "SETUP-01": ("SETUP-SCOPE-",),
+                "SETUP-02.1": (
+                    "SETUP-PREREQ-ACCESS-",
+                    "SETUP-PREREQ-DV-",
+                ),
+                "SETUP-02.2": (
+                    "SETUP-PREREQ-MCP-",
+                    "SETUP-PREREQ-CAP-",
+                    "SETUP-PREREQ-GOV-",
+                    "SETUP-PREREQ-BLOCK-",
+                ),
+                "SETUP-03": ("SETUP-ENV-",),
+                "SETUP-05": ("SETUP-INSTALL-",),
+                "SETUP-06": ("SETUP-READINESS-",),
+                "SETUP-07": ("SETUP-HANDOFF-", "SETUP-FINAL-"),
+            }
+            legacy_checkpoints = {
+                "SETUP-02.1": "ENV-002",
+                "SETUP-02.2": "ENV-CAPACITY-001",
+                "SETUP-03": "ENV-001",
+            }
+            for step_id, prefixes in legacy_prefixes.items():
+                step = steps[step_id]
+                if step.recorded_at or step.state != StepStatus.DONE:
+                    continue
+                matched = {
+                    check_id: record
+                    for check_id, record in legacy_validations.items()
+                    if check_id.startswith(prefixes)
+                    and isinstance(record, dict)
+                }
+                if not matched:
+                    continue
+                step.checkpoint = legacy_checkpoints.get(step_id)
+                step.note = STEP_NOTES[step_id]
+                step.mode = (
+                    StepMode.MANUAL_ATTESTED
+                    if any(
+                        record.get("mode") == StepMode.MANUAL_ATTESTED
+                        for record in matched.values()
+                    )
+                    else StepMode.AUTOMATED
+                )
+                timestamps = [
+                    record.get("recorded_at")
+                    for record in matched.values()
+                    if record.get("recorded_at")
+                ]
+                step.recorded_at = max(timestamps) if timestamps else utc_now()
 
         state = cls(
             schema_version=raw["schema_version"],
@@ -382,7 +306,6 @@ class SetupState:
             alm=raw.get("alm", {}),
             products=products,
             steps=steps,
-            validations=validations,
             active_step=raw.get("active_step", STEP_ORDER[0]),
             connect_ready=bool(raw.get("connect_ready", False)),
             open_issues=list(raw.get("open_issues", [])),
@@ -537,7 +460,60 @@ class SetupWorkflow:
                 raise SetupStateError(
                     f"Invalid state for {step_id}: {record.state!r}"
                 ) from exc
+            if record.mode not in {None, *[mode.value for mode in StepMode]}:
+                raise SetupStateError(
+                    f"Invalid checkpoint mode for {step_id}: {record.mode!r}"
+                )
+            if record.state == StepStatus.DONE and (
+                not record.note
+                or not record.mode
+                or not record.recorded_at
+            ):
+                raise SetupStateError(
+                    f"Completed {step_id} requires persisted step result"
+                )
 
+        if state.alm:
+            alm_status = state.alm.get("status")
+            if alm_status == "configured":
+                required_alm = (
+                    "solution_id",
+                    "solution_name",
+                    "publisher_prefix",
+                    "version",
+                )
+                if any(not state.alm.get(key) for key in required_alm):
+                    raise SetupStateError(
+                        "Configured ALM state is missing solution metadata"
+                    )
+            elif alm_status == "skipped":
+                if state.alm.get("reason") != "maker-selected":
+                    raise SetupStateError(
+                        "Skipped ALM state requires maker-selected evidence"
+                    )
+            else:
+                raise SetupStateError(
+                    f"Invalid ALM status: {alm_status!r}"
+                )
+
+        if (
+            state.steps["SETUP-04"].state == StepStatus.DONE
+            and state.alm.get("status") not in {"configured", "skipped"}
+        ):
+            raise SetupStateError(
+                "Completed SETUP-04 requires configured or skipped ALM state"
+            )
+        if state.steps["SETUP-04"].state == StepStatus.DONE:
+            alm_step = state.steps["SETUP-04"]
+            expected_mode = (
+                StepMode.AUTOMATED
+                if state.alm.get("status") == "configured"
+                else StepMode.SKIPPED
+            )
+            if alm_step.checkpoint != "ENV-009" or alm_step.mode != expected_mode:
+                raise SetupStateError(
+                    "Completed SETUP-04 requires persisted ENV-009 step details"
+                )
         if len(state.selected_products) != len(set(state.selected_products)):
             raise SetupStateError("Selected ESS products must be unique")
         for product_id in state.selected_products:
@@ -668,31 +644,11 @@ class SetupWorkflow:
             record.ready = False
             record.failure_cause = None
             record.updated_at = utc_now()
-        for check_id, evidence in (
-            (
-                "SETUP-SCOPE-001",
-                {
-                    "environment_id": environment_id,
-                    "environment_name": environment_name,
-                },
-            ),
-            (
-                "SETUP-SCOPE-002",
-                {"environment_type": environment_type},
-            ),
-            (
-                "SETUP-SCOPE-003",
-                {"intent": SETUP_INTENT},
-            ),
-        ):
-            SetupWorkflow.record_validation(
-                state,
-                check_id,
-                ValidationStatus.PASS,
-                ValidationMode.AUTOMATED,
-                evidence,
-                [],
-            )
+        SetupWorkflow.record_step_result(
+            state,
+            step_id="SETUP-01",
+            mode=StepMode.AUTOMATED,
+        )
         SetupWorkflow.update_step(state, "SETUP-01", StepStatus.DONE)
 
     @staticmethod
@@ -715,14 +671,6 @@ class SetupWorkflow:
         record.selected = True
         record.installation_status = InstallationStatus.PENDING
         record.updated_at = utc_now()
-        SetupWorkflow.record_validation(
-            state,
-            "SETUP-INSTALL-SELECTION-001",
-            ValidationStatus.PASS,
-            ValidationMode.AUTOMATED,
-            {"selected_product": product_id.value},
-            [],
-        )
         SetupWorkflow.refresh_active_step(state)
 
     @staticmethod
@@ -778,7 +726,32 @@ class SetupWorkflow:
                 f"{', '.join(incomplete_prior)}"
             )
         if status == StepStatus.DONE:
-            SetupWorkflow.ensure_required_checks_pass(state, step_id)
+            step_result = state.steps[step_id]
+            if (
+                not step_result.note
+                or not step_result.mode
+                or not step_result.recorded_at
+            ):
+                raise SetupStateError(
+                    f"Cannot complete {step_id}; step result is not recorded"
+                )
+            if step_id == "SETUP-04":
+                alm_status = state.alm.get("status")
+                if alm_status not in {"configured", "skipped"}:
+                    raise SetupStateError(
+                        "Cannot complete SETUP-04; choose or skip the preferred "
+                        "solution"
+                    )
+                if alm_status == "configured":
+                    alm_step = state.steps["SETUP-04"]
+                    if (
+                        alm_step.checkpoint != "ENV-009"
+                        or alm_step.mode != StepMode.AUTOMATED
+                        or not alm_step.recorded_at
+                    ):
+                        raise SetupStateError(
+                            "Cannot complete SETUP-04; ENV-009 has not passed"
+                        )
             if step_id == "SETUP-05":
                 incomplete_products = [
                     product_id
@@ -812,62 +785,48 @@ class SetupWorkflow:
                         f"{other_id} is already the active in-progress step"
                     )
 
+        current_record = state.steps[step_id]
         state.steps[step_id] = StepRecord(
             state=status,
             updated_at=utc_now(),
             failure_causes=list(failure_causes or []),
+            checkpoint=current_record.checkpoint,
+            note=current_record.note,
+            mode=current_record.mode,
+            recorded_at=current_record.recorded_at,
         )
         SetupWorkflow.refresh_active_step(state)
 
     @staticmethod
-    def record_validation(
+    def record_step_result(
         state: SetupState,
-        check_id: str,
-        status: ValidationStatus,
-        mode: ValidationMode,
-        evidence: dict[str, Any],
-        cause_codes: list[str],
-    ) -> None:
-        if mode == ValidationMode.MANUAL_ATTESTED and not evidence:
-            raise SetupStateError(
-                f"Manual attestation for {check_id} requires evidence"
-            )
-        state.validations[check_id] = ValidationRecord(
-            check_id=check_id,
-            status=status,
-            mode=mode,
-            note=validation_note(check_id),
-            evidence=evidence,
-            cause_codes=cause_codes,
-        )
-        state.updated_at = utc_now()
-
-    @staticmethod
-    def ensure_required_checks_pass(
-        state: SetupState,
+        *,
         step_id: str,
+        mode: StepMode,
+        checkpoint: str | None = None,
     ) -> None:
-        required = REQUIRED_CHECKS_BY_STEP.get(step_id, ())
-        missing = [
-            check_id
-            for check_id in required
-            if check_id not in state.validations
-        ]
-        failed = [
-            check_id
-            for check_id in required
-            if check_id in state.validations
-            and state.validations[check_id].status != ValidationStatus.PASS
-        ]
-        if missing or failed:
-            details = []
-            if missing:
-                details.append(f"missing checks: {', '.join(missing)}")
-            if failed:
-                details.append(f"failed checks: {', '.join(failed)}")
+        if step_id not in state.steps:
+            raise SetupStateError(f"Unknown setup step: {step_id}")
+        mode = StepMode(mode)
+        expected_checkpoints = {
+            "SETUP-02.1": "ENV-002",
+            "SETUP-02.2": "ENV-CAPACITY-001",
+            "SETUP-03": "ENV-001",
+            "SETUP-04": "ENV-009",
+        }
+        expected_checkpoint = expected_checkpoints.get(step_id)
+        if expected_checkpoint and checkpoint != expected_checkpoint:
             raise SetupStateError(
-                f"Cannot complete {step_id}; {'; '.join(details)}"
+                f"{step_id} only accepts checkpoint {expected_checkpoint}"
             )
+        if not expected_checkpoint and checkpoint:
+            raise SetupStateError(f"{step_id} does not accept a checkpoint")
+        record = state.steps[step_id]
+        record.checkpoint = checkpoint
+        record.note = STEP_NOTES[step_id]
+        record.mode = mode
+        record.recorded_at = utc_now()
+        state.updated_at = record.recorded_at
 
     @staticmethod
     def selected_starters(state: SetupState) -> tuple[str, ...]:
@@ -1038,43 +997,6 @@ class SetupWorkflow:
             product_id,
             InstallationStatus.BOUND,
         )
-        check_id = (
-            "SETUP-INSTALL-CONNECTION-"
-            f"{product_id.value.upper().replace('.', '-')}"
-        )
-        SetupWorkflow.record_validation(
-            state,
-            check_id,
-            ValidationStatus.PASS,
-            ValidationMode.MANUAL_ATTESTED,
-            {
-                "product_id": product_id.value,
-                "agent_id": record.agent_id,
-                "agent_name": record.agent_name,
-                "connection_name": record.connection_name,
-                "connection_settings_url": record.connection_settings_url,
-                "attested_at": attested_at,
-            },
-            [],
-        )
-        attested_products = [
-            selected_product_id
-            for selected_product_id in state.selected_products
-            if (
-                state.products[
-                    selected_product_id
-                ].requires_connection_attestation
-                and state.products[selected_product_id].connection_attested_at
-            )
-        ]
-        SetupWorkflow.record_validation(
-            state,
-            "SETUP-INSTALL-004",
-            ValidationStatus.PASS,
-            ValidationMode.MANUAL_ATTESTED,
-            {"attested_products": attested_products},
-            [],
-        )
 
     @staticmethod
     def set_product_readiness(
@@ -1121,10 +1043,27 @@ class SetupWorkflow:
                 f"ALM metadata is missing: {', '.join(missing)}"
             )
         state.alm = {
+            "status": "configured",
             **required,
             "preferred": True,
             "updated_at": utc_now(),
         }
+        state.updated_at = state.alm["updated_at"]
+
+    @staticmethod
+    def skip_alm(state: SetupState) -> None:
+        """Persist the maker's decision to skip optional ALM configuration."""
+        state.alm = {
+            "status": "skipped",
+            "reason": "maker-selected",
+            "updated_at": utc_now(),
+        }
+        SetupWorkflow.record_step_result(
+            state,
+            step_id="SETUP-04",
+            checkpoint="ENV-009",
+            mode=StepMode.SKIPPED,
+        )
         state.updated_at = state.alm["updated_at"]
 
     @staticmethod
@@ -1171,25 +1110,6 @@ class SetupWorkflow:
 
         for step_id in ("SETUP-05", "SETUP-06", "SETUP-07"):
             state.steps[step_id] = StepRecord()
-        for check_id in tuple(state.validations):
-            if check_id.startswith((
-                "SETUP-INSTALL-",
-                "SETUP-READINESS-",
-                "SETUP-HANDOFF-",
-                "SETUP-FINAL-",
-            )):
-                del state.validations[check_id]
-        SetupWorkflow.record_validation(
-            state,
-            "SETUP-INSTALL-SELECTION-001",
-            ValidationStatus.PASS,
-            ValidationMode.AUTOMATED,
-            {
-                "selected_products": state.selected_products,
-                "scope_extended": True,
-            },
-            [],
-        )
         state.connect_ready = False
         state.completed_at = None
         SetupWorkflow.refresh_active_step(state)
@@ -1212,54 +1132,6 @@ class SetupWorkflow:
             raise SetupStateError(
                 f"Cannot finalize setup; incomplete steps: {', '.join(missing)}"
             )
-        missing_bundle = [
-            check_id
-            for check_id in FINAL_BUNDLE_CHECKS
-            if check_id not in state.validations
-        ]
-        failed_bundle = [
-            check_id
-            for check_id in FINAL_BUNDLE_CHECKS
-            if check_id in state.validations
-            and state.validations[check_id].status != ValidationStatus.PASS
-        ]
-        if missing_bundle or failed_bundle:
-            details = []
-            if missing_bundle:
-                details.append(
-                    f"missing checks: {', '.join(missing_bundle)}"
-                )
-            if failed_bundle:
-                details.append(
-                    f"failed checks: {', '.join(failed_bundle)}"
-                )
-            raise SetupStateError(
-                f"Final setup bundle failed; {'; '.join(details)}"
-            )
-        SetupWorkflow.record_validation(
-            state,
-            "SETUP-FINAL-001",
-            ValidationStatus.PASS,
-            ValidationMode.AUTOMATED,
-            {"modules": list(FINAL_BUNDLE_CHECKS)},
-            [],
-        )
-        SetupWorkflow.record_validation(
-            state,
-            "SETUP-FINAL-002",
-            ValidationStatus.PASS,
-            ValidationMode.AUTOMATED,
-            {"next_action": "/connect"},
-            [],
-        )
-        SetupWorkflow.record_validation(
-            state,
-            "SETUP-FINAL-003",
-            ValidationStatus.PASS,
-            ValidationMode.AUTOMATED,
-            {"failure_recovery_contract": "blocked with causes and resume step"},
-            [],
-        )
         SetupWorkflow.update_step(
             state,
             "SETUP-07",
@@ -1349,13 +1221,6 @@ def persist_alm_solution(
     service.save(state)
 
 
-def _parse_json_object(value: str) -> dict[str, Any]:
-    parsed = json.loads(value)
-    if not isinstance(parsed, dict):
-        raise argparse.ArgumentTypeError("value must be a JSON object")
-    return parsed
-
-
 def _service(args: argparse.Namespace) -> SetupStateService:
     repository = JsonSetupStateRepository(Path(args.state))
     migrator = LegacyWorkdayStateMigrator(Path(args.legacy_workday))
@@ -1399,25 +1264,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     step.add_argument("--cause", action="append", default=[])
 
-    validation = commands.add_parser("record-check")
-    validation.add_argument("--check-id", required=True)
-    validation.add_argument(
-        "--status",
-        required=True,
-        choices=[item.value for item in ValidationStatus],
-    )
-    validation.add_argument(
+    step_result = commands.add_parser("record-step-result")
+    step_result.add_argument("--step", required=True, choices=STEP_ORDER)
+    step_result.add_argument("--checkpoint")
+    step_result.add_argument(
         "--mode",
         required=True,
-        choices=[item.value for item in ValidationMode],
+        choices=[item.value for item in StepMode],
     )
-    validation.add_argument(
-        "--evidence-json",
-        default="{}",
-        type=_parse_json_object,
-    )
-    validation.add_argument("--cause-code", action="append", default=[])
-
     prerequisite = commands.add_parser("set-prerequisite")
     prerequisite.add_argument("--name", required=True)
     prerequisite.add_argument(
@@ -1432,6 +1286,7 @@ def build_parser() -> argparse.ArgumentParser:
     alm.add_argument("--solution-name", required=True)
     alm.add_argument("--publisher-prefix", required=True)
     alm.add_argument("--version", required=True)
+    commands.add_parser("skip-alm")
 
     product = commands.add_parser("set-product-status")
     product.add_argument(
@@ -1517,14 +1372,12 @@ def main() -> int:
                 args.cause,
             )
             service.save(state)
-        elif args.command == "record-check":
-            SetupWorkflow.record_validation(
+        elif args.command == "record-step-result":
+            SetupWorkflow.record_step_result(
                 state,
-                args.check_id,
-                ValidationStatus(args.status),
-                ValidationMode(args.mode),
-                args.evidence_json,
-                args.cause_code,
+                step_id=args.step,
+                mode=StepMode(args.mode),
+                checkpoint=args.checkpoint,
             )
             service.save(state)
         elif args.command == "set-prerequisite":
@@ -1543,6 +1396,9 @@ def main() -> int:
                 publisher_prefix=args.publisher_prefix,
                 version=args.version,
             )
+            service.save(state)
+        elif args.command == "skip-alm":
+            SetupWorkflow.skip_alm(state)
             service.save(state)
         elif args.command == "set-product-status":
             SetupWorkflow.update_product_installation(
@@ -1577,25 +1433,10 @@ def main() -> int:
             try:
                 SetupWorkflow.finalize(state)
             except SetupStateError as exc:
-                SetupWorkflow.record_validation(
+                SetupWorkflow.record_step_result(
                     state,
-                    "SETUP-FINAL-001",
-                    ValidationStatus.FAIL,
-                    ValidationMode.AUTOMATED,
-                    {"error": str(exc)},
-                    ["FINAL_BUNDLE_FAILED"],
-                )
-                SetupWorkflow.record_validation(
-                    state,
-                    "SETUP-FINAL-003",
-                    ValidationStatus.PASS,
-                    ValidationMode.AUTOMATED,
-                    {
-                        "state": "blocked",
-                        "resume_step": "SETUP-07",
-                        "cause": str(exc),
-                    },
-                    [],
+                    step_id="SETUP-07",
+                    mode=StepMode.AUTOMATED,
                 )
                 recovery_step = SetupWorkflow.next_step(state)
                 if state.steps[recovery_step].state == StepStatus.DONE:
