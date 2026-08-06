@@ -143,7 +143,7 @@ Each captured error names a `componentId` (a GUID) rather than the topic's displ
 
 When the reply looks plausible and the flow run shows nothing wrong, but a branch fired wrong or a field came back blank, make the deciding topic state visible.
 
-1. Pick the **action id** to instrument (the action that *populates* the variable you doubt) and the variable(s) to print. The DBG node must land **after** the populating action, or it reads a not-yet-set value.
+1. Pick the **action id** to instrument (the action that *populates* the variable you doubt) and the variable(s) to print. The DBG node must land **after** the populating action, or it reads a not-yet-set value. **If the DBG message never renders, execution isn't reaching it** — an error-valued inferred input can fail evaluation *before* your instrumentation point. Move the DBG node **one boundary earlier** (before the `Split`/`First`/parse/card that consumes the input) until it renders; the first boundary where it stops rendering is where the value is failing.
 2. Plant and publish. Pass `--yes` — the script otherwise prompts on `input()`, which a non-interactive subprocess cannot answer and which reads as a hang. This is a **live but reversible** change to the deployed topic: it is byte-reversible and you always strip it (step 5), and it targets the maker's own dev topic — so you do **not** need a separate approval turn. Just tell the user you're planting a temporary debug node, then plant.
 
    ```

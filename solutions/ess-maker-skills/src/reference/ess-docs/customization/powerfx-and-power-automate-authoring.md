@@ -22,6 +22,8 @@ These reflect platform behavior — deviating causes silent data loss or a non-f
 - **Do not** omit a submitted field from the orchestrator field mapping — unmapped = silently dropped.
 - **Do not** expose a generic list/read connector as a generatively-invocable agent tool; keep connector use inside a purpose-built flow with a fixed table/query, and scope the service-account read permissions tightly.
 - **Do not** name a new system topic file in kebab-case. A topic's schemaname is derived from its filename **verbatim** and is **immutable** once created; the caller references it by its exact (typically mixed-case) schemaname in `BeginDialog`. Name the file to match the reference exactly, or the reference dangles at publish. `push` warns on a kebab schemaname but cannot auto-fix it — the original casing is unrecoverable from kebab.
+- **Do not** treat an automatically-inferred input as merely blank-or-present. An inferred/automatic input can be **error-valued**, not just empty, and `IsBlank()` is not a safe guard because evaluating the value can **fail before** the branch is reached. Validate the input explicitly (e.g. `IsError()` plus a type/format check) **before** any `Split`, `First`, card binding, or flow invocation that consumes it — put the validation ahead of the first expression that reads the value, not inside the consumer.
+- **Do not** render a card until every value and table it binds has a valid **type** and an **initialized** value. A card that binds an unparsed, error-valued, or not-yet-typed table fails at render/publish (see the `ParseValue`-typing rule above); initialize and type each bound variable in a step that runs before the `AdaptiveCardPrompt`.
 
 ## Deploy & verify the flow (ADK tooling)
 
