@@ -362,8 +362,8 @@ def clear_token_cache(env_url=None, *, cache=None, app=None, account=None):
         )
     app.remove_account(account)
     _persist_token_cache(cache, cache_path)
-    
-    
+
+
 def get_flow_token(env_url):
     """Get a Flow Management API access token via MSAL interactive browser auth.
 
