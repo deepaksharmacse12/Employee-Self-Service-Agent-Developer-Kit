@@ -2,7 +2,7 @@
 
 Update an existing Phase 1 topic from an approved eval contract. The same
 contract drives the topic edit, native Copilot Studio eval generation, static
-validation, and runtime-validation handoff.
+validation, and the manifest for future automated eval execution.
 
 This is the default topic path used by `/update` for simple topics:
 informational responses, clarification, routing, and handoff.
@@ -179,10 +179,17 @@ advisory and follow the existing fix-now or push-anyway flow.
 
 ## Step 7: Push and report
 
-Ask for explicit confirmation, then run:
+Ask for explicit confirmation. If the dry run lists deletions, name them and
+ask the maker to confirm those deletions explicitly. After confirmation, run:
 
 ```text
 python scripts/push.py
+```
+
+When deletions were explicitly confirmed, run instead:
+
+```text
+python scripts/push.py --force-delete
 ```
 
 After success, report:
@@ -192,6 +199,14 @@ After success, report:
 - Generated native eval paths
 - Runtime-manifest path
 
-If no runtime pipeline is configured, state that static update and deployment
-are complete and the manifest is ready for runtime validation. Do not claim
+State that static update and deployment are complete and the manifest is
+available for a future automated eval-level validation pipeline. Do not claim
 that runtime behavior passed.
+
+Then offer to test the updated topic:
+
+- "Want to check it works? I can drive **{TopicName}** now and exercise its
+  happy path and failure handling."
+- On yes, read `src/skills/topics/test/SKILL.md` and run its
+  debug-and-validate loop scoped to `{TopicName}`. Skip the component-selection
+  question because this flow just updated the topic.

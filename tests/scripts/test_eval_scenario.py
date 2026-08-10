@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import jsonschema
@@ -206,6 +208,9 @@ def test_eval_driven_skill_is_create_only():
     assert "src/skills/topics/create/SKILL.md` unchanged" in skill
     assert ".local/eval-driven/drafts/{scenario-id}.scenario.yaml" in skill
     assert "only after approval" in skill
+    assert "src/skills/topics/test/SKILL.md" in skill
+    assert "python scripts/push.py --force-delete" in skill
+    assert "future automated eval-level validation pipeline" in skill
 
 
 def test_update_command_routes_simple_topics_and_preserves_integrations():
@@ -242,6 +247,9 @@ def test_update_command_routes_simple_topics_and_preserves_integrations():
         update_skill
     )
     assert "never select one silently" in update_skill
+    assert "src/skills/topics/test/SKILL.md" in update_skill
+    assert "python scripts/push.py --force-delete" in update_skill
+    assert "future automated eval-level validation pipeline" in update_skill
 
 
 def test_checked_in_schema_is_valid_json():
@@ -271,6 +279,31 @@ def test_checked_in_schema_is_valid_json():
             )
             or scenario.pop("sourceContent"),
             True,
+        ),
+        (lambda scenario: scenario.update({"phase": True}), False),
+        (lambda scenario: scenario.update({"name": "   "}), False),
+        (lambda scenario: scenario.update({"intent": "\t"}), False),
+        (lambda scenario: scenario.update({"sourceContent": "\n"}), False),
+        (lambda scenario: scenario.update({"references": ["   "]}), False),
+        (
+            lambda scenario: scenario.update(
+                {
+                    "dependencyChecks": [
+                        {"condition": " ", "behavior": "Block generation"}
+                    ]
+                }
+            ),
+            False,
+        ),
+        (
+            lambda scenario: scenario["evals"][0].update({"input": "   "}),
+            False,
+        ),
+        (
+            lambda scenario: scenario["evals"][0].update(
+                {"expectedOutput": "\t"}
+            ),
+            False,
         ),
     ],
 )
@@ -418,6 +451,60 @@ def test_normalize_command_writes_approved_contract_input(tmp_path: Path):
         "Use the approved Facilities and Security guidance."
     )
     assert scenario["evals"][0]["category"] == "directTrigger"
+
+
+def test_main_reports_filesystem_errors_without_traceback(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+):
+    eval_file = tmp_path / "001-directtrigger.mcs.yml"
+    eval_file.write_text(
+        yaml.safe_dump(
+            {
+                "kind": "EvaluationData",
+                "rows": [
+                    {
+                        "input": "How do I replace my badge?",
+                        "expectedOutput": "Returns the approved badge guidance.",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_write(path, value):
+        raise OSError("disk is read-only")
+
+    monkeypatch.setattr(eval_scenario, "_write_yaml", fail_write)
+
+    result = eval_scenario.main(
+        [
+            "normalize",
+            str(eval_file),
+            "--id",
+            "office-badge-replacement",
+            "--name",
+            "Office Badge Replacement",
+            "--intent",
+            "Explain the office badge replacement process.",
+            "--topic-type",
+            "informational",
+            "--persona",
+            "employee",
+            "--source-content",
+            "Use the approved Facilities and Security guidance.",
+            "--output",
+            str(tmp_path / "scenario.yaml"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "ERROR: filesystem operation failed: disk is read-only" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_normalize_native_evals_rejects_unsupported_kind(tmp_path: Path):
@@ -617,3 +704,90 @@ def test_materialize_removes_stale_files_from_owned_scenario_folder(tmp_path: Pa
         generated_folder / "001-directtrigger.mcs.yml"
     ).exists()
     assert sibling_file.exists()
+
+
+def test_materialize_uses_distinct_folders_for_close_thresholds(tmp_path: Path):
+    scenario = _simple_scenario()
+    scenario["evals"][0]["threshold"] = 0.700
+    scenario["evals"][1]["threshold"] = 0.704
+    agent_folder = tmp_path / "agent"
+    topic_file = agent_folder / "topics" / "Topic.mcs.yml"
+    topic_file.parent.mkdir(parents=True)
+    topic_file.write_text("kind: AdaptiveDialog\n", encoding="utf-8")
+
+    eval_scenario.materialize_scenario(
+        scenario,
+        agent_folder,
+        topic_file,
+        tmp_path / "manifest.json",
+    )
+
+    first_folder = (
+        agent_folder
+        / "evaluations"
+        / "eval-driven-bereavement-leave-info-t0d7"
+    )
+    second_folder = (
+        agent_folder
+        / "evaluations"
+        / "eval-driven-bereavement-leave-info-t0d704"
+    )
+    first_parent = first_folder / f"{first_folder.name}.mcs.yml"
+    second_parent = second_folder / f"{second_folder.name}.mcs.yml"
+
+    assert yaml.safe_load(first_parent.read_text())["graders"][1]["threshold"] == 0.7
+    assert yaml.safe_load(second_parent.read_text())["graders"][1]["threshold"] == 0.704
+    assert (first_folder / "001-directtrigger.mcs.yml").exists()
+    assert (second_folder / "002-nontrigger.mcs.yml").exists()
+
+
+def test_materialize_rejects_linked_generated_folder(tmp_path: Path):
+    scenario = _simple_scenario()
+    agent_folder = tmp_path / "agent"
+    topic_file = agent_folder / "topics" / "Topic.mcs.yml"
+    topic_file.parent.mkdir(parents=True)
+    topic_file.write_text("kind: AdaptiveDialog\n", encoding="utf-8")
+    external_folder = tmp_path / "external"
+    external_folder.mkdir()
+    external_file = external_folder / "keep.mcs.yml"
+    external_file.write_text("kind: EvaluationData\n", encoding="utf-8")
+    generated_folder = (
+        agent_folder
+        / "evaluations"
+        / "eval-driven-bereavement-leave-info"
+    )
+    generated_folder.parent.mkdir(parents=True)
+    if sys.platform == "win32":
+        result = subprocess.run(
+            [
+                "cmd",
+                "/c",
+                "mklink",
+                "/J",
+                str(generated_folder),
+                str(external_folder),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            pytest.skip(f"directory junctions are unavailable: {result.stderr}")
+    else:
+        try:
+            generated_folder.symlink_to(external_folder, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory links are unavailable: {exc}")
+
+    with pytest.raises(
+        ValueError,
+        match="generated evaluation folder cannot be a link",
+    ):
+        eval_scenario.materialize_scenario(
+            scenario,
+            agent_folder,
+            topic_file,
+            tmp_path / "manifest.json",
+        )
+
+    assert external_file.exists()

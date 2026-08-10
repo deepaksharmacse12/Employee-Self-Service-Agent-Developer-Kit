@@ -164,7 +164,8 @@ def validate_scenario(scenario: dict[str, Any]) -> None:
     ):
         errors.append("sourceContent is required for informational topics")
 
-    if scenario.get("phase") != PHASE:
+    phase = scenario.get("phase")
+    if isinstance(phase, bool) or phase != PHASE:
         errors.append("phase must be 1 for eval-driven simple topics")
 
     persona = scenario.get("persona")
@@ -589,20 +590,64 @@ def _multi_turn_child(evaluation: dict[str, Any], display_order: int) -> dict[st
     }
 
 
+def _threshold_folder_suffix(threshold: float) -> str:
+    """Encode a float's round-trip representation as a folder-safe token."""
+    token = repr(threshold).translate(str.maketrans({".": "d", "-": "m", "+": "p"}))
+    return f"-t{token}"
+
+
+def _is_linked_path(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return (
+        path.is_symlink()
+        or bool(is_junction and is_junction())
+        or (path.exists() and path.resolve() != path.absolute())
+    )
+
+
+def _resolved_within(path: Path, root: Path, description: str) -> Path:
+    resolved_path = path.resolve()
+    resolved_root = root.resolve()
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"{description} resolves outside the evaluations folder: {path}"
+        ) from exc
+    return resolved_path
+
+
+def _validate_generated_eval_folder(folder: Path, evaluations_root: Path) -> None:
+    if not folder.exists():
+        return
+    if _is_linked_path(folder):
+        raise ValueError(f"generated evaluation folder cannot be a link: {folder}")
+    _resolved_within(folder, evaluations_root, "generated evaluation folder")
+
+
 def _clear_generated_eval_folders(evaluations_root: Path, base_folder: str) -> None:
     """Remove stale files only from folders owned by this scenario."""
     if not evaluations_root.exists():
         return
     owned_pattern = re.compile(
-        rf"^{re.escape(base_folder)}(?:-t\d+|-multi-turn)?$"
+        rf"^{re.escape(base_folder)}(?:-t[a-z0-9]+|-multi-turn)?$"
     )
     for folder in evaluations_root.iterdir():
-        if not folder.is_dir():
-            continue
         if not owned_pattern.fullmatch(folder.name):
             continue
+        _validate_generated_eval_folder(folder, evaluations_root)
+        if not folder.is_dir():
+            continue
+        resolved_folder = folder.resolve()
         for child in folder.iterdir():
-            if child.is_file() and child.name.endswith(".mcs.yml"):
+            if not child.name.endswith(".mcs.yml"):
+                continue
+            if _is_linked_path(child):
+                raise ValueError(
+                    f"generated evaluation file cannot be a link: {child}"
+                )
+            _resolved_within(child, resolved_folder, "generated evaluation file")
+            if child.is_file():
                 child.unlink()
         if not any(folder.iterdir()):
             folder.rmdir()
@@ -660,13 +705,49 @@ def materialize_scenario(
 
     evaluations_root = agent_root / "evaluations"
     base_folder = f"eval-driven-{scenario_id}"
+    if evaluations_root.exists():
+        if _is_linked_path(evaluations_root):
+            raise ValueError(
+                f"evaluations folder cannot be a link: {evaluations_root}"
+            )
+        _resolved_within(evaluations_root, agent_root, "evaluations folder")
+
+    single_turn_folders: dict[float, str] = {}
+    used_folder_names: set[str] = set()
+    for threshold in single_turn_groups:
+        suffix = (
+            _threshold_folder_suffix(threshold)
+            if len(single_turn_groups) > 1
+            else ""
+        )
+        folder_name = f"{base_folder}{suffix}"
+        if folder_name in used_folder_names:
+            raise ValueError(
+                f"distinct thresholds map to the same evaluation folder: {folder_name}"
+            )
+        single_turn_folders[threshold] = folder_name
+        used_folder_names.add(folder_name)
+
+    if multi_turn:
+        multi_turn_folder = f"{base_folder}-multi-turn"
+        if multi_turn_folder in used_folder_names:
+            raise ValueError(
+                f"evaluation folder name collision: {multi_turn_folder}"
+            )
+        used_folder_names.add(multi_turn_folder)
+
+    for folder_name in used_folder_names:
+        _validate_generated_eval_folder(
+            evaluations_root / folder_name,
+            evaluations_root,
+        )
+
     _clear_generated_eval_folders(evaluations_root, base_folder)
     multiple_thresholds = len(single_turn_groups) > 1
     written_files: list[str] = []
 
     for threshold, evaluations in sorted(single_turn_groups.items()):
-        suffix = f"-t{round(threshold * 100):02d}" if multiple_thresholds else ""
-        folder_name = f"{base_folder}{suffix}"
+        folder_name = single_turn_folders[threshold]
         folder = evaluations_root / folder_name
         parent_path = folder / f"{folder_name}.mcs.yml"
         display_name = f"Eval Driven - {scenario['name']}"
@@ -810,10 +891,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"RUNTIME MANIFEST: {args.runtime_output}")
         return 0
-    except (ScenarioValidationError, ValueError) as exc:
+    except (ScenarioValidationError, ValueError, OSError) as exc:
         if isinstance(exc, ScenarioValidationError):
             for error in exc.errors:
                 print(f"ERROR: {error}", file=sys.stderr)
+        elif isinstance(exc, OSError):
+            print(f"ERROR: filesystem operation failed: {exc}", file=sys.stderr)
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
         return 1

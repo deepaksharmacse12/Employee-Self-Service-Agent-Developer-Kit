@@ -15,7 +15,7 @@ Here's what I can help you with:
 |---------|-------------|
 | `/connect` | Type Enter to connect ServiceNow or Workday to your agent |
 | `/create` | Create a simple topic with evals, a workflow, or an evaluation test set |
-| `/update` | Update a simple topic with evals, or modify an existing workflow |
+| `/update` | Update a simple topic with evals, a workflow, or an evaluation test set |
 | `/delete` | Type Enter to delete a topic or workflow from your agent |
 | `/scan` | Type Enter to scan your agent for compile errors and fix them |
 | `/review` | Type Enter to review a topic (or a whole module's topics) for issues before publishing |

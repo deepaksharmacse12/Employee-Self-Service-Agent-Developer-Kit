@@ -308,7 +308,7 @@ Then **run `/setup`** in GitHub Copilot Chat to configure your environment.
 | `/setup` | First-time environment setup — authenticate, discover agent, extract, configure |
 | `/connect` | Connect an external system (ServiceNow, Workday) — guided setup with MCP verification |
 | `/create` | Create an eval-driven topic, workflow, or evaluation test set |
-| `/update` | Update a simple topic with evals, or modify an existing workflow |
+| `/update` | Update a simple topic with evals, a workflow, or an evaluation test set |
 | `/delete` | Delete a topic or workflow from your agent |
 | `/scan` | Scan your agent for compile errors and fix them |
 | `/evaluate` | Generate evaluation test sets for your agent |
