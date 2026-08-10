@@ -141,6 +141,21 @@ class TestTransitiveRequirements:
         assert registry.PP_ADMIN in plan.clients
         assert plan.requires_dataverse_endpoint is True
 
+    def test_wd_run_001_resolves_and_unions_pp_admin_and_dataverse(self):
+        # WD-RUN-001 is individually targetable (`--checkpoint WD-RUN-001`).
+        # It resolves to its own fixed entry, and its plan unions PP_ADMIN
+        # (run-history + BAP connections) and DATAVERSE (transient probe flow),
+        # pulling WD-001 so run_external_systems_checks hydrates _workday_flows
+        # before run_workday_checks reads them.
+        assert registry.resolve("WD-RUN-001").key == "WD-RUN-001"
+        assert registry.resolve("WD-RUN-001").is_family is False
+        plan = registry.transitive_requirements("WD-RUN-001")
+        assert registry.PP_ADMIN in plan.clients
+        assert registry.DATAVERSE in plan.clients
+        assert plan.requires_dataverse_endpoint is True
+        labels = [label for label, _ in plan.ordered_fns]
+        assert labels.index("External Systems") < labels.index("Workday")
+
     def test_external_systems_orders_before_workday(self):
         # _workday_flows must be hydrated by run_external_systems_checks before
         # run_workday_checks runs (which early-returns without it).
@@ -158,7 +173,8 @@ class TestTransitiveRequirements:
         plan = registry.transitive_requirements("ENV-002")
         # Single category function (run_environment_checks) covers both.
         assert len(plan.ordered_fns) == 1
-        assert plan.requires_config is True
+        assert plan.requires_config is False
+        assert plan.requires_dataverse_endpoint is True
 
     def test_env_capacity_001_resolves_and_unions_powerplatform(self):
         spec = registry.resolve("ENV-CAPACITY-001")
@@ -171,6 +187,15 @@ class TestTransitiveRequirements:
         assert registry.POWERPLATFORM in plan.clients
         assert plan.requires_dataverse_endpoint is True
         # Shares run_environment_checks with its ENV-001 prereq -> one fn.
+        assert len(plan.ordered_fns) == 1
+
+    def test_env009_is_individually_targetable_with_dataverse_only(self):
+        spec = registry.resolve("ENV-009")
+        assert spec is not None and spec.key == "ENV-009"
+        assert spec.clients == frozenset({registry.DATAVERSE})
+        plan = registry.transitive_requirements("ENV-009")
+        assert plan.requires_config is False
+        assert plan.requires_dataverse_endpoint is True
         assert len(plan.ordered_fns) == 1
 
     def test_ess_soln_001_resolves_and_pulls_env_prereqs(self):

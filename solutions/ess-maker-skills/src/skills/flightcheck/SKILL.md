@@ -57,6 +57,66 @@ Map the selection to a scope flag:
 
 ---
 
+## Step 1.5: Select the integration target (only when there is a choice)
+
+A tenant can have **more than one** Workday Entra SSO enterprise app
+(dev / test / prod, demos, trials) or more than one ServiceNow connection.
+When that happens, checks like `WD-CONN-102` would otherwise validate *all*
+of them together and a healthy prod app could be masked by an unrelated
+sandbox app. This step lets the user pin the one they are verifying.
+
+**Only run this step for scopes that touch those integrations:**
+- scope is `full` or `workday` → discover Workday SSO apps
+- scope is `full` or `servicenow` → discover ServiceNow connections
+- any other scope (`local`, `prerequisites`, …) → **skip this step entirely.**
+
+For each applicable integration, run the discovery helper in the terminal
+(it authenticates, prints JSON, and runs **no** checks):
+
+```
+python scripts/flightcheck/cli.py --list-targets workday
+```
+```
+python scripts/flightcheck/cli.py --list-targets servicenow
+```
+
+Parse the JSON on stdout. It has the shape
+`{ "kind": "workday" | "servicenow", "targets": [ … ], "error": "…"? }`.
+- Workday target rows: `{ "appId", "displayName", "id" }`.
+- ServiceNow target rows: `{ "name", "displayName", "status" }`.
+
+Decision:
+- If `error` is present, or `targets` has **0 or 1** entries → do **not** ask;
+  there is nothing to disambiguate. Leave the target flag unset.
+- If `targets` has **2 or more** entries → ask the user to choose with
+  `vscode_askQuestions`. Build one option per target plus an "All" option.
+  Use `displayName` as the label and include the identifier in the
+  description so duplicates are distinguishable. Example for Workday:
+
+```json
+[
+  {
+    "header": "Workday SSO app",
+    "question": "Which Workday Entra SSO app should FlightCheck verify?",
+    "options": [
+      { "label": "All apps", "description": "Validate every Workday SAML app (default)", "recommended": true },
+      { "label": "{displayName}", "description": "appId {appId}" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+Map the answer to a flag for Step 2:
+- Workday, a specific app → `--workday-app-id {appId}` (from the chosen row).
+- ServiceNow, a specific connection → `--servicenow-connection {name}`.
+- "All apps" / "All connections" → no target flag (validate all).
+
+If both a Workday app **and** a ServiceNow connection are being chosen (scope
+`full` with multiples of each), collect **both** flags.
+
+---
+
 ## Step 2: Run the check
 ## Step 2: Consent gate for the connectivity probe (MANDATORY — ask before running)
 
@@ -72,9 +132,15 @@ Because it mutates the environment, you **MUST** ask for consent **before** you 
 the check. Do not run first and ask later. The terminal CLI cannot prompt you in
 chat (it is a non-interactive subprocess), so **you own the consent question**.
 
-**This gate applies only when the scope is `full`** — that is the only scope that
-runs INFRA-003. For Workday-only, ServiceNow-only, Local-files-only, or
-Prerequisites-only scopes, skip this gate and go straight to Step 2b.
+The **same** `--runtime-reachability` probe also powers **WD-RUN-001** (the Workday
+active connector check): it stands up the same kind of transient flow, makes one
+read-only Workday call through the maker's connection, then deletes the flow. So
+the consent gate is required whenever **either** mutating probe is in scope.
+
+**This gate applies when the scope runs a mutating probe: `full` (INFRA-003 and
+WD-RUN-001), `workday`, or `workdayextension` (WD-RUN-001).** For ServiceNow-only,
+Local-files-only, or Prerequisites-only scopes, skip this gate and go straight to
+Step 2b.
 
 Ask using this exact wording, swapping `<SYSTEM>` for the system being checked
 (Workday / ServiceNow / SAP SuccessFactors / custom HTTP — use the connected
@@ -90,8 +156,13 @@ Keep them in whatever phrasing you use.
 
 - **If the user says YES** → run the check **with** `--runtime-reachability` (Step 2b).
 - **If the user says NO** → run the check **without** the flag (Step 2b), then in the
-  summary note that the connectivity probe was skipped by choice, and offer the
-  manual verification path:
+  summary note that the connectivity probe was skipped by choice. The passive
+  fallback depends on scope:
+  - **Workday scope (WD-RUN-001)** → the check falls back to the **passive
+    run-history** signal (recent Workday connector runs on the environment). No
+    manual step is required; just note that the active probe was declined.
+  - **INFRA-003 (full scope)** → INFRA-003 returns **Manual** guidance. Offer the
+    manual verification path:
 
 > Prefer to verify manually? You can confirm the connection is whitelisted:
 >
@@ -119,17 +190,22 @@ Running readiness checks — this takes 1–3 minutes depending on scope...
 
 **End message.**
 
-Run in the terminal. Append `--runtime-reachability` **only** if the user said YES
-at the Step 2 consent gate:
+Run in the terminal. Append any target flag(s) chosen in Step 1.5; always pass
+`--select-targets never` so the CLI relies on this skill's selection instead of
+trying to prompt in the non-interactive terminal. Also append
+`--runtime-reachability` **only** if the user said YES at the Step 2 consent gate:
 
 ```
-python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk
+python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk --select-targets never {TARGET_FLAGS}
 ```
 
-On YES:
+`{TARGET_FLAGS}` is empty when the user chose "All" (or there was nothing to
+choose), or one/both of `--workday-app-id {appId}` / `--servicenow-connection {name}`.
+
+On YES for runtime reachability:
 
 ```
-python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk --runtime-reachability
+python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk --select-targets never {TARGET_FLAGS} --runtime-reachability
 ```
 
 Wait for the script to finish.
@@ -145,9 +221,19 @@ explorer rather than spawning another tab from this skill.
 
 ## Step 3: Read results and present findings
 
-Read `workspace/flightcheck/results.json`. Build the output below using the data.
-You MUST follow this exact format every time. Do not improvise, add prose
-between sections, or skip any section.
+Read `workspace/flightcheck/results.json` and format the output below **yourself,
+directly in your chat reply**. You MUST follow this exact format every time. Do
+not improvise, add prose between sections, or skip any section.
+
+**Do NOT write or run any code to render these results.** Read the JSON with your
+file-reading tool and type the markdown tables inline. Never author a helper
+script (`.py`, `.js`, `.ps1`, a shell one-liner, etc.) to parse `results.json`,
+build the tables, or print the summary, and never execute one. The values you
+need (counts, `overall`, `duration_secs`, and each object in the `results` array)
+are already in the JSON — transcribe them into the tables below by hand. Writing
+a script here is a bug: it dumps raw terminal output into chat instead of the
+clean formatted result, and it exposes internal process the user should never
+see. If the file is large, read it in ranges — do not shortcut it with code.
 
 ### 3a — Summary banner
 
@@ -264,10 +350,11 @@ appropriate skill file:
 - Compile errors → read `src/skills/cleanup/SKILL.md` and follow it
 - Flow enablement → use Dataverse MCP to update flow state
 
-After all auto-fixes complete, re-run flightcheck:
+After all auto-fixes complete, re-run flightcheck (reuse the **same** scope and
+the **same** target flag(s) the user chose in Step 1.5, if any):
 
 ```
-python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk
+python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk --select-targets never {TARGET_FLAGS}
 ```
 
 `cli.py` reopens the updated report in the browser automatically — **do not run

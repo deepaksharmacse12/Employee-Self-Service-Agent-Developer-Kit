@@ -38,6 +38,12 @@ from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
 from ..runner import CheckResult, Priority, Role, Status
+from .. import live_egress_probe
+from .infrastructure import (
+    _infra_003_directive,
+    _infra_003_probe_layer_note,
+    _live_probe_context,
+)
 from ._maker_urls import maker_connections_url
 from ._saml_utils import (
     WORKDAY_SAML_SP_FILTER,
@@ -2838,6 +2844,47 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
     # was returned, masking every cert-classification branch below.
     now = datetime.now(timezone.utc)
 
+    # Scope to the operator-selected Workday SSO app when one is configured
+    # or pinned for this run. Historically WD-CONN-102 validated *every*
+    # federated Workday SAML enterprise app in the tenant and coalesced them
+    # by status; a tenant with several (dev/test/prod, demos, Okta trials)
+    # therefore lumped unrelated apps into one verdict, so a broken sibling
+    # could fail a correctly-configured deployment. The standalone flightcheck
+    # lets the operator pin the app they are verifying (interactive picker /
+    # ``--workday-app-id`` / persisted ``entraAppId``); we resolve it through
+    # the SAME ``_workday_hints`` path AUTH-005 / WD-ASSIGN-001 already use so
+    # every Workday-SSO-app check agrees on the target. When the pin matches a
+    # discovered SAML SP we narrow to it; when it matches none (e.g. the
+    # operator pinned the OAuth Workday app, which is not a SAML app) we keep
+    # the full set and say so rather than silently validating an unrelated
+    # sibling. No pin ⇒ unchanged all-apps behavior (single-checkpoint mode
+    # never sets one).
+    from ._workday_app_assignment import _workday_hints
+
+    app_id_hint, _ = _workday_hints(getattr(runner, "config", None))
+    scope_note = ""
+    if app_id_hint:
+        _hint = app_id_hint.strip().lower()
+        _matched = [
+            sp for sp in workday_sps
+            if str(sp.get("appId", "")).strip().lower() == _hint
+        ]
+        if _matched:
+            workday_sps = _matched
+            scope_note = (
+                "\n\nScoped to the configured Workday SSO app "
+                f"(entraAppId={app_id_hint}); other Workday SAML enterprise "
+                "apps in this tenant were not evaluated."
+            )
+        else:
+            scope_note = (
+                "\n\nNote: the configured Workday app "
+                f"(entraAppId={app_id_hint}) is not among the Workday SAML "
+                "SSO enterprise apps in this tenant, so it could not be used "
+                "to narrow this check; all discovered Workday SAML apps are "
+                "shown."
+            )
+
     # Classify each SP into exactly one of these buckets. Each list
     # holds (sp_summary_string, remediation_hint) tuples so the
     # output emitter can keep result text and remediation text
@@ -2967,7 +3014,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
     results: list[CheckResult] = []
 
     if failed_entries:
-        bodies = "\n".join(e["summary"] for e in failed_entries)
+        bodies = "\n".join(e["summary"] for e in failed_entries) + scope_note
         results.append(CheckResult(roles=[Role.ENTRA_ADMIN.value, Role.WORKDAY_ADMIN.value],
             checkpoint_id=cp_id, category=category,
             priority=Priority.HIGH.value, status=Status.FAILED.value,
@@ -3014,7 +3061,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
         ))
 
     if warning_entries:
-        bodies = "\n".join(e["summary"] for e in warning_entries)
+        bodies = "\n".join(e["summary"] for e in warning_entries) + scope_note
         # Hardening framing per AGENTS.md principle 9 — these aren't
         # functional blockers today, only operational risk.
         results.append(CheckResult(roles=[Role.ENTRA_ADMIN.value, Role.WORKDAY_ADMIN.value],
@@ -3059,7 +3106,7 @@ def _check_saml_certificate_health(runner) -> list[CheckResult]:
         ))
 
     if manual_entries:
-        bodies = "\n".join(e["summary"] for e in manual_entries)
+        bodies = "\n".join(e["summary"] for e in manual_entries) + scope_note
         intro = (
             "1 federated Workday SAML app has a healthy active signing "
             "certificate in Entra"
@@ -3307,6 +3354,411 @@ _RUN_FAILURE_STATUSES = {"Failed", "TimedOut", "Faulted", "Aborted"}
 # the presence of recent successes proves the integration is wired up.
 _WD_RECENT_WINDOW = 10
 
+_WD_CONNECTOR_API_ID = "/providers/Microsoft.PowerApps/apis/shared_workdaysoap"
+_WD_CONNECTOR_NAME = "shared_workdaysoap"
+_WD_PROBE_FLOW_NAME = "flightcheck-wd-run-001-probe"
+_WD_PROBE_ACTION_NAME = "Probe_Workday"
+_WD_DEFAULT_READ_OPERATION = "GetWorkerMe"
+_WD_READ_OPERATION_PREFIXES = ("get", "list", "read", "raas_")
+_WD_MUTATING_OPERATION_PREFIXES = (
+    "add", "change", "create", "delete", "edit", "maintain", "post",
+    "put", "remove", "set", "submit", "update", "write",
+)
+
+
+def _workday_runtime_source(conn: dict) -> str:
+    props = conn.get("properties", {}) if isinstance(conn, dict) else {}
+    candidates = [
+        props.get("runtimeSource"),
+        props.get("runtime_source"),
+        (props.get("connectionRuntime") or {}).get("runtimeSource")
+        if isinstance(props.get("connectionRuntime"), dict)
+        else None,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip().lower()
+    return ""
+
+
+def _is_workday_connection(conn: dict) -> bool:
+    props = conn.get("properties", {}) if isinstance(conn, dict) else {}
+    api_id = props.get("apiId") or (props.get("api") or {}).get("name", "")
+    return _WD_CONNECTOR_NAME in str(api_id).lower()
+
+
+def _select_workday_probe_connection(
+    runner,
+) -> tuple[dict | None, str, bool]:
+    # Returns (connection, reason, not_configured). ``not_configured`` is True
+    # only for the clean pre-deployment state where no Workday connector exists
+    # at all; the caller reports that as NOT_CONFIGURED. Every other None result
+    # is a transient/environmental miss that should fall back to the passive
+    # run-history signal. Callers branch on this flag, never on ``reason`` text.
+    pp = getattr(runner, "pp_admin", None)
+    env_id = getattr(runner, "env_id", None)
+    if pp is None or not env_id:
+        return None, "missing Power Platform admin client or environment id", False
+    try:
+        conns = pp.get_connections(env_id)
+    except Exception as exc:  # noqa: BLE001 - fallback path must not fail the check
+        return (
+            None,
+            f"could not list Power Platform connections ({type(exc).__name__})",
+            False,
+        )
+    if not isinstance(conns, list):
+        return None, "Power Platform connection list was unavailable", False
+
+    workday = [c for c in conns if isinstance(c, dict) and _is_workday_connection(c)]
+    connected = [c for c in workday if get_connection_status(c) == "Connected"]
+    if not workday:
+        return None, "no Workday managed-connector connection was found", True
+    if not connected:
+        return (
+            None,
+            "no Connected Workday managed-connector connection was found",
+            False,
+        )
+
+    service_account = [
+        c for c in connected if _workday_runtime_source(c) != "invoker"
+    ]
+    if not service_account:
+        return None, (
+            "only OAuth-invoker Workday connections were found; the active "
+            "probe would exercise the maker/employee identity instead of the "
+            "ISU / service-account path"
+        ), False
+    # BAP does not document a stable order for the connection list, so pick
+    # deterministically by connection name (the immutable GUID). Without this,
+    # a tenant with more than one ISU / service-account Workday connection could
+    # silently probe a different connection between runs.
+    service_account.sort(key=lambda c: c.get("name") or "")
+    return service_account[0], "", False
+
+
+def _workday_probe_config(runner) -> tuple[str | None, dict[str, Any], str | None]:
+    config = getattr(runner, "config", {}) or {}
+    probe_cfg: dict[str, Any] = {}
+    if isinstance(config.get("workdayConnectorProbe"), dict):
+        probe_cfg = config["workdayConnectorProbe"]
+    elif isinstance(config.get("flightcheck"), dict) and isinstance(
+        config["flightcheck"].get("workdayConnectorProbe"), dict
+    ):
+        probe_cfg = config["flightcheck"]["workdayConnectorProbe"]
+
+    operation_id = (
+        os.environ.get("ESS_WD_PROBE_OPERATION_ID", "").strip()
+        or str(probe_cfg.get("operationId") or _WD_DEFAULT_READ_OPERATION).strip()
+    )
+    params: dict[str, Any] = {}
+    raw_params = os.environ.get("ESS_WD_PROBE_PARAMS_JSON", "").strip()
+    if raw_params:
+        try:
+            parsed = json.loads(raw_params)
+        except json.JSONDecodeError:
+            return None, {}, "ESS_WD_PROBE_PARAMS_JSON is not valid JSON"
+        if not isinstance(parsed, dict):
+            return None, {}, "ESS_WD_PROBE_PARAMS_JSON must be a JSON object"
+        params = parsed
+    elif isinstance(probe_cfg.get("parameters"), dict):
+        params = dict(probe_cfg["parameters"])
+
+    op_lower = operation_id.lower()
+    if op_lower.startswith(_WD_MUTATING_OPERATION_PREFIXES):
+        return None, {}, f"operation '{operation_id}' is not read-only"
+    if not op_lower.startswith(_WD_READ_OPERATION_PREFIXES):
+        return None, {}, (
+            f"operation '{operation_id}' is not in the read-only allowlist"
+        )
+    return operation_id, params, None
+
+
+def _with_wd_run_passive_context(
+    results: list[CheckResult], *, reason: str, probe_reached: bool = False
+) -> list[CheckResult]:
+    # The passive fallback only truly assessed run history when it reached a
+    # PASSED/FAILED verdict. When it came back SKIPPED / NOT_CONFIGURED it could
+    # not read history at all, so we must NOT claim it did -- the row's own
+    # result already states why (no flows, no runs, or an API error).
+    #
+    # ``probe_reached`` distinguishes the two ways we land on the passive path:
+    #   False -- the live probe never ran or never reached Workday (declined, no
+    #            connection, invoke error before the call). No Workday call was
+    #            made, so the copy says so.
+    #   True  -- the live probe DID run and reach Workday but returned an
+    #            inconclusive result we must not score as a connection failure
+    #            (the indeterminate HTTP 400 bucket; see
+    #            _wd_probe_result_indeterminate). A Workday call WAS made, so the
+    #            copy must not claim otherwise.
+    history_assessed = {Status.PASSED.value, Status.FAILED.value}
+    for row in results:
+        if row.checkpoint_id != "WD-RUN-001":
+            continue
+        if probe_reached:
+            if row.status in history_assessed:
+                suffix = (
+                    "\n\nThe live Workday connection test ran but its result "
+                    f"was inconclusive ({reason}). Readiness was instead "
+                    "assessed from recent Workday connector run history on this "
+                    "environment."
+                )
+            else:
+                suffix = (
+                    "\n\nThe live Workday connection test ran but its result "
+                    f"was inconclusive ({reason}), and recent Workday run "
+                    "history could not be assessed either (see above)."
+                )
+        elif row.status in history_assessed:
+            suffix = (
+                "\n\nThe live Workday connection test was not run "
+                f"({reason}). Readiness was instead assessed from recent "
+                "Workday connector run history on this environment. No new "
+                "Workday call was made."
+            )
+        else:
+            suffix = (
+                "\n\nThe live Workday connection test was not run "
+                f"({reason}), and recent Workday run history could not be "
+                "assessed either (see above). No new Workday call was made."
+            )
+        if suffix not in row.result:
+            row.result += suffix
+    return results
+
+
+def _workday_probe_not_configured(reason: str) -> list[CheckResult]:
+    return [CheckResult(
+        checkpoint_id="WD-RUN-001", category="Workday",
+        priority=Priority.HIGH.value, status=Status.NOT_CONFIGURED.value,
+        description="Workday active connector runtime health",
+        result=(
+            f"The live Workday connection test did not run: {reason}."
+        ),
+        remediation=(
+            "Connect Workday in Power Platform first, then re-run "
+            "/flightcheck with --runtime-reachability to test the live "
+            "Workday connection. This is a clean pre-deployment state, "
+            "not a runtime failure."
+        ),
+        doc_link=f"{DOC_BASE}/workday",
+        roles=[Role.WORKDAY_ADMIN.value, Role.POWER_PLATFORM_ADMIN.value],
+    )]
+
+
+def _workday_probe_failure_cause(
+    res: live_egress_probe.ConnectorProbeResult,
+) -> str:
+    # Returns the plain-language cause shown to the maker. Classification keys
+    # off the two signals the connector's synchronous response actually exposes
+    # (live-verified, Sunbreak Sandbox 2026-08): HTTP status (@outputs
+    # statusCode) and the action code (@actions code). The human-readable
+    # error.message is NOT available synchronously, so a wrong endpoint/operation
+    # and a Workday business/validation fault BOTH surface as HTTP 400 /
+    # BadRequest and cannot be split here -- they share one honest
+    # "indeterminate" cause. Only status 200 / 400 / 500 were live-captured; the
+    # 401/403, 404/405 and 409/422 buckets below are inferred from the HTTP
+    # status alone (not live-captured), so their copy attributes the likely cause
+    # to the status code rather than asserting the underlying fault as observed.
+    code = (res.error_code or "").lower()
+    status = res.status_code
+    if status is None:
+        if "tls" in code or "cert" in code:
+            return "the connector got no HTTP response because TLS failed"
+        if "dns" in code or "name" in code:
+            return "the connector got no HTTP response because name resolution failed"
+        if "dlp" in code or "firewall" in code or "blocked" in code:
+            return "the connector got no HTTP response because traffic was blocked"
+        return "the connector got no HTTP response"
+    if status in (401, 403) or any(t in code for t in ("unauthor", "forbidden")):
+        return (
+            f"the connector returned HTTP {status}, which typically means Workday "
+            "or connector authorization rejected the request"
+        )
+    if status in (404, 405) or any(t in code for t in ("notfound", "invalidurl", "endpoint")):
+        return (
+            f"the connector returned HTTP {status}, which typically means the "
+            "configured Workday endpoint or operation was not found"
+        )
+    if status == 400 or "badrequest" in code:
+        return (
+            "Workday rejected the request with HTTP 400; the connector's "
+            "synchronous response cannot distinguish a wrong endpoint / "
+            "operation from a Workday business or validation fault"
+        )
+    if status in (409, 422):
+        return (
+            f"the connector returned HTTP {status}, which typically means Workday "
+            "processed the request and rejected its inputs"
+        )
+    if status == 500 or "internalservererror" in code or "servererror" in code:
+        return "the Workday connector or backend returned a server error"
+    return "the Workday connector action failed"
+
+
+def _wd_probe_result_indeterminate(
+    res: live_egress_probe.ConnectorProbeResult,
+) -> bool:
+    # A synchronous HTTP 400 / BadRequest is the one connector failure outcome
+    # that cannot prove the maker's connection is unhealthy. It means the probe
+    # reached Workday and Workday returned a structured rejection -- so egress,
+    # DNS, TLS, DLP and authorization all worked -- but a wrong DEFAULT endpoint
+    # / operation (the probe picks GetWorkerMe when the maker configured none)
+    # and a genuine Workday business / validation fault are indistinguishable in
+    # the synchronous response (see _workday_probe_failure_cause). Scoring that
+    # as a FAILED would blame the maker's connection for a verdict the probe
+    # cannot actually establish, so the caller degrades to the passive
+    # run-history path instead. Every other status (401/403, 404/405, 409/422,
+    # 500, and the no-HTTP network bucket) is a real, attributable failure and
+    # stays FAILED.
+    code = (res.error_code or "").lower()
+    return res.status_code == 400 or "badrequest" in code
+
+
+def _workday_probe_failure_result(
+    res: live_egress_probe.ConnectorProbeResult, connection_name: str
+) -> list[CheckResult]:
+    cause = _workday_probe_failure_cause(res)
+    status_text = f"HTTP {res.status_code}" if res.status_code else "no HTTP status"
+    code_text = f"; connector code {res.error_code}" if res.error_code else ""
+    return [CheckResult(
+        checkpoint_id="WD-RUN-001", category="Workday",
+        priority=Priority.HIGH.value, status=Status.FAILED.value,
+        description="Workday active connector runtime health",
+        result=(
+            "The live Workday connection test failed. "
+            f"{cause[:1].upper() + cause[1:]} ({status_text}{code_text}). "
+            "Tested using the Workday service-account connection "
+            f"'{connection_name}'. This tested the standard Workday "
+            "data-retrieval path; it did not test custom SOAP integrations."
+        ),
+        remediation=_infra_003_directive(
+            cause=cause,
+            scope="Workday managed connector / Power Platform environment egress",
+            implies=(
+                "The agent's RaaS / REST Workday connector path can fail at "
+                "runtime even if connection status is Connected."
+            ),
+            next_steps=(
+                "Open the transient probe or matching Workday connector run in "
+                "Power Automate, then fix the cause named above. For "
+                "authorization, check the ISU/service account's Workday "
+                "security domains. For endpoint configuration, check the "
+                "Workday URL and operation. For network blocks, check DLP, "
+                "firewall, DNS, and TLS."
+            ),
+            responsible_role=(
+                f"{Role.WORKDAY_ADMIN.value} / {Role.POWER_PLATFORM_ADMIN.value}"
+            ),
+            probe_layer_note=_infra_003_probe_layer_note(),
+        ),
+        doc_link=f"{DOC_BASE}/workday",
+        roles=[Role.WORKDAY_ADMIN.value, Role.POWER_PLATFORM_ADMIN.value],
+    )]
+
+
+def _check_workday_active_run_health(runner) -> list[CheckResult]:
+    ctx, live_env = _live_probe_context(runner)
+    if not (ctx.live_ran and live_env is not None):
+        reason = (
+            "operator declined the runtime-reachability probe"
+            if ctx.declined_by_user
+            else ctx.unavailable_reason or "runtime-reachability was not opted in"
+        )
+        return _with_wd_run_passive_context(
+            _check_workday_run_health_passive(runner), reason=reason
+        )
+
+    conn, conn_reason, not_configured = _select_workday_probe_connection(runner)
+    if conn is None:
+        if not_configured:
+            return _workday_probe_not_configured(conn_reason)
+        return _with_wd_run_passive_context(
+            _check_workday_run_health_passive(runner), reason=conn_reason
+        )
+
+    operation_id, params, op_error = _workday_probe_config(runner)
+    if op_error:
+        return _with_wd_run_passive_context(
+            _check_workday_run_health_passive(runner), reason=op_error
+        )
+
+    connection_id = conn.get("name") or ""
+    # Maker-facing copy shows the connection's display name, not the opaque BAP
+    # GUID; the GUID (connection_id) is still what the probe action targets.
+    connection_label = (
+        conn.get("properties", {}).get("displayName") or connection_id
+    )
+    action = live_egress_probe.ConnectorProbeAction(
+        connector_api_id=_WD_CONNECTOR_API_ID,
+        connection_id=connection_id,
+        operation_id=operation_id or _WD_DEFAULT_READ_OPERATION,
+        parameters=params,
+        action_name=_WD_PROBE_ACTION_NAME,
+        connection_ref_key=_WD_CONNECTOR_NAME,
+    )
+    try:
+        live_egress_probe.cleanup_orphan_probe_flows(
+            live_env["env_url"], live_env["dv_token"], probe_flow_name=_WD_PROBE_FLOW_NAME
+        )
+        res = live_egress_probe.run_connector_probe(
+            **live_env,
+            action=action,
+            probe_flow_name=_WD_PROBE_FLOW_NAME,
+            description="FlightCheck WD-RUN-001 transient Workday connector probe.",
+        )
+    finally:
+        live_egress_probe.cleanup_orphan_probe_flows(
+            live_env["env_url"], live_env["dv_token"], probe_flow_name=_WD_PROBE_FLOW_NAME
+        )
+
+    if res.succeeded is True:
+        return [CheckResult(
+            checkpoint_id="WD-RUN-001", category="Workday",
+            priority=Priority.HIGH.value, status=Status.PASSED.value,
+            description="Workday active connector runtime health",
+            result=(
+                "The live test successfully retrieved data from Workday "
+                "through the agent's Workday connection "
+                f"({res.detail}). Tested using the Workday service-account "
+                f"connection '{connection_label}'. This tested the standard "
+                "Workday data-retrieval path; it did not test custom SOAP "
+                "integrations."
+            ),
+            remediation="",
+            doc_link=f"{DOC_BASE}/workday",
+            roles=[Role.WORKDAY_ADMIN.value, Role.POWER_PLATFORM_ADMIN.value],
+        )]
+    if res.succeeded is False:
+        # An HTTP 400 / BadRequest cannot prove the connection is unhealthy (it
+        # reached Workday and got a structured rejection, but a wrong default
+        # operation and a Workday business fault are indistinguishable here), so
+        # degrade to passive run history rather than emitting a FAILED that
+        # blames the maker's connection. Every other failure is attributable and
+        # stays FAILED.
+        if _wd_probe_result_indeterminate(res):
+            status_text = (
+                f"HTTP {res.status_code}" if res.status_code else "HTTP 400"
+            )
+            return _with_wd_run_passive_context(
+                _check_workday_run_health_passive(runner),
+                reason=(
+                    "the connector reached Workday and got a structured "
+                    f"rejection ({status_text}), but a wrong default endpoint / "
+                    "operation and a Workday business or validation fault are "
+                    "indistinguishable in the synchronous response, so it "
+                    "cannot prove the connection is unhealthy; open the "
+                    "transient probe run in Power Automate for the exact message"
+                ),
+                probe_reached=True,
+            )
+        return _workday_probe_failure_result(res, connection_label)
+    return _with_wd_run_passive_context(
+        _check_workday_run_health_passive(runner),
+        reason=f"the live Workday test could not complete (it did not return a clear pass or fail): {res.detail}",
+    )
+
 
 def _classify_run(run: dict) -> str:
     """Classify one flow run as 'success', 'caught_failure', 'hard_failure',
@@ -3379,6 +3831,11 @@ def _compute_run_failure_signal(window: list[dict]) -> dict[str, bool]:
 
 
 def _check_workday_run_health(runner) -> list[CheckResult]:
+    """WD-RUN-001 — active connector probe with passive run-history fallback."""
+    return _check_workday_active_run_health(runner)
+
+
+def _check_workday_run_health_passive(runner) -> list[CheckResult]:
     """WD-RUN-001 — litmus test for a *deterministic* Workday runtime break.
 
     Reads run history for each discovered Workday flow via
@@ -4893,6 +5350,40 @@ def _check_custom_workflow_inventory(runner) -> list[CheckResult]:
 
 # ---- Credential Resolution ----
 
+# Directly-targetable checkpoint families whose checks consume the
+# interactively-resolved Workday runtime inputs (test employee ID + ISU
+# credentials). Only a --checkpoint run that overlaps one of these should be
+# allowed to block on those prompts. The workflow family (WD-WF-*) is the sole
+# such target: WD-SEC-003 also reads them but is emitted only in full/scope
+# runs, never as a standalone --checkpoint target.
+_WD_RUNTIME_INPUT_FAMILIES = ("WD-WF",)
+
+
+def _interactive_workday_prompts_allowed(runner) -> bool:
+    """Whether blocking on an interactive Workday runtime prompt (test
+    employee ID / ISU credentials) is appropriate for this run.
+
+    Full and scope runs (no single-checkpoint target matcher) keep the legacy
+    behavior and may prompt. In ``--checkpoint`` mode the entire Workday
+    category function is executed to hydrate shared state, but only the target
+    checkpoint's rows survive ``run()``'s post-filter — so a prompt fired by a
+    non-target check (e.g. the workflow / personal-data checks running only to
+    hydrate a ``WD-PKG-001`` request) would block the operator for a row that
+    is about to be discarded. Restrict the prompt to checkpoint runs whose
+    target actually overlaps a runtime-input-consuming family.
+    """
+    if getattr(runner, "_target_matcher", None) is None:
+        return True
+    scope = str(getattr(runner, "scope", "") or "")
+    prefix = "checkpoint:"
+    target = scope[len(prefix):] if scope.startswith(prefix) else ""
+    probe = target.rstrip("*").rstrip("-")
+    return any(
+        probe == fam or target.startswith(fam + "-")
+        for fam in _WD_RUNTIME_INPUT_FAMILIES
+    )
+
+
 def _resolve_workday_metadata(runner) -> tuple[str, str, str]:
     """Resolve non-sensitive Workday metadata: (base_url, tenant, test_employee_id).
 
@@ -4923,7 +5414,7 @@ def _resolve_workday_metadata(runner) -> tuple[str, str, str]:
         test_employee = config.get("workdayTestEmployeeId", "")
 
     # --- Source 5: Test employee ID (prompt + cache in config) ---
-    if not test_employee and sys.stdin.isatty():
+    if not test_employee and sys.stdin.isatty() and _interactive_workday_prompts_allowed(runner):
         test_employee = input("  Test Employee ID (e.g. 21508): ").strip()
         if test_employee:
             _cache_test_employee_id(test_employee)
@@ -4943,7 +5434,7 @@ def _resolve_workday_credentials(runner, tenant: str) -> tuple[str, str]:
     password = os.environ.get("WORKDAY_PASSWORD", "")
 
     # --- Source 4: Interactive prompt for secrets ---
-    if (not username or not password) and sys.stdin.isatty():
+    if (not username or not password) and sys.stdin.isatty() and _interactive_workday_prompts_allowed(runner):
         print("\n  Workday SOAP workflow tests need ISU credentials.")
         print("  (Credentials are used for this run only - never saved to disk)\n")
         if not username:
