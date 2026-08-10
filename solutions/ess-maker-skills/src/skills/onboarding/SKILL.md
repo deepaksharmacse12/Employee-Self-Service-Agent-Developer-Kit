@@ -18,7 +18,7 @@ true, this is workspace bootstrap after foundation setup:
 1. Initialize `workspace/onboarding/steps.md` from the template only when it is
    missing.
 2. Do not render another setup checklist or repeat foundation prerequisites.
-3. Resume from the first unchecked workspace-bootstrap task.
+3. Resume from the first unchecked workspace-bootstrap step.
 4. Go directly to **Step 1 and Step 2** below.
 
 Only use the legacy standalone onboarding messages below when foundation setup
@@ -42,7 +42,7 @@ current flow. Let's start fresh.
 Then go to Fresh Start.
 
 If the file contains a `Readiness check` row, delete only that row. Preserve
-the completion state of the four remaining onboarding tasks. The legacy
+the completion state of the four remaining onboarding steps. The legacy
 optional FlightCheck is no longer part of `/setup`.
 
 If the file exists and all items are checked, show:

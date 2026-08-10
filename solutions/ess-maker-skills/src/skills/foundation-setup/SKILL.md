@@ -50,7 +50,7 @@ If `connect_ready` is true, inspect `.local/config.json`:
   inventory choice.
 
 On the first invocation or when explicitly resuming `/setup`, render the
-checklist from `src/skills/foundation-setup/tasks.md`. Derive completed rows from
+checklist from `src/skills/foundation-setup/steps.md`. Derive completed rows from
 `completed_steps` and the current row from `active_step`:
 
 - `done` = ✅
