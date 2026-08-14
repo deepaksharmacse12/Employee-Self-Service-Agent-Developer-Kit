@@ -3,8 +3,8 @@ name: landing-page-config
 description: >-
   Configure an ESS landing page through the AgentConfiguration MCP server.
   Use for branding and accent colors, quick links, starter prompts, Stay Up
-  to Date, Quick Access, reading the agent name or icon, and any call to the
-  ess-landing-page-config MCP server.
+  to Date, Quick Access, reading the agent name or icon, deleting all landing
+  page configuration, and any call to the ess-landing-page-config MCP server.
 ---
 
 # Landing Page Configuration
@@ -20,65 +20,154 @@ only on individual tool descriptions.
 2. Use AgentConfiguration MCP tools for server access. Do not call the backing
    REST/OData API directly.
 3. Use a `titleId` supplied by the maker when available. Otherwise, use the
-   active agent's `titleId` from `.local/config.json`. Never substitute its
+   target agent's `titleId` from `.local/config.json`. Never substitute its
    Dataverse `botId`.
-4. When the maker asks to update branding/accent colors, quick links, or starter
-   prompts, call that surface's `open_*` tool immediately after resolving
-   `titleId`. Do not read with `get_agent_config` first or apply the requested
-   change through a chat-driven write.
-5. Call `get_agent_config` before a chat-driven update only when the requested
-   surface has no `open_*` editor.
-6. Treat every provided config section as a bulk replacement:
+4. When `titleId` is absent from the target agent's local entry, resolve it
+   through `list_agent_configs` or `search_agents`, then persist the verified
+   value in `.local/config.json` before continuing. A match from
+   `list_agent_configs` already has a configuration. A match found only through
+   `search_agents` must be initialized through `create_agent_config`.
+5. When `titleId` is available from `.local/config.json`, do not call
+   `list_agent_configs` or `search_agents`. Call `get_agent_config` once to
+   establish whether its configuration exists. After a successful read or
+   creation, assume it continues to exist and do not repeat a preflight read
+   before each widget.
+6. When the maker supplies exact values or an exact deterministic change, use
+   the direct-update flow. Read and merge the current section only when the
+   requested change does not provide its complete replacement. Call
+   `update_agent_config` directly, report the successful update, and do not open
+   an editing widget.
+7. When the maker wants to explore, choose, review, or edit a widget-supported
+   section without supplying an exact change, call that surface's `open_*` tool.
+   The widget loads the current section and owns editing, validation,
+   confirmation, and publishing.
+8. Treat every provided config section as a bulk replacement:
    - An omitted section remains unchanged.
    - A provided section replaces the complete section.
    - An empty section resets or clears that section.
-7. Merge add/remove/reorder/toggle requests into the current section and submit
-   the complete resulting section.
-8. Set the matching update flag to `true` for every provided section. A section
-   with a false or omitted update flag is ignored by the backend.
-9. Before an agent-initiated branding update containing colors, run
+9. Merge add/remove/reorder/toggle requests into the current section and submit
+   the complete resulting section for chat-driven surfaces.
+10. Before a model-driven branding update containing colors, run
    `python scripts/validate_branding.py` for each changed theme.
-10. Treat failed contrast validation as advisory. Warn the maker, show the
+11. Treat failed contrast validation as advisory. Warn the maker, show the
    result, and require explicit confirmation before submitting that color.
-11. Send only `name` and `accentColor` for each theme. The server derives
+12. Send only `name` and `accentColor` for each theme. The server derives
     `hoverColor` and `activeColor`.
-12. Confirm section clears, branding resets, and full-list replacements before
-    writing.
-13. Use the `update_agent_config` response as the operation result. It contains
+13. Confirm section clears and branding resets before writing. An exact
+    replacement list or CSV supplied by the maker authorizes that replacement
+    without another confirmation.
+14. Use the `update_agent_config` response as the operation result. It contains
     the updated configuration and success information, so do not perform a
     follow-up read.
-14. Open at most one widget per turn. A widget owns its Publish operation; do
-    not issue a duplicate write after opening it.
-15. Treat the agent name and icon as read-only. You may report the name and
+15. After calling an `open_*` tool, let the widget issue
+    `update_agent_config`. Do not issue a duplicate model-driven update.
+16. Call at most one `open_*` tool per turn.
+17. Treat the agent name and icon as read-only. You may report the name and
     display the icon, but never include either in an update payload or imply
     that the AgentConfiguration server can edit them.
-16. Treat a 404 from `get_agent_config` or any `open_*` tool as an
-    uninitialized landing-page configuration and follow the initialization
-    flow below.
+18. Treat a 404 from the initial `get_agent_config` as an uninitialized
+    landing-page configuration. Treat a later 404 after existence was
+    established as a configuration deleted elsewhere. Both follow the
+    creation flow below without rediscovering `titleId`.
+19. After `list_agent_configs` or `search_agents` returns an unambiguous local
+   match, do not respond to the maker or continue to another MCP call until
+   the resolved `titleId` is persisted and verified in `.local/config.json`
+   according to **Persist a discovered title ID**.
+20. When `open_starter_prompts` returns no starter prompts, tell the maker that
+    the widget opened with a default set of starter prompts. Explain that they
+    can edit and publish the defaults or publish them as-is.
+21. `delete_agent_config` removes every landing-page configuration section and
+    restores the default landing-page experience. It is destructive. Always
+    explain that effect and obtain explicit confirmation immediately before
+    calling it, even when the maker's initial request already said to delete or
+    reset all landing-page configuration.
 
 ## Resolve the target
 
-1. Use a `titleId` supplied explicitly by the maker.
-2. Otherwise, when `.local/config.json` is available, resolve the active agent
-   from `agent` and use `agent.titleId`.
-3. When the `titleId` is still unknown, call `list_agent_configs` and match its
-   configured agents against the active or maker-supplied agent name.
-4. When there is no configured match, call `search_agents` with a distinctive
-   substring of the agent name. The server does not require a three-character
-   minimum.
-5. Use an unambiguous matching result's `titleId`. When multiple candidates
+For a request to remove all landing-page configuration, follow **Delete all
+landing-page configuration**. That flow does not create or read a configuration
+before deleting it.
+
+1. Read `.local/config.json` and identify the local target:
+   - For the active agent, use the backward-compatible `agent` object.
+   - For another locally configured agent, match its `agents` entry by `slug`,
+     `botId`, or unambiguous `name`.
+2. Use a `titleId` supplied explicitly by the maker. Otherwise, use the target
+   entry's `titleId` when present.
+3. When `titleId` was supplied or already stored, call `get_agent_config` once
+   with that value. Do not call `list_agent_configs` or `search_agents`.
+   - On success, reuse the returned configuration when the current request
+     needs it and treat the configuration as existing for the rest of the
+     flow.
+   - On 404, follow **Create or recreate missing configuration**.
+4. When `titleId` is still unknown, call `list_agent_configs` and match
+   its configured agents against the target agent name.
+5. When `list_agent_configs` returns an unambiguous match:
+   - Persist its `titleId` according to **Persist a discovered title ID**.
+   - Treat the configuration as existing. Do not call `get_agent_config` merely
+     to verify it before opening a widget.
+6. When there is no configured match, call `search_agents` with a distinctive
+   substring of the target agent name. The server does not require a
+   three-character minimum.
+7. Use an unambiguous search result's `titleId`. When multiple candidates
    match, ask the maker to choose. When none match, explain that the agent could
    not be found and ask the maker to verify its name.
+8. Persist the search result's `titleId` according to
+   **Persist a discovered title ID**, then follow
+   **Create or recreate missing configuration**. Do not call
+   `get_agent_config` between search and creation.
 
 Do not guess the identifier from the agent name, schema name, `botId`, Teams
 app ID, or manifest ID.
+
+## Persist a discovered title ID
+
+Treat `titleId` as an optional field on the existing local agent object. A
+configured agent retains its established fields:
+
+```json
+{
+  "name": "Employee Self-Service HR",
+  "botId": "<Dataverse bot ID>",
+  "titleId": "<MetaOS title ID>",
+  "schemaName": "msdyn_copilotforemployeeselfservicehr",
+  "isManaged": true,
+  "slug": "employee-self-service-hr",
+  "folder": "workspace/agents/employee-self-service-hr"
+}
+```
+
+After `list_agent_configs` or `search_agents` returns an unambiguous match:
+
+1. Read the complete `.local/config.json`.
+2. Find the target entry in `agents`. Match the already-selected local target by
+   `botId` when available, then by `slug`. Use `name` only when it is
+   unambiguous.
+3. Add or replace only that entry's `titleId`.
+4. When the target is active, also add or replace `agent.titleId`. Treat the
+   target as active when its `slug` equals `activeAgent` or its `botId`/`slug`
+   matches the backward-compatible `agent` object.
+5. Preserve the `agents` array, the complete `agent` object, every other agent
+   field, and every top-level config field.
+6. Write valid JSON back to `.local/config.json`.
+
+**Completion gate:** Reread `.local/config.json` after writing it. Do not
+respond or continue until the matching `agents` entry contains the resolved
+`titleId` and, for the active target, `agent.titleId` contains the same value.
+
+Do not create a partial `agents` entry from an MCP result. When no matching local
+entry exists, use the resolved `titleId` for the current request, but do not
+invent `botId`, `schemaName`, `isManaged`, `slug`, or `folder`.
 
 ## Start a guided configuration
 
 When the maker asks to configure or set up the landing page:
 
-1. Resolve `titleId`.
-2. Call `get_agent_config`.
+1. Resolve the target and establish that its configuration exists.
+2. Obtain the complete current configuration:
+   - Reuse a successful `get_agent_config` or `create_agent_config` result.
+   - When resolution used `list_agent_configs`, call `get_agent_config` because
+     the guided summary needs the complete configuration.
 3. Present the current state:
 
    | Area | Show |
@@ -91,46 +180,116 @@ When the maker asks to configure or set up the landing page:
    | Agent identity | Read-only name and whether an icon is available |
 
 4. Ask which area the maker wants to configure.
-5. Complete one area at a time.
+5. Complete one area at a time. Do not repeat `get_agent_config` before opening
+   each selected widget.
 
 ## Route the request
 
 | Intent | Tool flow |
 |---|---|
-| View or summarize current configuration | `get_agent_config` |
-| View the agent name | `get_agent_config`, then report the read-only name |
-| Show the agent icon | `get_agent_config`, decode, then open the read-only PNG |
-| Update branding or an accent color | Resolve `titleId` -> call `open_accent_color` immediately |
-| Update quick links | Resolve `titleId` -> call `open_quick_links` immediately |
-| Update starter prompts | Resolve `titleId` -> call `open_starter_prompts` immediately |
-| Update insight cards or another surface without an editor | `get_agent_config` -> merge and validate complete affected section(s) -> `update_agent_config` |
+| View or summarize current configuration | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` |
+| View the agent name | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` -> report the read-only name |
+| Show the agent icon | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` -> decode and display the read-only PNG |
+| Apply exact branding/accent values | Resolve the target and establish existence -> get current branding only when a merge is required -> validate changed colors -> `update_agent_config` -> report success |
+| Explore or edit branding without exact values | Resolve the target and establish existence -> `open_accent_color`; the widget validates and publishes |
+| Apply an exact quick-links list/CSV or deterministic link change | Resolve the target and establish existence -> get current links only when a merge is required -> validate the complete result -> `update_agent_config` -> report success |
+| Explore or edit quick links without an exact change | Resolve the target and establish existence -> `open_quick_links`; the widget validates and publishes |
+| Apply an exact starter-prompts list/CSV or deterministic prompt change | Resolve the target and establish existence -> get current pivots only when a merge is required -> validate the complete result -> `update_agent_config` -> report success |
+| Explore or edit starter prompts without an exact change | Resolve the target and establish existence -> `open_starter_prompts`; the widget supplies defaults when empty, then validates and publishes |
+| Update insight cards or another surface without an editor | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` -> merge and validate complete affected section(s) -> `update_agent_config` |
+| Remove all landing-page configuration | Follow **Delete all landing-page configuration** |
 | Update the agent name or icon | Explain that the field is read-only and do not call an update tool |
 
-The maker does not need to ask for an editor or widget explicitly. Requests
-such as "change the accent color," "add a quick link," or "update a starter
-prompt" always open the corresponding editing surface. Let the widget read,
-validate, and publish its own section.
+The maker does not need to name a tool explicitly. A request such as "change my
+accent color" opens the corresponding editor because the value is still open.
+A request such as "change my light accent color to `#CCAA00`" supplies an exact
+change and uses `update_agent_config` directly.
 
-## Initialize missing configuration
+## Route exact changes directly
 
-When `get_agent_config` or any `open_*` tool returns 404:
+An exact change provides enough information to compute the complete replacement
+deterministically. Examples include:
 
-1. Explain that the agent's landing page has not been configured yet and must
-   be initialized.
-2. Resolve the `titleId`:
-   - When the attempted tool call used the correct known `titleId`, keep it.
-   - Otherwise, call `list_agent_configs` and match by agent name. If a match
-     exists, use its `titleId` and retry the original tool because that agent
-     already has a configuration.
-   - If no configured agent matches, call `search_agents` with a distinctive
-     substring of the agent name. Use an unambiguous matching result's
-     `titleId`; ask the maker to choose when multiple candidates match.
-3. When the agent is absent from `list_agent_configs`, call
-   `create_agent_config` with the resolved `titleId`. If the maker's original
-   request was read-only, first explain that initialization creates a
-   configuration and get confirmation. A request to set up, configure, or
-   update the landing page already authorizes initialization.
-4. Continue the maker's original request:
+- a specific accent color;
+- a complete quick-links or starter-prompts list;
+- a CSV file containing the complete replacement list;
+- "add this prompt to the HR category";
+- "remove the Benefits link";
+- "move this prompt before that prompt"; or
+- explicit insight-card toggle values.
+
+For an exact change:
+
+1. Resolve the target and establish that its configuration exists.
+2. Determine whether the request supplies the complete section:
+   - For a complete list, complete nested array, or CSV replacement, validate and
+     use it directly.
+   - For one field, append, remove, reorder, or toggle, reuse an available full
+     configuration result or call `get_agent_config`, then read the affected
+     section and merge the requested change.
+3. Validate the complete resulting section. Branding follows the contrast flow.
+4. Call `update_agent_config` with only the affected complete section.
+5. Use the tool result as the operation result and tell the maker the update was
+   made. Do not call an `open_*` tool and do not perform a follow-up read.
+
+For "add this prompt to the HR category":
+
+1. Obtain the current complete `pivots` array.
+2. Match the HR category by an unambiguous category `displayName`. Ask the maker
+   to choose when no category or multiple categories match.
+3. Append the validated prompt to that category's
+   `conversationStarterPrompts`.
+4. Submit the entire resulting `pivots` array through `update_agent_config`.
+
+Exact requests still obey destructive confirmation rules for section clears,
+branding resets, and `delete_agent_config`, plus explicit confirmation after an
+advisory contrast failure.
+
+## Delete all landing-page configuration
+
+Deletion removes the complete saved landing-page configuration and restores the
+default landing-page experience. It does not edit or remove the local agent
+entry or its stored `titleId`.
+
+1. Read `.local/config.json` and identify the local target.
+2. Resolve `titleId` without creating or reading a configuration:
+   - Use a maker-supplied `titleId` or the target entry's stored `titleId`.
+   - When `titleId` is absent, call `list_agent_configs` and match the target
+     agent. Persist an unambiguous match according to
+     **Persist a discovered title ID**.
+   - When `list_agent_configs` has no matching configured agent, tell the maker
+     that the default landing-page experience is already active. Do not call
+     `search_agents`, `create_agent_config`, or `delete_agent_config`.
+3. Explain that deletion removes branding, quick links, starter prompts, and
+   insight-card settings and restores their defaults.
+4. Obtain explicit confirmation immediately before the delete call. The
+   original delete request does not satisfy this confirmation.
+5. Call `delete_agent_config` once with `titleId`.
+6. On success, tell the maker that all landing-page configuration was removed
+   and the default experience was restored. Keep the stored `titleId`.
+7. When delete returns 404, explain that the configuration is already absent
+   and the default experience is active. Do not create or recreate it.
+
+## Create or recreate missing configuration
+
+Use this flow after `search_agents` resolves an agent absent from
+`list_agent_configs`, when the initial `get_agent_config` returns 404, or when a
+later `get_agent_config` or `open_*` call returns 404:
+
+1. Keep the known `titleId`. Do not repeat `list_agent_configs` or
+   `search_agents`.
+2. Explain the applicable state:
+   - After search or the initial stored-ID read, the landing page has not been
+     configured yet.
+   - After a prior successful read, creation, or widget open, the configuration
+     was deleted elsewhere and can be recreated.
+3. Offer to call `create_agent_config` with the resolved `titleId`. If the
+   maker's original request was read-only, get confirmation before calling it.
+   A request to set up, configure, or update the landing page already authorizes
+   initialization, so continue without asking again.
+4. After successful creation, treat the configuration as existing. Do not call
+   `get_agent_config` merely to verify the creation.
+5. Continue the maker's original request:
    - For a request to view or summarize configuration, present the
      configuration returned by `create_agent_config`.
    - For a request handled by an `open_*` editor, call the originally requested
@@ -148,16 +307,7 @@ any other creation failure, surface the actual error.
 ## Build update payloads
 
 `update_agent_config` takes `titleId` and a `config` object. Include the complete
-new value and update flag for each affected section.
-
-| Section | Required update flag |
-|---|---|
-| `branding` | `isBrandingUpdated: true` |
-| `quickLinksConfig` | `areQuickLinksUpdated: true` |
-| `pivots` | `isPivotUpdated: true` |
-| `insightCardsConfig` | `areInsightCardsUpdated: true` |
-
-Omit every unaffected section and its flag.
+new value for each affected section. Omit every unaffected section.
 
 ## Branding
 
@@ -189,7 +339,6 @@ Omit every unaffected section and its flag.
    {
      "titleId": "<titleId>",
      "config": {
-       "isBrandingUpdated": true,
        "branding": {
          "theming": [
            { "name": "light", "accentColor": "#RRGGBB" },
@@ -203,9 +352,8 @@ Omit every unaffected section and its flag.
 The backend allows at most five theme entries and theme names up to 30
 characters. This experience uses the `light` and `dark` themes.
 
-Reset branding by submitting `branding: { "theming": [] }` with
-`isBrandingUpdated: true` after confirmation. A reset does not run contrast
-validation.
+Reset branding by submitting `branding: { "theming": [] }` after confirmation.
+A reset does not run contrast validation.
 
 ## Quick links
 
@@ -216,7 +364,7 @@ Validate the complete replacement array before writing:
 - Maximum links: 10.
 - `displayText`: non-empty, maximum 300 characters.
 - `address`: non-empty, maximum 2,000 characters.
-- `address`: absolute HTTP or HTTPS URL.
+- `address`: absolute HTTPS URL.
 
 Add, remove, and reorder operations use read-merge-write. A supplied list
 replaces the complete array after confirmation. Clearing sends:
@@ -225,7 +373,6 @@ replaces the complete array after confirmation. Clearing sends:
 {
   "titleId": "<titleId>",
   "config": {
-    "areQuickLinksUpdated": true,
     "quickLinksConfig": {
       "quickLinks": []
     }
@@ -234,6 +381,12 @@ replaces the complete array after confirmation. Clearing sends:
 ```
 
 ## Starter prompts
+
+When `open_starter_prompts` returns an empty or absent `pivots` array, the widget
+opens with a default set of starter prompts. Accompany the widget with:
+
+> No starter prompts are configured yet, so the editor is showing a default
+> set. You can update and publish them, or publish them as-is.
 
 Validate the complete replacement array before writing:
 
@@ -244,7 +397,7 @@ Validate the complete replacement array before writing:
 - Prompt `displayText`: non-null, maximum 4,000 characters.
 
 Add, remove, and reorder operations use read-merge-write. Clearing sends
-`pivots: []` with `isPivotUpdated: true`.
+`pivots: []`.
 
 ## Insight cards
 
@@ -255,7 +408,6 @@ merge the requested toggle, and submit both values together:
 {
   "titleId": "<titleId>",
   "config": {
-    "areInsightCardsUpdated": true,
     "insightCardsConfig": {
       "isStayUpToDateEnabled": true,
       "isQuickAccessEnabled": false
@@ -266,8 +418,8 @@ merge the requested toggle, and submit both values together:
 
 ## Display the read-only agent icon
 
-1. Call `get_agent_config`.
-2. Read `agent.icon` from the response and require it to begin with
+1. Resolve the target and current configuration.
+2. Read `icon` from the returned configuration and require it to begin with
    `data:image/png;base64,`.
 3. Take everything after `base64,` verbatim and write it to
    `.local/landing-page-config/agent-icon.b64`.
@@ -284,6 +436,7 @@ merge the requested toggle, and submit both values together:
 6. Delete the `.b64` file after a successful decode.
 7. Display the PNG through a user-visible host capability. A model-only image
    inspection does not display it to the maker.
+8. Do not issue an update for the read-only icon.
 
 ### VS Code
 
@@ -310,7 +463,8 @@ claim the maker can see an image rendered only to the model.
   Employee Agent configurations.
 - Tenant gating: explain that landing-page configuration is unavailable for
   the tenant.
-- Missing configuration/404: follow **Initialize missing configuration**.
+- Missing configuration/404: follow **Create or recreate missing
+  configuration**.
 - Ineligible agent during creation: explain that landing-page configuration is
   available only for a supported primary ESS Core, IT, or HR agent.
 - Validation failure: show the field-specific server message.

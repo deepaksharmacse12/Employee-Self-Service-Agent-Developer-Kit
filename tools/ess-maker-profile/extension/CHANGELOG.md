@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.24 (POC)
+
+- Added **Customize landing page** to Quick Actions. The setup-gated action
+  opens a guided Copilot chat for branding, quick links, starter prompts, and
+  insight cards.
+
 ## 0.4.22 (POC)
 
 - **Tutorial is now a custom webview panel** — no checkboxes, no step

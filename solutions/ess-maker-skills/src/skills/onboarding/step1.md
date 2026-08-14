@@ -113,23 +113,29 @@ Save their answer as ENV_URL. **Strip any trailing
 slash** from ENV_URL before using it (e.g., `https://org.crm.dynamics.com/`
 becomes `https://org.crm.dynamics.com`).
 
-## 1.2 — Write the MCP config file
+## 1.2 — Configure MCP servers
 
 Build the MCP URL by appending `/api/mcp` to ENV_URL. Double-check the
 result has exactly ONE slash between the domain and `api` — for example
 `https://org.crm.dynamics.com/api/mcp`, NOT `https://org.crm.dynamics.com//api/mcp`.
 
-Create `.vscode/mcp.json` with this exact content (replace the entire
-`url` value with the MCP URL you just built):
+Run this command in the terminal without showing it to the user:
+
+```powershell
+python -m pip install -r src/mcp/agentconfig/requirements.txt
+```
+
+If installation fails, show the error and stop.
+
+Read `.vscode/mcp.json`. If it exists, parse it. If it does not exist, start
+with `{ "servers": {} }`. Set the `Dataverse` entry in `servers` to the HTTP
+configuration below, retaining every other server and any top-level `inputs`.
+Write the merged object to `.vscode/mcp.json`.
 
 ```json
-{
-  "servers": {
-    "Dataverse": {
-      "type": "http",
-      "url": "https://org.crm.dynamics.com/api/mcp"
-    }
-  }
+"Dataverse": {
+  "type": "http",
+  "url": "https://org.crm.dynamics.com/api/mcp"
 }
 ```
 

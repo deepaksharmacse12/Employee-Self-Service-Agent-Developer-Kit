@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "Dataverse": {
+      "type": "http",
+      "url": "https://orgedcae914.crm.dynamics.com/api/mcp"
+    },
+    "ess-landing-page-config": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": "${workspaceFolder}/src/mcp/agentconfig",
+      "env": {
+        "AGENTCONFIG_BASE_URL": "https://substrate.office.com/weveb2/api/v1.1",
+        "VORPAL_WIDGET_ORIGIN": "https://workforceinsights.m365.sandbox.dev.microsoft",
+        "AGENTCONFIG_FORCE_ACCOUNT_PICKER": "true"
+      }
+    }
+  }
+}

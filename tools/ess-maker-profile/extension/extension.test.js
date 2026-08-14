@@ -43,8 +43,8 @@ function test(name, fn) {
 
 console.log('ACTIONS structure:');
 
-test('has 7 actions', () => {
-    assert.strictEqual(ACTIONS.length, 7);
+test('has 8 actions', () => {
+    assert.strictEqual(ACTIONS.length, 8);
 });
 
 test('every action has required fields', () => {
@@ -53,15 +53,16 @@ test('every action has required fields', () => {
         assert.ok(a.icon, `missing icon for ${a.id}`);
         assert.ok(a.label, `missing label for ${a.id}`);
         assert.ok(a.sub, `missing sub for ${a.id}`);
-        assert.ok(a.slash, `missing slash for ${a.id}`);
+        assert.ok(a.query, `missing query for ${a.id}`);
         assert.ok(Array.isArray(a.requires), `requires not array for ${a.id}`);
     }
 });
 
-test('every slash command starts with /', () => {
-    for (const a of ACTIONS) {
-        assert.ok(a.slash.startsWith('/'), `${a.id}: slash "${a.slash}" doesn't start with /`);
-    }
+test('landing-page action sends the skill-triggering query', () => {
+    const landingPage = ACTIONS.find(a => a.id === 'landingPage');
+    assert.strictEqual(landingPage.label, 'Customize landing page');
+    assert.strictEqual(landingPage.query, 'Customize my landing page');
+    assert.deepStrictEqual(landingPage.requires, ['setup']);
 });
 
 test('setup has no requirements', () => {
@@ -69,11 +70,11 @@ test('setup has no requirements', () => {
     assert.deepStrictEqual(setup.requires, []);
 });
 
-test('evaluate and push require flightcheck', () => {
+test('evaluate and push require setup', () => {
     const evaluate = ACTIONS.find(a => a.id === 'evaluate');
     const push = ACTIONS.find(a => a.id === 'push');
-    assert.ok(evaluate.requires.includes('flightcheck'));
-    assert.ok(push.requires.includes('flightcheck'));
+    assert.deepStrictEqual(evaluate.requires, ['setup']);
+    assert.deepStrictEqual(push.requires, ['setup']);
 });
 
 test('all requires reference valid action ids', () => {
@@ -113,17 +114,12 @@ test('action is enabled when all requires are met', () => {
     assert.strictEqual(result.blockedBy, null);
 });
 
-test('evaluate requires both setup and flightcheck', () => {
+test('evaluate requires setup', () => {
     const evaluate = ACTIONS.find(a => a.id === 'evaluate');
-    // Only setup done
     let result = actionState(evaluate, new Set(['setup']));
-    assert.strictEqual(result.enabled, false);
-    // Only flightcheck done
+    assert.strictEqual(result.enabled, true);
     result = actionState(evaluate, new Set(['flightcheck']));
     assert.strictEqual(result.enabled, false);
-    // Both done
-    result = actionState(evaluate, new Set(['setup', 'flightcheck']));
-    assert.strictEqual(result.enabled, true);
 });
 
 test('done reflects whether action itself is completed', () => {
@@ -135,7 +131,7 @@ test('done reflects whether action itself is completed', () => {
 test('blockedBy contains human-readable labels', () => {
     const push = ACTIONS.find(a => a.id === 'push');
     const result = actionState(push, new Set());
-    assert.ok(result.blockedBy.includes('Connect'));
+    assert.ok(result.blockedBy.includes('Setup'));
 });
 
 console.log('\nCHAT_ONLY_LAYOUT settings:');

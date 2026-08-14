@@ -14,6 +14,7 @@ Usage:
     python scripts/fetch_and_setup.py \\
         --url https://org.crm.dynamics.com \\
         --bot-id abc-123-def \\
+        --title-id metaos-title-id \\
         --name "Employee Self-Service IT" \\
         --schema msdyn_ESSAgent \\
         [--managed]
@@ -227,7 +228,7 @@ def save_temp_files(components, template_configs, workflows):
 
 
 def run_setup(env_url, args_bot_id, args_name, args_schema, args_managed,
-              paths, extra_flags=None):
+              paths, *, title_id=None, extra_flags=None):
     """Run setup.py with the given temp file paths."""
     print("\nRunning setup...\n")
     cmd = [
@@ -238,6 +239,8 @@ def run_setup(env_url, args_bot_id, args_name, args_schema, args_managed,
         "--schema", args_schema,
         "--components", paths["components"],
     ]
+    if title_id:
+        cmd.extend(["--title-id", title_id])
     if args_managed:
         cmd.append("--managed")
     if "template_configs" in paths:
@@ -251,6 +254,11 @@ def run_setup(env_url, args_bot_id, args_name, args_schema, args_managed,
     return result.returncode
 
 
+def resolve_title_id(requested_title_id, agent_config):
+    """Prefer a supplied title ID and otherwise preserve the configured one."""
+    return requested_title_id or agent_config.get("titleId")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fetch agent components from Dataverse and run setup")
@@ -259,6 +267,8 @@ def main():
                              "(e.g. https://org.crm.dynamics.com)")
     parser.add_argument("--bot-id",
                         help="Bot ID (GUID) from Dataverse")
+    parser.add_argument("--title-id",
+                        help="MetaOS title ID for landing-page configuration")
     parser.add_argument("--name",
                         help="Agent display name")
     parser.add_argument("--schema",
@@ -277,6 +287,7 @@ def main():
         name = config["agent"]["name"]
         schema = config["agent"]["schemaName"]
         managed = config["agent"].get("isManaged", False)
+        title_id = resolve_title_id(args.title_id, config["agent"])
 
         print("Authenticating to Dataverse...")
         token = authenticate(env_url)
@@ -297,7 +308,8 @@ def main():
             sys.exit(1)
         paths = save_temp_files(components, template_configs, workflows)
         rc = run_setup(env_url, bot_id, name, schema, managed,
-                       paths, extra_flags=["--refresh"])
+                       paths, title_id=title_id,
+                       extra_flags=["--refresh"])
         sys.exit(rc)
 
     # --- Normal mode: requires all arguments ---
@@ -327,7 +339,7 @@ def main():
         sys.exit(1)
     paths = save_temp_files(components, template_configs, workflows)
     rc = run_setup(env_url, args.bot_id, args.name, args.schema,
-                   args.managed, paths)
+                   args.managed, paths, title_id=args.title_id)
     sys.exit(rc)
 
 
