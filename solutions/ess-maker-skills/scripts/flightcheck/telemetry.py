@@ -278,6 +278,46 @@ def cache_tenant_name(
         pass
 
 
+# Persisted raw tenant GUID so ADK events emitted from a *fresh Python
+# subprocess* (e.g. `python scripts/emit_capability.py <cap>` invoked from a
+# SKILL.md step) can still stamp the tenant_id — without this, the subprocess'
+# in-memory ``_IDENTITY["tenant_id"]`` is empty, ``classify_tenant("")`` returns
+# ``unknown``, and the event never lands on the External (``tenant_class ==
+# "customer"``) dashboard. Separate file from ``.tenant_name`` because tenant_id
+# is available before (and even without) any Graph tenant-name resolution.
+_TENANT_ID_FILE = ".tenant_id"
+
+
+def cache_tenant_id(tenant_id: str, local_dir: str = ".local") -> None:
+    """Persist the raw tenant GUID for reuse by later same-install processes.
+
+    Best-effort: any IO error is swallowed (telemetry must never break a
+    flow). No-op when ``tenant_id`` is empty — we never persist a placeholder.
+    The value is written under the gitignored ``.local/`` dir on the maker's
+    own machine, mirroring how ``.instance_id`` is persisted. Overwrites any
+    prior value so a maker who switches tenants sees the latest one.
+    """
+    if not tenant_id:
+        return
+    path = os.path.join(local_dir, _TENANT_ID_FILE)
+    try:
+        os.makedirs(local_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(tenant_id).strip())
+    except OSError:
+        pass
+
+
+def get_cached_tenant_id(local_dir: str = ".local") -> str:
+    """Return the persisted tenant GUID, or ``""`` if unavailable/unreadable."""
+    path = os.path.join(local_dir, _TENANT_ID_FILE)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def get_cached_tenant_name(tenant_id: str, local_dir: str = ".local") -> str:
     """Return the cached org display name IFF it matches ``tenant_id``.
 

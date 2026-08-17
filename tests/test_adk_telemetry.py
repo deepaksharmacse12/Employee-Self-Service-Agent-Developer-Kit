@@ -62,6 +62,7 @@ def _isolate(monkeypatch, tmp_path):
     # these on _fc at runtime, so patching them here redirects the cache dir.
     _cache_dir = str(tmp_path / ".local")
     _real_cache, _real_get = _fc.cache_tenant_name, _fc.get_cached_tenant_name
+    _real_cache_id, _real_get_id = _fc.cache_tenant_id, _fc.get_cached_tenant_id
     monkeypatch.setattr(
         _fc, "cache_tenant_name",
         lambda tid, name, local_dir=_cache_dir: _real_cache(tid, name, local_dir=local_dir),
@@ -69,6 +70,14 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(
         _fc, "get_cached_tenant_name",
         lambda tid, local_dir=_cache_dir: _real_get(tid, local_dir=local_dir),
+    )
+    monkeypatch.setattr(
+        _fc, "cache_tenant_id",
+        lambda tid, local_dir=_cache_dir: _real_cache_id(tid, local_dir=local_dir),
+    )
+    monkeypatch.setattr(
+        _fc, "get_cached_tenant_id",
+        lambda local_dir=_cache_dir: _real_get_id(local_dir=local_dir),
     )
 
     for var in (
@@ -153,6 +162,68 @@ def test_tenant_name_reused_by_later_process_without_identity(monkeypatch):
     )
     dims = adk.common_dimensions(adk.SURFACE_CLI, tenant_id="tenant-Z")
     assert dims["tenant_name"] == "Contoso"
+
+
+def test_tenant_id_reused_by_fresh_subprocess_without_identity(monkeypatch):
+    # Reproduces the emit_capability.py shim scenario: SKILL.md steps launch
+    # `python scripts/emit_capability.py <cap>` as a *fresh* Python subprocess,
+    # which never calls set_identity. Without the on-disk tenant_id fallback,
+    # such a subprocess emits with tenant_id="" -> classify_tenant("")=="unknown",
+    # so the capability event never appears on the customer-filtered External
+    # dashboard even though the maker's earlier auth flow knew the tenant.
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    # Auth flow (parent process) persists tenant_id.
+    adk.set_identity(tenant_id="tenant-Z")
+    # Subprocess simulation: brand-new interpreter -> empty _IDENTITY, no
+    # set_identity call.
+    monkeypatch.setattr(
+        adk, "_IDENTITY", {"instance_id": "", "tenant_id": "", "tenant_name": ""}
+    )
+    dims = adk.common_dimensions(adk.SURFACE_CLI, session_id="sid-1")
+    # The persisted GUID is picked up and the event classifies as customer,
+    # not unknown.
+    assert dims["tenant_id"] == "tenant-Z"
+    assert dims["tenant_class"] == _fc.TENANT_CLASS_CUSTOMER
+
+
+def test_tenant_id_explicit_kwarg_wins_over_cached(monkeypatch):
+    # An explicit tenant_id passed by the caller must always win, even when a
+    # different tenant_id sits in the on-disk cache (e.g. subprocess is
+    # emitting on behalf of a specific tenant that isn't the last-cached one).
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    adk.set_identity(tenant_id="tenant-Z")  # writes tenant-Z to disk
+    monkeypatch.setattr(
+        adk, "_IDENTITY", {"instance_id": "", "tenant_id": "", "tenant_name": ""}
+    )
+    dims = adk.common_dimensions(adk.SURFACE_CLI, tenant_id="tenant-Y")
+    assert dims["tenant_id"] == "tenant-Y"
+
+
+def test_tenant_id_explicit_empty_kwarg_does_not_fall_back(monkeypatch):
+    # An explicit empty tenant_id (caller genuinely knows there is none)
+    # must NOT be overridden by the disk cache — that would leak a stale
+    # tenant_id onto an event the caller deliberately marked anonymous.
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    adk.set_identity(tenant_id="tenant-Z")
+    monkeypatch.setattr(
+        adk, "_IDENTITY", {"instance_id": "", "tenant_id": "", "tenant_name": ""}
+    )
+    dims = adk.common_dimensions(adk.SURFACE_CLI, tenant_id="")
+    assert dims["tenant_id"] == ""
+
+
+def test_cache_tenant_id_round_trip_and_guards(tmp_path):
+    d = str(tmp_path / "state")
+    _fc.cache_tenant_id("tenant-Z", local_dir=d)
+    assert _fc.get_cached_tenant_id(local_dir=d) == "tenant-Z"
+    # Missing dir/file -> "".
+    assert _fc.get_cached_tenant_id(local_dir=str(tmp_path / "nope")) == ""
+    # Empty tenant_id is a no-op (never overwrite a valid cache with "").
+    _fc.cache_tenant_id("", local_dir=d)
+    assert _fc.get_cached_tenant_id(local_dir=d) == "tenant-Z"
+    # Whitespace is stripped on write.
+    _fc.cache_tenant_id("  tenant-Y  ", local_dir=d)
+    assert _fc.get_cached_tenant_id(local_dir=d) == "tenant-Y"
 
 
 def test_cache_tenant_name_round_trip_and_guards(tmp_path):

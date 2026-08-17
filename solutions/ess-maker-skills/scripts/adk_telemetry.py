@@ -218,6 +218,13 @@ def set_identity(
     )
     _IDENTITY["tenant_id"] = tenant_id or ""
     _IDENTITY["tenant_name"] = tenant_name or ""
+    # Persist tenant_id to disk so a *later* Python subprocess (e.g. the
+    # emit_capability.py shim launched from a SKILL.md step) — which never
+    # calls set_identity itself — can still stamp the tenant on its events.
+    # Without this, subprocess-emitted events land with an empty tenant_id,
+    # classify as "unknown", and never show on the customer-filtered dashboard.
+    if _IDENTITY["tenant_id"]:
+        _fc.cache_tenant_id(_IDENTITY["tenant_id"])
     # When a Graph-capable flow (FlightCheck) resolves the org display name,
     # persist it so ADK events emitted later in a *different* process (which
     # only has a Dataverse/BAP token and can't resolve it) can reuse it. The
@@ -373,6 +380,14 @@ def common_dimensions(
 ) -> dict[str, Any]:
     """Build the dimensions present on every event (spec Common Dimensions)."""
     tid = _IDENTITY["tenant_id"] if tenant_id is None else tenant_id
+    # Fall back to the disk-persisted tenant_id when this process never
+    # called set_identity (subprocess launched by emit_capability.py from a
+    # SKILL.md step). Without this, capability events emitted by the shim
+    # carry an empty tenant_id, classify as "unknown" via classify_tenant(""),
+    # and never appear on the customer-filtered External dashboard even
+    # though the maker's earlier auth flow knew the tenant.
+    if not tid and tenant_id is None:
+        tid = _fc.get_cached_tenant_id()
     tname = _IDENTITY["tenant_name"] if tenant_name is None else tenant_name
     # Fall back to the org display name a prior Graph-capable run (FlightCheck)
     # cached for THIS tenant, so pure-ADK events (session/build/deploy/
