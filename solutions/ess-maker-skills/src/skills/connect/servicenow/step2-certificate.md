@@ -35,7 +35,11 @@ Set APP_DISPLAY_NAME to
 `ESS Copilot - ServiceNow Certificate ({INSTANCE_NAME})`.
 
 Read `src/skills/connect/azure/app-registration.md` and follow it,
-passing APP_DISPLAY_NAME and TENANT_ID.
+passing APP_DISPLAY_NAME and TENANT_ID, plus:
+- CONNECTOR_APP_ID = `c26b24aa-7874-4e06-ad55-7d06b1f79b63` (the Power Platform
+  ServiceNow connector)
+- SCOPE_RESOURCE_LABEL = `ServiceNow`
+- CONFIG_PATH = `.local/connect/servicenow/config.json`
 
 When it completes, you will have APP_A_CLIENT_ID, APP_A_OBJECT_ID,
 and SCOPE_GUID.
@@ -752,7 +756,7 @@ also add:
 }
 ```
 
-Update `.local/connect/servicenow/tasks.md` — change step 2 from
+Update `.local/connect/servicenow/steps.md` — change step 2 from
 `- [ ]` to `- [x]`.
 
 **Message:**
@@ -760,7 +764,7 @@ Update `.local/connect/servicenow/tasks.md` — change step 2 from
 ✅ Certificate connection secured — both apps registered, OIDC
 configured, and system user created.
 
-| # | Task | Status |
+| # | Step | Status |
 |---|------|--------|
 | 1 | Instance configured | ✅ |
 | 2 | Connection secured | ✅ |

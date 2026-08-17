@@ -7,10 +7,11 @@ name = "ess-nextgen-migration-toolkit"
 version = "0.1.0"
 description = "Migrates ESS Custom Engine Agents (CA) to Declarative Agents (DA)."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Anil Kumar Adepu" }]
 dependencies = [
+    "httpx>=0.28.1",
     "msal>=1.37.0",
 ]
 
@@ -31,7 +32,6 @@ dev = [
 # places top-level packages directly under src/. The build maps them explicitly.
 [tool.hatch.build.targets.wheel]
 packages = [
-    "src/constants",
     "src/core",
     "src/modules",
     "src/service",
@@ -40,7 +40,7 @@ packages = [
 [tool.ruff]
 src = ["src", "tests"]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 # Includes flake8-print (T20) to enforce the "no direct print()" rule from
@@ -52,7 +52,7 @@ select = ["E", "F", "I", "UP", "B", "T20"]
 "tests/**" = ["T20"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 mypy_path = "src"
 strict = true
 warn_unused_configs = true

@@ -3,11 +3,15 @@
 ## MANDATORY FIRST ACTION — Do This Before Anything Else
 
 **YOUR VERY FIRST ACTION on every new conversation must be: use your file
-reading tool to try to read `.local/config.json`.** Do NOT skip this step. Do NOT
-respond to the user's message first. Do NOT greet the user first. Do NOT list
-capabilities. Read the file FIRST, then decide what to do based on the result.
+reading tool to try to read `.local/setup/config.json` and `.local/config.json`.**
+Do NOT skip this step. Do NOT respond to the user's message first. Do NOT greet
+the user first. Do NOT list capabilities. Read both files FIRST, then decide what
+to do based on the result.
 
-### If `.local/config.json` does NOT exist (file not found), OR if it exists but `setup` is NOT `"complete"`:
+### If foundation setup is missing or not ready
+
+Foundation setup is ready only when `.local/setup/config.json` exists and
+`connect_ready` is `true`.
 
 **STOP.** Do not read any skill files. Do not load templates. Do not search for
 files. Do not attempt any customization work. Do not answer questions about ESS.
@@ -20,14 +24,20 @@ Respond with ONLY this exact message and nothing else:
 > your environment. Type `/setup` to get started — it only takes a couple minutes.
 
 **The ONLY exception**: If the user typed `/setup` or explicitly asked to run
-setup, proceed with setup — read `src/skills/onboarding/SKILL.md` and follow it.
+setup, proceed with setup — read `src/skills/foundation-setup/SKILL.md` and follow it.
 
 **This gate applies to ALL user messages** — including "hello", "hi", "help",
 "what can you do", "I need a topic", "create a workflow", or any other request.
-If config doesn't exist or setup isn't complete, and the user didn't say `/setup`,
+If foundation setup isn't ready, and the user didn't say `/setup`,
 show ONLY the welcome message above. No other text. No capabilities list. No greeting.
 
-### If `.local/config.json` exists AND `setup` is `"complete"`:
+### If foundation is ready but the local workspace is not initialized
+
+If `.local/config.json` does not exist or its `setup` value is not `"complete"`,
+apply the same gate above. `/setup` resumes at the local onboarding bootstrap
+through `src/skills/foundation-setup/SKILL.md`.
+
+### If foundation and local workspace setup are complete
 
 Read its contents to get the agent folder, schema name, and configuration.
 Then proceed normally with the user's request.
@@ -47,6 +57,8 @@ You ARE the kit - not a consultant discussing the kit. Your job is to help users
 
 ## Communication Rules
 
+- Follow `src/reference/ui-formatting-guidelines.md` whenever rendering portal
+  navigation, setup instructions, remediation, or troubleshooting guidance.
 - **Never expose internal terminology to the user.** Do not mention: skills, SKILL.md files, prompt files, agents, tools, routing, subagents, flows, checklist files, task files, snapshot files, config files, or any concept related to how you work internally. The user doesn't know or care about these — they just want help.
 - **Never narrate your internal process.** Do not tell the user what files you're reading, what tools you're calling, or what steps you're executing behind the scenes. Just do the work and show the result.
 - **Bad**: "I'm loading the cleanup skill now." / "Let me read the SKILL.md file." / "I'll route you to the workflow creation agent." / "Starting the scan flow by loading the cleanup skill so I can follow its error-fix sequence." / "I'm reading the onboarding instructions and checklist files." / "I'll locate the cloned agent folder and read its core files to build the snapshot outputs." / "I'm updating your progress in the task file."
@@ -86,7 +98,7 @@ Order of grounding sources (highest to lowest):
 2. `src/examples/ess-samples/` - vendored snapshot of the
    microsoft/CopilotStudioSamples Employee Self-Service Agent samples.
 3. `src/skills/` - kit-shipped skill instructions for /create, /update,
-   /delete, /scan, /evaluate, /push, /flightcheck,
+   /delete, /test, /scan, /evaluate, /push, /flightcheck,
    /backup-template-configs, /restore-template-configs, and landing-page
    configuration.
 4. `src/reference/` (other subfolders) - additional kit-shipped guidance.
@@ -294,29 +306,33 @@ After a successful push, `.baseline/` is updated to match the new state.
 
 ### Skill routing for CRUD operations
 
-| User intent                                                                                             | Skill to read                                  |
-| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Connect to ServiceNow/Workday                                                                           | `src/skills/connect/SKILL.md`                  |
-| Create a topic                                                                                          | `src/skills/topics/create/SKILL.md`            |
-| Create a workflow                                                                                       | `src/skills/workflows/create/SKILL.md`         |
-| Update/modify a topic                                                                                   | `src/skills/topics/update/SKILL.md`            |
-| Update/modify a workflow                                                                                | `src/skills/workflows/update/SKILL.md`         |
-| Delete/remove a topic                                                                                   | `src/skills/topics/delete/SKILL.md`            |
-| Delete/remove a workflow                                                                                | `src/skills/workflows/delete/SKILL.md`         |
-| Run pre-deployment readiness check                                                                      | `src/skills/flightcheck/SKILL.md`              |
-| Fix compile errors                                                                                      | `src/skills/cleanup/SKILL.md`                  |
-| Generate evaluation test sets                                                                           | `src/skills/evaluations/create/SKILL.md`       |
-| Update/modify evaluation test cases                                                                     | `src/skills/evaluations/update/SKILL.md`       |
-| Delete evaluation test sets/cases                                                                       | `src/skills/evaluations/delete/SKILL.md`       |
-| Validate / quality-check evaluation test sets                                                           | `src/skills/evaluations/validate/SKILL.md`     |
-| Troubleshoot connectivity/auth issues                                                                   | `src/skills/troubleshoot/SKILL.md`             |
-| Debug Workday ISU errors                                                                                | `src/skills/troubleshoot/SKILL.md`             |
-| Back up Workday HCM template configs before an ESS package update                                       | `src/skills/backup-template-configs/SKILL.md`  |
-| Save / capture / snapshot Workday reference-data customisations                                         | `src/skills/backup-template-configs/SKILL.md`  |
-| Restore Workday HCM template configs after a package update                                             | `src/skills/restore-template-configs/SKILL.md` |
-| Re-apply / put back Workday reference-data customisations                                               | `src/skills/restore-template-configs/SKILL.md` |
-| View or configure ESS landing-page branding, quick links, starter prompts, insight cards, name, or icon | `src/skills/landing-page-config/SKILL.md`      |
-| Invoke any tool from the `ess-landing-page-config` MCP server                                           | `src/skills/landing-page-config/SKILL.md`      |
+| User intent | Skill to read |
+|-------------|--------------|
+| Run common ESS foundation setup (`/setup`) | `src/skills/foundation-setup/SKILL.md` |
+| Provision/connect the Workday setup environment (`/connect workday`) | `src/skills/setup/SKILL.md` |
+| Connect to ServiceNow/Workday | `src/skills/connect/SKILL.md` |
+| Create a topic | `src/skills/topics/create-eval-driven/SKILL.md` |
+| Create a workflow | `src/skills/workflows/create/SKILL.md` |
+| Update/modify a topic | `src/skills/topics/update-eval-driven/SKILL.md` |
+| Update/modify a workflow | `src/skills/workflows/update/SKILL.md` |
+| Delete/remove a topic | `src/skills/topics/delete/SKILL.md` |
+| Delete/remove a workflow | `src/skills/workflows/delete/SKILL.md` |
+| Test/debug a topic | `src/skills/topics/test/SKILL.md` |
+| Test/debug a workflow | `src/skills/workflows/test/SKILL.md` |
+| Run pre-deployment readiness check | `src/skills/flightcheck/SKILL.md` |
+| Fix compile errors | `src/skills/cleanup/SKILL.md` |
+| Generate evaluation test sets | `src/skills/evaluations/create/SKILL.md` |
+| Update/modify evaluation test cases | `src/skills/evaluations/update/SKILL.md` |
+| Delete evaluation test sets/cases | `src/skills/evaluations/delete/SKILL.md` |
+| Validate / quality-check evaluation test sets | `src/skills/evaluations/validate/SKILL.md` |
+| Troubleshoot connectivity/auth issues | `src/skills/troubleshoot/SKILL.md` |
+| Debug Workday ISU errors | `src/skills/troubleshoot/SKILL.md` |
+| Back up Workday HCM template configs before an ESS package update | `src/skills/backup-template-configs/SKILL.md` |
+| Save / capture / snapshot Workday reference-data customisations | `src/skills/backup-template-configs/SKILL.md` |
+| Restore Workday HCM template configs after a package update | `src/skills/restore-template-configs/SKILL.md` |
+| Re-apply / put back Workday reference-data customisations | `src/skills/restore-template-configs/SKILL.md` |
+| View or configure ESS landing-page branding, quick links, starter prompts, insight cards, name, or icon | `src/skills/landing-page-config/SKILL.md` |
+| Invoke any tool from the `ess-landing-page-config` MCP server | `src/skills/landing-page-config/SKILL.md` |
 
 **Trigger phrases for connect:** "connect ServiceNow", "set up ServiceNow",
 "integrate ServiceNow", "connect Workday", "set up Workday", "add ServiceNow",
@@ -340,6 +356,14 @@ links, starter prompts, Stay Up to Date, Quick Access, the agent name, or the
 agent icon, or asks what any landing-page setting controls for employees. Do
 not call an AgentConfiguration MCP tool from a generic flow.
 
+**FlightCheck results rendering:** When presenting `/flightcheck` results (Step 3
+of `src/skills/flightcheck/SKILL.md`), read `workspace/flightcheck/results.json`
+with your file-reading tool and format the summary banner and tables **yourself,
+directly in the chat reply**. Do NOT write or execute any script (`.py`, `.js`,
+`.ps1`, shell one-liner, etc.) to parse the JSON, build the tables, or print the
+summary. Generating a helper script here is a bug — it leaks raw terminal output
+and internal process into chat instead of the clean formatted result.
+
 **Quality validation invocation:** When quality validation is requested on
 eval files — at step 4.3 of the eval create flow, step 4 of the eval
 update flow, OR step 5 of the eval delete flow (single test case deletion
@@ -351,6 +375,38 @@ are applied, re-invoke the subagent and wait for the updated report
 before continuing. Do NOT proceed to review and push until the subagent
 has returned. Do NOT invoke the validate subagent after entire test set
 delete operations or after deleting the last remaining case in a category.
+
+**Topic review invocation:** When the maker runs `/create` or `/update`
+**directly**, at step 6 of the corresponding eval-driven topic flow
+(`src/skills/topics/create-eval-driven/SKILL.md` or
+`src/skills/topics/update-eval-driven/SKILL.md`) — after the scan and before
+the dry run/push — invoke `runSubagent` (the VS Code
+Copilot Chat tool) pointing the subagent to read
+`src/skills/topics/review/SKILL.md` as its first action, scoped to the **single
+single topic just created or updated (pass the agent slug from
+`.local/config.json` and the
+topic stem — the filename without `.mcs.yml`) and asking it to present the
+**maker-facing report**. Running this review is **mandatory** in the direct
+eval-driven `/create` and `/update` flows: wait for the subagent to return,
+then paste its full report
+verbatim into the chat. Do NOT proceed to the dry run or push until the review
+has returned and its report is shown. The findings themselves are **advisory**
+— they never block the push; when findings exist, pause and let the maker
+choose to fix now (via `/update`) or push anyway. If the subagent or its
+detector scripts cannot run, say the review was skipped and continue — a review
+failure never blocks the push.
+
+**Do NOT invoke this step-6.5 review when the create-topic skill is running as
+the Workday setup flow's P6.1 authoring delegation**
+(`src/skills/setup/workday/create-new-topic.md`). At P6.1 the tenant reference
+IDs are not wired yet (P6.2 does that), so a review there would false-flag
+unresolved placeholders — there is **no** topic review at S6.1/P6.1. The Workday
+setup flow performs its **one and only** topic review later, at its **step P6.5
+(checklist row S6.3)** — *after* the `TOPIC-TRIGGER-*` and `TOPIC-INTEGRATION-*`
+checkpoints (S6.1, S6.2) pass and the topic is fully wired. That review uses the
+same invocation (`runSubagent` → `src/skills/topics/review/SKILL.md`, single
+topic, maker-facing report, displayed verbatim) and is `advisory` (row S6.3
+completes once the report is shown — it never blocks setup).
 
 **When the user asks to modify, delete, rename, or otherwise change an agent
 component, ALWAYS load and follow the corresponding skill file.** The skill

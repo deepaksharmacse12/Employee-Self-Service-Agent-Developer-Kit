@@ -18,6 +18,8 @@ codified it has been removed.
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 import responses
 
@@ -25,6 +27,88 @@ from tests.conftest import require_validated_mock
 from tests.mocks import pp_admin as pp
 
 require_validated_mock(pp)
+
+
+class TestAuthenticationScope:
+    def test_bap_only_auth_skips_flow_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        from flightcheck import pp_admin_client
+
+        monkeypatch.chdir(tmp_path)
+        acquired_scopes = []
+
+        cache = Mock()
+        cache.has_state_changed = False
+        app = Mock()
+        app.get_accounts.return_value = []
+
+        def acquire_interactive(scopes, prompt):
+            acquired_scopes.append((scopes, prompt))
+            return {"access_token": f"token-{len(acquired_scopes)}"}
+
+        app.acquire_token_interactive.side_effect = acquire_interactive
+        monkeypatch.setattr(
+            pp_admin_client.msal,
+            "SerializableTokenCache",
+            lambda: cache,
+        )
+        monkeypatch.setattr(
+            pp_admin_client.msal,
+            "PublicClientApplication",
+            lambda *args, **kwargs: app,
+        )
+
+        client = pp_admin_client.PPAdminClient("organizations")
+        token = client.authenticate(include_flow=False)
+
+        assert token == "token-1"
+        assert acquired_scopes == [
+            ([pp_admin_client.PP_SCOPE], "select_account"),
+        ]
+        assert client._flow_token is None
+
+    def test_default_auth_still_acquires_flow_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        from flightcheck import pp_admin_client
+
+        monkeypatch.chdir(tmp_path)
+        acquired_scopes = []
+
+        cache = Mock()
+        cache.has_state_changed = False
+        app = Mock()
+        app.get_accounts.return_value = []
+
+        def acquire_interactive(scopes, prompt):
+            acquired_scopes.append((scopes, prompt))
+            return {"access_token": f"token-{len(acquired_scopes)}"}
+
+        app.acquire_token_interactive.side_effect = acquire_interactive
+        monkeypatch.setattr(
+            pp_admin_client.msal,
+            "SerializableTokenCache",
+            lambda: cache,
+        )
+        monkeypatch.setattr(
+            pp_admin_client.msal,
+            "PublicClientApplication",
+            lambda *args, **kwargs: app,
+        )
+
+        client = pp_admin_client.PPAdminClient("organizations")
+        client.authenticate()
+
+        assert acquired_scopes == [
+            ([pp_admin_client.PP_SCOPE], "select_account"),
+            ([pp_admin_client.FLOW_SCOPE], "select_account"),
+        ]
+        assert client._flow_token == "token-2"
 
 
 @pytest.fixture
@@ -313,3 +397,81 @@ class TestPolicyEnvScopeParsing:
         from flightcheck.pp_admin_client import _policy_env_scope
 
         assert _policy_env_scope(pp.dlp_policy_modern()) == (None, [])
+
+
+class TestGetEnvironmentSkuByDataverseUrl:
+    """Pins PPAdminClient.get_environment_sku_by_dataverse_url — the deploy
+    telemetry classifier resolves sandbox-vs-production from this SKU. Mirrors
+    the host-matching contract of find_environment_id_by_dataverse_url (matches
+    on both instanceUrl and instanceApiUrl), but returns the SKU string."""
+
+    def _make_client(self, envs):
+        from flightcheck.pp_admin_client import PPAdminClient
+
+        client = PPAdminClient(tenant_id="00000000-0000-0000-0000-000000001111")
+        client.get_environments = lambda: envs  # type: ignore[method-assign]
+        return client
+
+    def _env(self, *, sku=None, env_type=None, instance_url="", instance_api_url=""):
+        linked = {}
+        if instance_url:
+            linked["instanceUrl"] = instance_url
+        if instance_api_url:
+            linked["instanceApiUrl"] = instance_api_url
+        props = {"linkedEnvironmentMetadata": linked}
+        if sku is not None:
+            props["environmentSku"] = sku
+        if env_type is not None:
+            props["environmentType"] = env_type
+        return {"name": "bap-env-1", "properties": props}
+
+    def test_returns_sku_on_host_match(self):
+        client = self._make_client([
+            self._env(sku="Sandbox",
+                      instance_api_url="https://orgd98aef4a.api.crm12.dynamics.com"),
+        ])
+        assert client.get_environment_sku_by_dataverse_url(
+            "https://orgd98aef4a.api.crm12.dynamics.com"
+        ) == "Sandbox"
+
+    def test_falls_back_to_environment_type_when_no_sku(self):
+        client = self._make_client([
+            self._env(env_type="Production",
+                      instance_url="https://orgmocktenant.crm.dynamics.com/"),
+        ])
+        assert client.get_environment_sku_by_dataverse_url(
+            "https://orgmocktenant.crm.dynamics.com/"
+        ) == "Production"
+
+    def test_returns_none_when_no_env_matches(self):
+        client = self._make_client([
+            self._env(sku="Production",
+                      instance_url="https://otherorg.crm.dynamics.com/"),
+        ])
+        assert client.get_environment_sku_by_dataverse_url(
+            "https://orgd98aef4a.api.crm12.dynamics.com"
+        ) is None
+
+    def test_skips_envs_with_empty_url_fields(self):
+        client = self._make_client([
+            self._env(sku="ignored"),  # no linked URLs
+            self._env(sku="Trial",
+                      instance_api_url="https://orgd98aef4a.api.crm12.dynamics.com"),
+        ])
+        assert client.get_environment_sku_by_dataverse_url(
+            "https://orgd98aef4a.api.crm12.dynamics.com"
+        ) == "Trial"
+
+
+class TestAuthenticateSilent:
+    """authenticate_silent() must NEVER prompt interactively; when there is no
+    cached token it returns False so best-effort callers (push telemetry) fall
+    back cleanly instead of popping a browser."""
+
+    def test_returns_false_when_no_token_cache(self, chdir_kit_root):
+        from flightcheck.pp_admin_client import PPAdminClient
+
+        # chdir_kit_root created .local/ but no .token_cache.bin — the guard
+        # returns False before touching MSAL (no interactive prompt).
+        client = PPAdminClient(tenant_id="00000000-0000-0000-0000-000000001111")
+        assert client.authenticate_silent() is False

@@ -29,7 +29,7 @@ and runs setup.py automatically. No MCP queries needed.
 If the script fails with an auth error, tell the user to check they selected
 the correct account with access to the environment, and re-run the command.
 
-When the script completes successfully, update `workspace/onboarding/tasks.md` —
+When the script completes successfully, update `workspace/onboarding/steps.md` —
 change step 3 from `- [ ]` to `- [x]`.
 
 **Message:**
@@ -38,16 +38,8 @@ change step 3 from `- [ ]` to `- [x]`.
 
 {paste the script's summary output here}
 
-One more step — we need to start the Dataverse MCP server so the kit can
+One more step — we need to start the **Dataverse MCP** server so the kit can
 work with your environment going forward.
-
-| # | Task | Status |
-|---|------|--------|
-| 1 | Dataverse configured | ✅ |
-| 2 | Agent discovered | ✅ |
-| 3 | Agent extracted | ✅ |
-| 4 | MCP server started | ⬜ |
-| 5 | Readiness check (optional) | ⬜ |
 
 **End message.**
 
@@ -57,13 +49,15 @@ work with your environment going forward.
 
 **Message:**
 
-Start the Dataverse MCP server:
+Start the **Dataverse MCP** server:
 
-1. Press **Ctrl+Shift+P** → type **MCP: List Servers** → select it
-2. Click **Dataverse** → click **Start**
-3. Sign in with your Microsoft account when the browser opens
+1. Press `Ctrl+Shift+P`.
+2. Run `MCP: List Servers`.
+3. Select `Dataverse`.
+4. Choose `Start`.
+5. Sign in with your Microsoft account when the browser opens.
 
-Type **done** when Dataverse shows as Running.
+Type `done` when `Dataverse` shows `Running`.
 
 **End message.**
 
@@ -73,26 +67,28 @@ Wait for the user to respond.
 
 ## 2.3 — Finish
 
-Update `workspace/onboarding/tasks.md` — change step 4 from `- [ ]` to `- [x]`.
+Update `workspace/onboarding/steps.md` — change step 4 from `- [ ]` to `- [x]`.
 
 **Message:**
 
 ✅ Core setup complete!
 
-| # | Task | Status |
-|---|------|--------|
-| 1 | Dataverse configured | ✅ |
-| 2 | Agent discovered | ✅ |
-| 3 | Agent extracted | ✅ |
-| 4 | MCP server started | ✅ |
-| 5 | Readiness check (optional) | ⬜ |
+You can now customize your agent or connect an integration.
 
 You can customize the active agent's landing page from chat, including accent
 colors, categorized starter prompts, quick links, Stay up to date cards, and
 Quick Access cards. Ask **Customize my landing page** whenever you're ready.
 
-One optional step left — a quick environment readiness check.
+| Command | What it does |
+|---------|-------------|
+| `Customize my landing page` | Configure landing-page branding and content |
+| `/create` | Create a new topic or workflow |
+| `/connect` | Set up ServiceNow or Workday integration |
+| `/scan` | Scan for compile errors |
+| `/flightcheck` | Run a pre-deployment readiness check when needed |
+| `/menu` | See all commands |
 
 **End message.**
 
-Now read `src/skills/onboarding/step3-flightcheck.md` and follow it.
+Onboarding is complete. Return to
+`src/skills/foundation-setup/SKILL.md` so it can show the completed handoff.

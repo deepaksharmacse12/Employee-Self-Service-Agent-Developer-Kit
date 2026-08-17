@@ -21,41 +21,47 @@
 > single concern:
 >
 > ```
-> Input Pipeline      (src/modules/preprocessing/)
+> Input Pipeline          (src/modules/preprocessing/)
 >       ↓
-> Migration Pipeline  (src/modules/migration/)
+> Transformation Pipeline (src/modules/transformation/)
 >       ↓
-> Output Pipeline     (src/modules/postprocessing/)
+> Output Pipeline         (src/modules/postprocessing/)
 > ```
 >
-> The composition is expressed fluently:
+> The composition is expressed fluently through `ChainedPipeline` (the generic
+> super-pipeline in `core/pipelines/`), composed directly by the orchestrator:
 >
 > ```python
-> EssMigrationToolkit()
->     .input(InputPipeline().use(...).use(...))
->     .migrate(MigrationPipeline().use(...).use(...))
->     .output(OutputPipeline().use(...).use(...))
+> ChainedPipeline[MigrationContext]()
+>     .add(build_input_pipeline(logger))
+>     .add(build_transformation_pipeline(logger))
+>     .add(build_output_pipeline(logger))
 > ```
 >
 > **Each stage receives the output of the previous stage and operates over the
 > shared `MigrationContext`.** The Input Pipeline builds and enriches the
 > context (including the homogeneous keyed `ComponentSet` of customer-owned
-> components); the Migration Pipeline applies deterministic business
+> components); the Transformation Pipeline applies deterministic business
 > transformations to it; the Output Pipeline validates, persists, and reports on
 > it.
 >
 > **The Migration Orchestrator is only the composition root.** It builds the
-> super-pipeline, configures the execution mode (Discover / Preview / Migrate),
+> chained pipeline, configures the execution mode (READONLY / WRITEBACK),
 > executes it, and returns the resulting reports and diagnostics. Orchestration
 > concerns are kept strictly separate from pipeline behaviour — the orchestrator
-> is *not* the primary abstraction; the super-pipeline is.
+> is *not* the primary abstraction; the chained pipeline is.
 >
 > **Typed framework foundation.** The reusable framework is generic —
 > `Pipeline[TInput, TOutput]` and `PipelineStep[TInput, TOutput]` — so the
 > Builder can type-thread steps and support type-changing steps where genuinely
-> needed. The three ESS stage pipelines instantiate this foundation over the
-> shared `MigrationContext` (`Pipeline[MigrationContext, MigrationContext]`),
-> which threads through the whole super-pipeline. (The generic `TInput, TOutput`
+> needed. The generic super-pipeline composition is likewise framework, not
+> product: `ChainedPipeline[TContext]` (in `core/pipelines/`) composes an ordered
+> sequence of context-preserving stage pipelines and runs them left to right,
+> with no ESS or domain naming. The orchestrator composes `ChainedPipeline`
+> directly with `.add()` — no subclass needed. The
+> three ESS stage pipelines instantiate the generic `Pipeline` foundation over
+> the shared `MigrationContext` (`Pipeline[MigrationContext, MigrationContext]`),
+> which threads through the whole chained pipeline. (The generic `TInput, TOutput`
 > signature is the analogue of the C# `HeterogenousPipelineStepComputeUnitBase
 > <TInput, TOutput>`; a stage pipeline is the analogue of
 > `KeyedComputeUnitBase<...>`. C# runtime concerns — Autofac keyed registration,
@@ -160,7 +166,7 @@ state outside it. The context is the only object shared between steps.
 
 The toolkit is a super-pipeline of three stages.
 
-Migration executes as **Input → Migration → Output**, each a stage pipeline over
+Migration executes as **Input → Transformation → Output**, each a stage pipeline over
 the shared `MigrationContext`. The Migration Orchestrator is only the
 composition root: it builds the super-pipeline, configures the execution mode,
 executes it, and returns reports and diagnostics. A stage never reaches into
@@ -281,24 +287,41 @@ type-threads every `.use(step)`; the ESS stages instantiate it as
 produced by the prior step and returns the enriched context.
 
 ```python
-# Input Pipeline (src/modules/preprocessing/) — discovers artifacts and
-# builds the canonical MigrationContext, including the keyed ComponentSet.
+# Input Pipeline (src/modules/preprocessing/) — authenticates, selects the ESS
+# Agent, verifies the ALM preferred solution, and discovers customer
+# customizations, enriching the canonical MigrationContext.
 input_pipeline = (
     InputPipeline()
-        .use(DiscoverAgent())
-        .use(LoadDependencies())
-        .use(RetrieveSolutionComponentLayers())
-        .use(ResolveCustomizationOwnership())
-        .use(LoadCanonicalComponents())      # populates context.ComponentSet
+        .use(GatherInputWithAuthStep())          # first 3 steps are fixed-order
+        .use(AgentSelectionStep())
+        .use(GatherALMCustomerInputStep())       # GetPreferredSolution cross-check
+        .use(RetrieveAgentConfigurationStep())   # bot record + gpt.default component
+        .use(RetrieveCustomizationsStep())       # deps + componentlayers classification
 )
 
-# Migration Pipeline (src/modules/migration/) — one Step per Migration Rule.
-migration_pipeline = (
-    MigrationPipeline()
-        .use(OverrideAgentMetadataStep())        # RULE-001
-        .use(ReplaceEndConversationStep())       # RULE-002
-        .use(HandleOnActivityTopicStep())        # RULE-003
-        .use(HandleGeneratedResponseTopicStep()) # RULE-004
+# Transformation Pipeline (src/modules/transformation/) — one Step per rule
+# (RULE-006/007 fan out to one thin step per construct).
+transformation_pipeline = (
+    TransformationPipeline()
+        .use(ApplyDaCompatibilityStep())         # CA→DA model/template/config rewrite (TASK-016)
+        # .use(OverrideAgentInstructionsStep())  # RULE-001 (TASK-010) — BLOCKED, pending ESS PM input
+        .use(ReplaceEndConversationStep())       # RULE-002 (TASK-011)
+        .use(HandleOnActivityTopicStep())        # RULE-003 (TASK-012)
+        .use(HandleGeneratedResponseTopicStep()) # RULE-004 (TASK-013)
+        # RULE-006 (TASK-018) — additional unsupported triggers, one step each
+        .use(HandleOnUnknownIntentTopicStep())
+        .use(HandleOnPlanCompleteTopicStep())
+        .use(HandleOnSystemRedirectTopicStep())
+        .use(HandleOnSelectIntentTopicStep())
+        .use(HandleOnEscalateTopicStep())
+        # RULE-007 (TASK-019) — unsupported nodes, one step each
+        .use(HandleAnswerQuestionWithAINodeStep())
+        .use(HandleRecognizeIntentNodeStep())
+        .use(HandleSearchAndSummarizeContentNodeStep())
+        .use(HandleTransferConversationV2NodeStep())
+        .use(HandleConversationHistoryNodeStep())
+        .use(HandleInvokeAIBuilderModelActionNodeStep())
+        .use(HandleIncludeSelectedTopicsNodeStep())
 )
 
 # Output Pipeline (src/modules/postprocessing/) — validate, persist, and render
@@ -306,7 +329,7 @@ migration_pipeline = (
 output_pipeline = (
     OutputPipeline()
         .use(ValidateMigration())
-        .use(Writeback())                    # Migrate mode only
+        .use(Writeback())                    # WRITEBACK mode only
         .use(GenerateMigrationReport())      # renders customer-facing migration_report.md
 )
 # session.log is streamed live by the framework Logger across all stages —
@@ -315,19 +338,20 @@ output_pipeline = (
 
 ### The super-pipeline
 
-The product itself is a single fluent super-pipeline that composes the three
+The product itself is a single fluent chained pipeline that composes the three
 stages. Each stage receives the output of the previous stage over the shared
-`MigrationContext`:
+`MigrationContext`. The orchestrator composes `ChainedPipeline` directly — no
+subclass needed:
 
 ```python
 toolkit = (
-    EssMigrationToolkit()
-        .input(input_pipeline)
-        .migrate(migration_pipeline)
-        .output(output_pipeline)
+    ChainedPipeline[MigrationContext]()
+        .add(input_pipeline)
+        .add(transformation_pipeline)
+        .add(output_pipeline)
 )
 
-result = toolkit.run(mode=ExecutionMode.PREVIEW)   # Discover | Preview | Migrate
+result = toolkit.run(context)   # context.mode set (READONLY | WRITEBACK)
 ```
 
 The Builder creates immutable executable pipelines. The **Migration Orchestrator
@@ -335,7 +359,7 @@ is only the composition root** — it assembles the super-pipeline above,
 configures the execution mode, executes it, and returns the reports and
 diagnostics (see section 16). Adding a future migration capability normally
 requires only a new Migration Rule, a new Pipeline Step, and its registration in
-the Migration Pipeline — the surrounding framework is unchanged.
+the Transformation Pipeline — the surrounding framework is unchanged.
 
 > **Note — where the C# reference maps.** A stage pipeline
 > (`Pipeline[TInput, TOutput]`) is the analogue of the C#
@@ -411,7 +435,7 @@ performed inside `can_execute(context)`:
 ```python
 class HandleOnActivityTopicStep(PipelineStep):
 
-    supported_modes = [PREVIEW, MIGRATE]
+    supported_modes = ("READONLY", "WRITEBACK")
 
     def can_execute(self, context):
         return any(
@@ -434,7 +458,7 @@ If `can_execute(context)` returns `False`, the Pipeline Engine skips the Step.
 This keeps the framework open for extension (new Steps filter on existing
 canonical models) and closed for modification (the `Component` model and
 Pipeline Engine remain unchanged when new Steps are added). Component type and
-trigger type constants are defined under `constants/`.
+trigger type constants are defined in `service/constants.py`.
 
 ---
 
@@ -458,7 +482,7 @@ Maintain registered Pipeline Steps.
 ## Registration Example
 
 ```python
-registry.register(OverrideAgentMetadataStep())
+registry.register(OverrideAgentInstructionsStep())
 
 registry.register(ReplaceEndConversationStep())
 
@@ -518,11 +542,7 @@ Example
 ```python
 class DiscoverComponents(PipelineStep):
 
-    supported_modes = [
-        DISCOVER,
-        PREVIEW,
-        MIGRATE
-    ]
+    supported_modes = ("READONLY", "WRITEBACK")
 ```
 
 Example
@@ -530,9 +550,7 @@ Example
 ```python
 class Writeback(PipelineStep):
 
-    supported_modes = [
-        MIGRATE
-    ]
+    supported_modes = ("WRITEBACK",)
 ```
 
 The Pipeline Engine automatically skips unsupported steps.
@@ -689,34 +707,74 @@ Responsibilities
 - Load canonical Domain Models and build the keyed `ComponentSet`
 - Produce the enriched `MigrationContext`
 
-## Migration Pipeline (`src/modules/migration/`)
+## Transformation Pipeline (`src/modules/transformation/`)
 
 Responsibilities
 
-- Execute Migration Steps (one Step per Migration Rule) — deterministic business
-  transformations only
+- Execute Transformation Steps (one Step per rule; RULE-006/007 fan out to one
+  thin step per construct) — deterministic business transformations only. The
+  first Step, `ApplyDaCompatibilityStep`, performs the CA→DA model/template/config
+  rewrite; the remaining Steps implement the transformation Migration Rules
+  (RULE-002/003/004 and RULE-006/007; RULE-001 is BLOCKED, RULE-005 is a
+  validation rule).
+
+### Writeback-plan contract (how a rule stages changes)
+
+Transformation Steps **never** append to `pending_writes` directly. Each Step
+stages its edits on the shared `WritebackPlan` (`context.writeback`, TASK-017),
+keyed by `(entity_set, record_id)`:
+
+```python
+# A rule iterates its targets (topics from context.customizations, or the agent
+# bot) and stages the transformed value on the record's target:
+target = context.writeback.target(
+    "botcomponents", component.component_id, original={"data": component.data}
+)
+target.set("data", my_rule_transform(target.get("data")))
+```
+
+This gives three guarantees for free, so a rule author gets them without effort:
+
+- **Coalescing** — every Step editing the same record contributes to **one**
+  PATCH (not several that clobber each other).
+- **Chaining** — `target.get(field)` returns the *working* value, so a later rule
+  composes on an earlier rule's output for the same field (e.g. the topic `data`).
+- **Meaningful-change guard** — `context.pending_writes` derives by diffing the
+  working value vs the original baseline, so an unchanged record produces **no**
+  write — avoiding a needless unmanaged (`Active`) overlay over a clean managed
+  base.
+
+Rule transforms are **pure and idempotent**, and must **not reserialize untouched
+regions**: edit surgically (line-/node-anchored) and return the input unchanged on
+a no-op, rather than round-tripping the whole JSON/YAML (parse→dump), so a cosmetic
+reformat cannot trip the exact-string meaningful-change diff.
+
+For reporting/diagnostics, `context.writeback.target_for(entity_set, record_id)`
+(and `context.writeback.targets()`) expose each touched record's `original`
+(actual copy) and `working` (final modified copy) after all steps — a read-only
+lookup, not a second stored copy.
 
 ## Output Pipeline (`src/modules/postprocessing/`)
 
 Responsibilities
 
 - Validate migrated artifacts
-- Persist supported transformations to Dataverse (Migrate mode only)
+- Persist supported transformations to Dataverse (WRITEBACK mode only)
 - Render the customer-facing `migration_report.md`
 - (The engineering `session.log` is streamed by the Logger, not a step)
 
 ## The Super-Pipeline
 
 The Migration Orchestrator (`src/service/mtk_orchestrator.py`) is the
-**composition root** only. It assembles the three stages into the fluent
-super-pipeline, configures the execution mode, executes it, and returns the
-reports and diagnostics:
+**composition root** only. It assembles the three stages into the chained
+pipeline, configures the execution mode, executes it, and returns the
+reports and diagnostics. The orchestrator composes `ChainedPipeline` directly:
 
 ```python
-EssMigrationToolkit()
-    .input(input_pipeline)
-    .migrate(migration_pipeline)
-    .output(output_pipeline)
+ChainedPipeline[MigrationContext]()
+    .add(input_pipeline)
+    .add(transformation_pipeline)
+    .add(output_pipeline)
 ```
 
 The final outputs of the toolkit are the two files of the session bundle:

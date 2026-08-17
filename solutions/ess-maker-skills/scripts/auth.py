@@ -43,6 +43,14 @@ from http_errors import APIError, raise_api_error  # noqa: E402
 # Scope: user_impersonation only (delegated, no admin consent).
 CLIENT_ID = "51f81489-12ee-4a9e-aaae-a2591f45987d"
 
+# Delegated scope for the Power Automate Flow Management API
+# (https://api.flow.microsoft.com). The double slash is required — the resource
+# URI ends in "/" and the scope name is appended, yielding a token whose `aud`
+# claim is `https://service.flow.microsoft.com/`. The PAC public client above is
+# broadly consented for Power Platform, so no separate app registration is
+# needed. Used by the flow run-history inspection tooling.
+FLOW_API_SCOPE = "https://service.flow.microsoft.com//user_impersonation"
+
 # Kit-internal state directory (token cache, component maps, config).
 # Renamed from "my/" -> ".local/" in PR #2 to separate kit-internal state
 # from user-edited files (which live under "workspace/").
@@ -167,6 +175,25 @@ def discover_tenant(env_url):
     return "organizations"
 
 
+def _dataverse_accepts_token(env_url, token):
+    """Return False only when Dataverse explicitly rejects the token."""
+    try:
+        resp = _SESSION.get(
+            f"{env_url}/api/data/v9.2/WhoAmI",
+            headers={
+                **HEADERS_BASE,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=30,
+            verify=True,
+        )
+    except requests.RequestException:
+        # Authentication should not turn a transient connectivity failure into
+        # a forced sign-in. The caller's real operation will surface it.
+        return True
+    return resp.status_code != 401
+
+
 def authenticate(env_url):
     """Get a Dataverse access token via MSAL interactive browser auth.
 
@@ -194,6 +221,23 @@ def authenticate(env_url):
     if accounts:
         result = app.acquire_token_silent([scope], account=accounts[0])
 
+    if (
+        result
+        and "access_token" in result
+        and not _dataverse_accepts_token(env_url, result["access_token"])
+    ):
+        print("Dataverse rejected the cached session. Refreshing sign-in...")
+        clear_token_cache(
+            env_url,
+            cache=cache,
+            app=app,
+            account=accounts[0],
+        )
+        app = msal.PublicClientApplication(
+            CLIENT_ID, authority=authority, token_cache=cache
+        )
+        result = None
+
     if not result or "access_token" not in result:
         print(f"Opening browser for sign-in (tenant: {tenant})...")
         print("Please select the account that has access to this environment.")
@@ -212,29 +256,7 @@ def authenticate(env_url):
     # Persist cache with strict 0o600 permissions on POSIX. The cache holds
     # MSAL refresh tokens; default umask (0o644) would expose them to other
     # users on shared dev VMs.
-    if cache.has_state_changed:
-        os.makedirs(LOCAL_STATE_DIR, exist_ok=True)
-        try:
-            os.chmod(LOCAL_STATE_DIR, 0o700)
-        except OSError:
-            # Windows ignores chmod for directories - that's expected.
-            pass
-        # Use os.open with explicit mode so the file is created with 0o600
-        # rather than written under default umask first and chmodded after.
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        if hasattr(os, "O_BINARY"):
-            flags |= os.O_BINARY
-        fd = os.open(cache_path, flags, 0o600)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(cache.serialize())
-        finally:
-            # Re-chmod is a defense-in-depth no-op on POSIX where O_CREAT mode
-            # already set 0o600, and a no-op on Windows where chmod is limited.
-            try:
-                os.chmod(cache_path, stat.S_IRUSR | stat.S_IWUSR)
-            except OSError:
-                pass
+    _persist_token_cache(cache, cache_path)
 
     # Record the tenant + start a telemetry session. No developer identity is
     # collected; active-install counts dedupe on a random instance_id.
@@ -243,13 +265,153 @@ def authenticate(env_url):
         import adk_telemetry
 
         claims = result.get("id_token_claims", {}) or {}
+        tenant_id = claims.get("tid", "") or tenant
         adk_telemetry.maybe_print_notice()
         adk_telemetry.start_session(
-            tenant_id=claims.get("tid", "") or tenant,
+            tenant_id=tenant_id,
         )
+        # Best-effort: resolve the tenant's org display name via a SILENT-ONLY
+        # Graph token (never prompts) and record it so ADK telemetry carries
+        # tenant_name even when the maker never runs FlightCheck. The Dataverse
+        # sign-in above usually leaves a first-party (FOCI) refresh token that
+        # silently satisfies the read scope; set_identity caches the name for
+        # later ADK processes. Silent failure just leaves tenant_name empty.
+        try:
+            from flightcheck.graph_client import resolve_tenant_display_name_silent
+
+            _tname = resolve_tenant_display_name_silent(tenant_id)
+            if _tname:
+                adk_telemetry.set_identity(tenant_id=tenant_id, tenant_name=_tname)
+        except Exception:  # noqa: BLE001 — name resolution is best-effort
+            pass
     except Exception:  # noqa: BLE001 — telemetry must never break auth
         pass
 
+    return result["access_token"]
+
+
+def _persist_token_cache(cache, cache_path):
+    """Write an MSAL token cache to disk with strict 0o600 permissions.
+
+    The cache holds MSAL refresh tokens; default umask (0o644) would expose them
+    to other users on shared dev VMs. No-op when the cache is unchanged. Shared
+    by ``authenticate`` (Dataverse scope) and ``get_flow_token`` (Flow scope),
+    which write the same cache file — MSAL keys entries by scope, so the two
+    tokens coexist.
+    """
+    if not cache.has_state_changed:
+        return
+    os.makedirs(LOCAL_STATE_DIR, exist_ok=True)
+    try:
+        os.chmod(LOCAL_STATE_DIR, 0o700)
+    except OSError:
+        # Windows ignores chmod for directories - that's expected.
+        pass
+    # Use os.open with explicit mode so the file is created with 0o600
+    # rather than written under default umask first and chmodded after.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    fd = os.open(cache_path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(cache.serialize())
+    finally:
+        # Re-chmod is a defense-in-depth no-op on POSIX where O_CREAT mode
+        # already set 0o600, and a no-op on Windows where chmod is limited.
+        try:
+            os.chmod(cache_path, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+
+
+def clear_token_cache(env_url=None, *, cache=None, app=None, account=None):
+    """Remove only the rejected account from the shared MSAL token cache."""
+    cache_path = os.path.join(LOCAL_STATE_DIR, ".token_cache.bin")
+    if cache is None:
+        cache = msal.SerializableTokenCache()
+        try:
+            with open(cache_path, "r", encoding="utf-8") as cache_file:
+                cache.deserialize(cache_file.read())
+        except FileNotFoundError:
+            return
+
+    if account is None:
+        if not env_url:
+            return
+        tenant = discover_tenant(env_url)
+        if app is None:
+            app = msal.PublicClientApplication(
+                CLIENT_ID,
+                authority=f"https://login.microsoftonline.com/{tenant}",
+                token_cache=cache,
+            )
+        accounts = app.get_accounts()
+        if not accounts:
+            return
+        account = accounts[0]
+
+    if app is None:
+        if not env_url:
+            return
+        tenant = discover_tenant(env_url)
+        app = msal.PublicClientApplication(
+            CLIENT_ID,
+            authority=f"https://login.microsoftonline.com/{tenant}",
+            token_cache=cache,
+        )
+    app.remove_account(account)
+    _persist_token_cache(cache, cache_path)
+
+
+def get_flow_token(env_url):
+    """Get a Flow Management API access token via MSAL interactive browser auth.
+
+    The kit's ``authenticate`` acquires a *Dataverse*-scoped token; the Flow
+    Management API (https://api.flow.microsoft.com) needs a different audience,
+    so this acquires a Flow-scoped token (``FLOW_API_SCOPE``) using the same
+    public client, tenant, and on-disk token cache. MSAL keys cache entries by
+    scope, so the Flow token coexists with any Dataverse token — a silent
+    acquisition succeeds without re-prompting once either has been obtained in
+    the same tenant.
+
+    ``env_url`` is used only to discover the tenant to sign into; the Flow scope
+    itself is tenant-global.
+    """
+    _validate_https_url(env_url)
+    tenant = discover_tenant(env_url)
+    authority = f"https://login.microsoftonline.com/{tenant}"
+    cache = msal.SerializableTokenCache()
+    cache_path = os.path.join(LOCAL_STATE_DIR, ".token_cache.bin")
+
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f:
+            cache.deserialize(f.read())
+
+    app = msal.PublicClientApplication(
+        CLIENT_ID, authority=authority, token_cache=cache
+    )
+
+    accounts = app.get_accounts()
+    result = None
+    if accounts:
+        result = app.acquire_token_silent([FLOW_API_SCOPE], account=accounts[0])
+
+    if not result or "access_token" not in result:
+        print(f"Opening browser for sign-in (tenant: {tenant})...")
+        print("Please select the account that has access to the flows.")
+        result = app.acquire_token_interactive(
+            [FLOW_API_SCOPE], prompt="select_account"
+        )
+
+    if "access_token" not in result:
+        # Don't echo error_description - it can include tenant IDs (CWE-209).
+        error = result.get("error", "unknown_error")
+        print(f"ERROR: Flow authentication failed ({error}).")
+        print("Verify you have access to this environment's flows and try again.")
+        sys.exit(1)
+
+    _persist_token_cache(cache, cache_path)
     return result["access_token"]
 
 
@@ -383,6 +545,37 @@ def dataverse_get(env_url, token, path, params=None):
     return resp.json()
 
 
+def execute_action(env_url, token, action_name, data):
+    """Execute an unbound Dataverse Web API action via POST."""
+    _validate_https_url(env_url)
+    if not action_name or "/" in action_name:
+        raise ValueError("action_name must be a non-empty unbound action name")
+    headers = {
+        **HEADERS_BASE,
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    url = f"{env_url}/api/data/v9.2/{action_name}"
+    _start = time.perf_counter()
+    resp = _SESSION.post(
+        url,
+        headers=headers,
+        json=data,
+        timeout=60,
+        verify=True,
+    )
+    _emit_api_call(action_name, "execute", _start, status=resp.status_code)
+    if resp.status_code == 401:
+        raise AuthExpiredError(response=resp)
+    raise_api_error(resp, resource_name=action_name, operation="execute")
+    if not resp.content:
+        return {}
+    try:
+        return resp.json()
+    except ValueError:
+        return {}
+
+
 def update_record(env_url, token, entity_set, record_id, data):
     """Update a single Dataverse record via PATCH.
 
@@ -407,8 +600,48 @@ def update_record(env_url, token, entity_set, record_id, data):
     return True
 
 
+_ENTITY_ID_RE = re.compile(r"\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                           r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\s*$")
+
+
+def _entity_id_from_header(entity_id_header):
+    """Parse the record GUID from a Dataverse ``OData-EntityId`` header.
+
+    The header is the created record's canonical URL, e.g.
+    ``https://org.crm.dynamics.com/api/data/v9.2/workflows(<guid>)``. Returns
+    the GUID string, or ``None`` if the header is missing/unparseable.
+    """
+    if not entity_id_header:
+        return None
+    match = _ENTITY_ID_RE.search(entity_id_header)
+    return match.group(1) if match else None
+
+
+def _primary_id_key(entity_set):
+    """Derive a Dataverse primary-key column name from an entity-set name.
+
+    Dataverse entity sets are the plural logical name and the primary key is
+    ``{logicalname}id`` (``workflows`` → ``workflowid``, ``botcomponents`` →
+    ``botcomponentid``, ``connectionreferences`` → ``connectionreferenceid``).
+    """
+    singular = entity_set[:-1] if entity_set.endswith("s") else entity_set
+    return f"{singular}id"
+
+
 def create_record(env_url, token, entity_set, data):
-    """Create a new Dataverse record via POST. Returns the new record ID."""
+    """Create a new Dataverse record via POST. Returns the new record ID.
+
+    The new record's GUID is read from the ``OData-EntityId`` response header
+    (``{env}/api/data/v9.2/{entity_set}({guid})``), which Dataverse returns on
+    every create regardless of entity set or ``Prefer`` header. This is the
+    entity-agnostic source: a ``workflows`` create has primary key
+    ``workflowid``, ``botcomponents`` has ``botcomponentid``,
+    ``connectionreferences`` has ``connectionreferenceid`` — reading a single
+    hard-coded body column silently returned ``None`` for every entity set
+    except botcomponents. If the header is absent, fall back to the
+    representation body, trying the entity-specific primary-key column (derived
+    from ``entity_set``) and then the generic ``id``.
+    """
     _validate_https_url(env_url)
     headers = {
         **HEADERS_BASE,
@@ -423,8 +656,109 @@ def create_record(env_url, token, entity_set, data):
     if resp.status_code == 401:
         raise AuthExpiredError(response=resp)
     raise_api_error(resp, resource_name=entity_set, operation="create")
-    result = resp.json()
-    return result.get("botcomponentid", result.get("id"))
+
+    header_id = _entity_id_from_header(resp.headers.get("OData-EntityId"))
+    if header_id:
+        return header_id
+
+    try:
+        result = resp.json()
+    except ValueError:
+        return None
+    return result.get(
+        _primary_id_key(entity_set),
+        result.get("botcomponentid", result.get("id")),
+    )
+
+
+def associate_ref(env_url, token, entity_set, record_id, nav_property,
+                  target_entity_set, target_id):
+    """Create a Dataverse N:N association via a ``/$ref`` POST.
+
+    Links ``{entity_set}({record_id})`` to ``{target_entity_set}({target_id})``
+    through the collection-valued navigation property ``nav_property`` by
+    POSTing an ``@odata.id`` pointer. Dataverse returns ``204 No Content`` on
+    success. The ADK use is ``botcomponent_workflow`` — associating a
+    system-topic botcomponent with the workflow it invokes so Copilot Studio's
+    publish validator can resolve the flow reference. Returns ``True``.
+
+    A raw create against the intersect entity set fails; the association must
+    go through ``/$ref``.
+    """
+    _validate_https_url(env_url)
+    headers = {
+        **HEADERS_BASE,
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    url = f"{env_url}/api/data/v9.2/{entity_set}({record_id})/{nav_property}/$ref"
+    body = {
+        "@odata.id": f"{env_url}/api/data/v9.2/{target_entity_set}({target_id})",
+    }
+    _start = time.perf_counter()
+    resp = _SESSION.post(url, headers=headers, json=body, timeout=60, verify=True)
+    _emit_api_call(f"{entity_set}/{nav_property}", "associate", _start,
+                   status=resp.status_code)
+    if resp.status_code == 401:
+        raise AuthExpiredError(response=resp)
+    raise_api_error(resp, resource_name=f"{entity_set}/{nav_property}",
+                    operation="associate")
+    return True
+
+
+def publish_bot(env_url, token, bot_id):
+    """Publish a Copilot Studio bot via the ``PvaPublish`` bound action.
+
+    Pushed botcomponent (topic) changes only go live in the test pane and
+    runtime after the bot is published — Dataverse writes alone don't take
+    effect. (Flow ``clientdata`` edits are live immediately and don't need
+    this.) ``PvaPublish`` is bound to the ``bot`` entity, so the bot is
+    addressed via the URL binding rather than a body parameter. Returns
+    ``True``.
+    """
+    _validate_https_url(env_url)
+    headers = {
+        **HEADERS_BASE,
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    url = (
+        f"{env_url}/api/data/v9.2/bots({bot_id})"
+        "/Microsoft.Dynamics.CRM.PvaPublish"
+    )
+    _start = time.perf_counter()
+    resp = _SESSION.post(url, headers=headers, json={}, timeout=300, verify=True)
+    _emit_api_call("PvaPublish", "publish", _start, status=resp.status_code)
+    if resp.status_code == 401:
+        raise AuthExpiredError(response=resp)
+    raise_api_error(resp, resource_name="bot", operation="publish")
+    return True
+
+
+def record_exists(env_url, token, entity_set, record_id, id_key):
+    """Return whether a Dataverse record exists, via a lightweight GET.
+
+    A GET on a missing record returns a clean ``404`` (``0x80040217`` "Entity …
+    Does Not Exist"), so existence can be probed unambiguously — unlike a PATCH
+    against a missing id, which returns an opaque ``400``. Used to detect a
+    stale component-map id before attempting an update. Any non-404 error
+    (other than ``401`` → :class:`AuthExpiredError`) propagates.
+    """
+    _validate_https_url(env_url)
+    headers = {
+        **HEADERS_BASE,
+        "Authorization": f"Bearer {token}",
+    }
+    url = f"{env_url}/api/data/v9.2/{entity_set}({record_id})?$select={id_key}"
+    _start = time.perf_counter()
+    resp = _SESSION.get(url, headers=headers, timeout=60, verify=True)
+    _emit_api_call(entity_set, "exists", _start, status=resp.status_code)
+    if resp.status_code == 404:
+        return False
+    if resp.status_code == 401:
+        raise AuthExpiredError(response=resp)
+    raise_api_error(resp, resource_name=entity_set, operation="read")
+    return True
 
 
 def delete_record(env_url, token, entity_set, record_id):

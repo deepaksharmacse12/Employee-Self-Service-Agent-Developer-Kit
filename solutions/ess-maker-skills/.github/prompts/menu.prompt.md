@@ -15,11 +15,12 @@ Here's what I can help you with:
 |---------|-------------|
 | `Customize my landing page` | Configure the branding and content employees see when they open the ESS agent |
 | `/connect` | Type Enter to connect ServiceNow or Workday to your agent |
-| `/create` | Type Enter to create a new topic or workflow |
-| `/update` | Type Enter to modify an existing topic or workflow |
+| `/create` | Create a simple topic with evals, a workflow, or an evaluation test set |
+| `/update` | Update a simple topic with evals, a workflow, or an evaluation test set |
 | `/delete` | Type Enter to delete a topic or workflow from your agent |
 | `/scan` | Type Enter to scan your agent for compile errors and fix them |
 | `/review` | Type Enter to review a topic (or a whole module's topics) for issues before publishing |
+| `/test` | Type Enter to drive and debug a topic or workflow's runtime behaviour until it's right |
 | `/evaluate` | Type Enter to generate evaluation test sets for your agent |
 | `/flightcheck` | Type Enter to run a pre-deployment readiness check |
 | `/push` | Type Enter to push all local changes to Copilot Studio |

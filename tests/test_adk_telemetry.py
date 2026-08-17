@@ -55,7 +55,21 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(adk, "BUFFER_PATH", str(cfg_dir / "telemetry-buffer.ndjson"))
     monkeypatch.setattr(adk, "RUNS_PATH", str(cfg_dir / "flightcheck-runs.json"))
     monkeypatch.setattr(adk, "_SYNC", True)
-    monkeypatch.setattr(adk, "_IDENTITY", {"instance_id": "", "tenant_id": ""})
+    monkeypatch.setattr(adk, "_IDENTITY", {"instance_id": "", "tenant_id": "", "tenant_name": ""})
+
+    # Isolate the persisted tenant-name cache (.local/.tenant_name) to tmp so
+    # tests never read/write the repo's real .local dir. adk_telemetry calls
+    # these on _fc at runtime, so patching them here redirects the cache dir.
+    _cache_dir = str(tmp_path / ".local")
+    _real_cache, _real_get = _fc.cache_tenant_name, _fc.get_cached_tenant_name
+    monkeypatch.setattr(
+        _fc, "cache_tenant_name",
+        lambda tid, name, local_dir=_cache_dir: _real_cache(tid, name, local_dir=local_dir),
+    )
+    monkeypatch.setattr(
+        _fc, "get_cached_tenant_name",
+        lambda tid, local_dir=_cache_dir: _real_get(tid, local_dir=local_dir),
+    )
 
     for var in (
         "ESS_ADK_TELEMETRY",
@@ -89,6 +103,81 @@ def test_set_identity_stores_instance_and_raw_tenant(monkeypatch):
     assert "developer_id" not in ident
     assert ident["instance_id"] == "install-guid-1"
     assert ident["tenant_id"] == "tenant-Z"
+
+
+def test_set_identity_stores_tenant_name(monkeypatch):
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    ident = adk.set_identity(tenant_id="tenant-Z", tenant_name="Contoso")
+    assert ident["tenant_name"] == "Contoso"
+    # Flows into every event's common dimensions (OII; privacy-approved).
+    dims = adk.common_dimensions(adk.SURFACE_CLI, session_id="sid-1")
+    assert dims["tenant_name"] == "Contoso"
+    # Once resolved, the name is cached per-tenant and reused by later ADK
+    # events that lack a Graph token to resolve it live (persist-and-reuse),
+    # even when set_identity is later called for the same tenant without it.
+    adk.set_identity(tenant_id="tenant-Z")
+    assert adk.common_dimensions(adk.SURFACE_CLI)["tenant_name"] == "Contoso"
+
+
+def test_tenant_name_empty_when_never_resolved(monkeypatch):
+    # No Graph-capable flow ever resolved a name for this tenant -> stays "".
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    adk.set_identity(tenant_id="tenant-Z")
+    assert adk.common_dimensions(adk.SURFACE_CLI, session_id="sid-1")["tenant_name"] == ""
+
+
+def test_tenant_name_cache_not_reused_across_tenants(monkeypatch):
+    # A name cached for tenant-Z must never be stamped on a different tenant's
+    # events (the cache is keyed by tenant_id). Simulates a maker who resolved
+    # tenant-Z via FlightCheck, then runs an ADK flow authenticated as tenant-Y.
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    adk.set_identity(tenant_id="tenant-Z", tenant_name="Contoso")  # seeds cache
+    monkeypatch.setattr(
+        adk, "_IDENTITY", {"instance_id": "", "tenant_id": "", "tenant_name": ""}
+    )
+    adk.set_identity(tenant_id="tenant-Y")  # different tenant, no name available
+    dims = adk.common_dimensions(adk.SURFACE_CLI, session_id="sid-1")
+    assert dims["tenant_id"] == "tenant-Y"
+    assert dims["tenant_name"] == ""
+
+
+def test_tenant_name_reused_by_later_process_without_identity(monkeypatch):
+    # An ADK emit path (e.g. setup.py -> emit_agent_create) that never calls
+    # set_identity should still pick up a name a prior FlightCheck run cached
+    # for the same tenant, via the common_dimensions fallback.
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    adk.set_identity(tenant_id="tenant-Z", tenant_name="Contoso")  # FlightCheck run
+    # Later process: fresh identity, no set_identity call, but tenant_id known.
+    monkeypatch.setattr(
+        adk, "_IDENTITY", {"instance_id": "", "tenant_id": "", "tenant_name": ""}
+    )
+    dims = adk.common_dimensions(adk.SURFACE_CLI, tenant_id="tenant-Z")
+    assert dims["tenant_name"] == "Contoso"
+
+
+def test_cache_tenant_name_round_trip_and_guards(tmp_path):
+    d = str(tmp_path / "state")
+    # Round-trip for a matching tenant.
+    _fc.cache_tenant_name("tenant-Z", "Contoso", local_dir=d)
+    assert _fc.get_cached_tenant_name("tenant-Z", local_dir=d) == "Contoso"
+    # Mismatched tenant never inherits the cached name.
+    assert _fc.get_cached_tenant_name("tenant-Y", local_dir=d) == ""
+    # Missing dir/file -> "".
+    assert _fc.get_cached_tenant_name("tenant-Z", local_dir=str(tmp_path / "nope")) == ""
+    # Malformed / non-dict cache content -> "" (defensive; never raises).
+    import os as _os
+    _os.makedirs(str(tmp_path / "bad"), exist_ok=True)
+    with open(str(tmp_path / "bad" / _fc._TENANT_NAME_FILE), "w", encoding="utf-8") as _f:
+        _f.write("not-json{{")
+    assert _fc.get_cached_tenant_name("tenant-Z", local_dir=str(tmp_path / "bad")) == ""
+    with open(str(tmp_path / "bad" / _fc._TENANT_NAME_FILE), "w", encoding="utf-8") as _f:
+        _f.write("[1, 2, 3]")
+    assert _fc.get_cached_tenant_name("tenant-Z", local_dir=str(tmp_path / "bad")) == ""
+    # Empty inputs are no-ops (nothing cached, nothing returned).
+    _fc.cache_tenant_name("", "Contoso", local_dir=d)
+    _fc.cache_tenant_name("tenant-W", "", local_dir=d)
+    assert _fc.get_cached_tenant_name("tenant-W", local_dir=d) == ""
+    assert _fc.get_cached_tenant_name("", local_dir=d) == ""
 
 
 def test_explicit_instance_id_overrides_persisted(monkeypatch):
@@ -156,6 +245,7 @@ def test_common_dimensions_shape():
     dims = adk.common_dimensions(adk.SURFACE_CLI, session_id="sid-1")
     for key in (
         "schema_version", "instance_id", "tenant_id", "tenant_class",
+        "tenant_name",
         "session_id", "surface", "adk_version", "timestamp",
     ):
         assert key in dims
@@ -480,3 +570,25 @@ def test_shim_never_raises_even_if_post_fails(monkeypatch):
     monkeypatch.setattr(_fc, "_post", _boom)
     # Fail-open contract: a telemetry failure must never fail the skill step.
     assert emit_capability.main(["emit_capability.py", "troubleshoot"]) == 0
+
+
+# --- deploy-target classification (sandbox vs production) ------------------
+def test_classify_deploy_target_non_prod_skus_map_to_sandbox():
+    for sku in ("Sandbox", "Trial", "Developer", "Teams",
+                "SubscriptionBasedTrial", "Support", "Playground"):
+        assert adk.classify_deploy_target(sku) == "sandbox"
+
+
+def test_classify_deploy_target_prod_skus_map_to_production():
+    for sku in ("Production", "Default"):
+        assert adk.classify_deploy_target(sku) == "production"
+
+
+def test_classify_deploy_target_unknown_or_empty_defaults_to_production():
+    for sku in ("", None, "SomethingNew", "   "):
+        assert adk.classify_deploy_target(sku) == "production"
+
+
+def test_classify_deploy_target_is_case_and_whitespace_insensitive():
+    assert adk.classify_deploy_target("  sAnDbOx  ") == "sandbox"
+    assert adk.classify_deploy_target(" PRODUCTION ") == "production"

@@ -26,6 +26,7 @@
 !setup/
 !no-commit/
 !pyproject.toml
+!.pre-commit-config.yaml
 !requirements-dev.txt
 !dev-specs/
 
@@ -70,3 +71,4 @@ coverage.xml
 # that must never reach git.
 tests/fixtures/cassettes/.raw/
 tests/fixtures/captures/.raw/
+solutions/ess-maker-skills/.vscode/mcp.json

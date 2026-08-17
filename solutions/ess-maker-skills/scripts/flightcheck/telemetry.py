@@ -31,7 +31,11 @@ Design rules (all deliberate — read before changing):
   ``tenant_id`` is classified Organizational Identifiable Information (OII)
   with **"No Data Transformation"** — i.e. emitted as the RAW Microsoft Entra
   tenant GUID (it identifies the enterprise tenant, not an individual user),
-  retained <= 30 days. We also emit instance/agent identifiers and
+  retained <= 30 days. ``tenant_name`` (the tenant's organization display
+  name from Graph ``/organization``) is likewise OII identifying the
+  enterprise tenant, not a person; privacy review gave the green light to
+  emit it without a Data Profile update. It is best-effort — emitted as ``""``
+  when unavailable. We also emit instance/agent identifiers and
   System-Metadata enums (checkpoint id, category, priority, status, counts,
   verdict). We deliberately DO NOT emit a check's ``result`` or
   ``remediation`` strings — those can contain EUII / customer content
@@ -242,6 +246,59 @@ def get_instance_id(local_dir: str = ".local") -> str:
         return str(uuid.uuid4())
 
 
+# Persisted tenant display name ({tenant_id, tenant_name}) so ADK events that
+# run in a *later* process without a Microsoft Graph token (session start,
+# build, deploy, capability, api — see adk_telemetry.py) can still stamp the
+# org name. Only a Graph-capable flow (FlightCheck) can resolve it live; it
+# caches the result here and the pure-ADK paths read it back. The cache is
+# keyed by tenant_id so a name resolved for one tenant is never reused for a
+# different tenant (e.g. a maker who switches tenants between runs).
+_TENANT_NAME_FILE = ".tenant_name"
+
+
+def cache_tenant_name(
+    tenant_id: str, tenant_name: str, local_dir: str = ".local"
+) -> None:
+    """Persist the resolved org display name for reuse by later ADK events.
+
+    Best-effort: any IO error is swallowed (telemetry must never break a
+    flow). No-op when either value is empty — we only cache a real, resolved
+    ``(tenant_id, tenant_name)`` pair. ``tenant_name`` is OII (org display
+    name); it is written under the gitignored ``.local/`` dir on the maker's
+    own machine, mirroring how ``.instance_id`` is persisted.
+    """
+    if not tenant_id or not tenant_name:
+        return
+    path = os.path.join(local_dir, _TENANT_NAME_FILE)
+    try:
+        os.makedirs(local_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"tenant_id": tenant_id, "tenant_name": tenant_name}, f)
+    except OSError:
+        pass
+
+
+def get_cached_tenant_name(tenant_id: str, local_dir: str = ".local") -> str:
+    """Return the cached org display name IFF it matches ``tenant_id``.
+
+    Returns ``""`` when there is no cache, the cache is unreadable/malformed,
+    or the cached tenant_id doesn't match the current one (so a name resolved
+    for a different tenant is never leaked onto this tenant's events).
+    """
+    if not tenant_id:
+        return ""
+    path = os.path.join(local_dir, _TENANT_NAME_FILE)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(data, dict) or data.get("tenant_id") != tenant_id:
+        return ""
+    name = data.get("tenant_name")
+    return name if isinstance(name, str) else ""
+
+
 def get_adk_version() -> str:
     """Best-effort ADK version string (System Metadata).
 
@@ -318,6 +375,36 @@ def _post(ikey: str, events: list[dict[str, Any]]) -> int:
     return resp.status_code
 
 
+# Run-outcome buckets for the "Runs by Verdict" donut. Finer-grained than
+# ``overall``: it splits the NOT_READY verdict into "a check couldn't even run"
+# (``errored`` — an unhandled exception inside a check, runner.py:135) vs.
+# "checks ran and reported failures" (``failed``). Precedence is errored ->
+# failed -> warnings -> ready so the donut surfaces checks that could not be
+# evaluated at all (the "why did FlightCheck fail to run" signal). We can NOT
+# attribute WHY a check errored (auth vs runtime vs network) — the exception
+# text is never emitted (EUII risk) — so the bucket is deliberately just
+# "errored", not "runtime error". Aria renders the raw value as the slice
+# label (no per-value aliasing), so the values are human-readable.
+RUN_OUTCOME_READY = "Ready"
+RUN_OUTCOME_WARNINGS = "Ready with warnings"
+RUN_OUTCOME_FAILED = "Failed"
+RUN_OUTCOME_ERRORED = "Blocked (check errored)"
+
+
+def derive_run_outcome(run_result: Any) -> str:
+    """Bucket a run into a single verdict slice (errored > failed > warnings > ready)."""
+    errors = getattr(run_result, "errors", 0) or 0
+    failed = getattr(run_result, "failed", 0) or 0
+    warnings = getattr(run_result, "warnings", 0) or 0
+    if errors > 0:
+        return RUN_OUTCOME_ERRORED
+    if failed > 0:
+        return RUN_OUTCOME_FAILED
+    if warnings > 0:
+        return RUN_OUTCOME_WARNINGS
+    return RUN_OUTCOME_READY
+
+
 def _run_data(
     run_result: Any,
     *,
@@ -325,6 +412,7 @@ def _run_data(
     run_id: str,
     instance_id: str,
     tenant_id: str,
+    tenant_name: str,
     agent_id: str,
     agent_count: int,
     scope: str,
@@ -337,12 +425,14 @@ def _run_data(
         "instanceId": instance_id,   # System Metadata
         "tenantId": tenant_id,       # OII (raw Entra tenant GUID; approved Data Profile)
         "tenantClass": classify_tenant(tenant_id),  # derived: internal|customer|unknown
+        "tenantName": tenant_name,   # OII (org display name; privacy-approved, best-effort)
         "agentId": agent_id,         # OII
         "agentCount": agent_count,
         "adkVersion": get_adk_version(),
         "scope": scope,
         "invocationSource": invocation_source,
         "overall": getattr(run_result, "overall", ""),
+        "runOutcome": derive_run_outcome(run_result),  # verdict donut split (errored|failed|warnings|ready)
         "durationSecs": getattr(run_result, "duration_secs", 0),
         "total": getattr(run_result, "total", 0),
         "passed": getattr(run_result, "passed", 0),
@@ -364,6 +454,7 @@ def _check_data(
     run_id: str,
     instance_id: str,
     tenant_id: str,
+    tenant_name: str = "",
 ) -> dict[str, Any]:
     # Identifiers + enums ONLY. Never `result` / `remediation` (EUII risk).
     return {
@@ -373,6 +464,7 @@ def _check_data(
         "instanceId": instance_id,
         "tenantId": tenant_id,
         "tenantClass": classify_tenant(tenant_id),
+        "tenantName": tenant_name,
         "checkpointId": getattr(check, "checkpoint_id", ""),
         "category": getattr(check, "category", ""),
         "priority": getattr(check, "priority", ""),
@@ -387,6 +479,7 @@ def build_events(
     env: str,
     instance_id: str,
     tenant_id: str,
+    tenant_name: str = "",
     agent_id: str,
     agent_count: int,
     scope: str,
@@ -406,6 +499,7 @@ def build_events(
                 run_id=run_id,
                 instance_id=instance_id,
                 tenant_id=tenant_id,
+                tenant_name=tenant_name,
                 agent_id=agent_id,
                 agent_count=agent_count,
                 scope=scope,
@@ -424,6 +518,7 @@ def build_events(
                     run_id=run_id,
                     instance_id=instance_id,
                     tenant_id=tenant_id,
+                    tenant_name=tenant_name,
                 ),
             )
         )
@@ -434,6 +529,7 @@ def emit_flightcheck_telemetry(
     run_result: Any,
     *,
     tenant_id: str = "",
+    tenant_name: str = "",
     agent_id: str = "",
     scope: str = "",
     agent_count: int = 0,
@@ -459,6 +555,7 @@ def emit_flightcheck_telemetry(
             env=env,
             instance_id=instance_id,
             tenant_id=tenant_id,
+            tenant_name=tenant_name,
             agent_id=agent_id,
             agent_count=agent_count,
             scope=scope,
