@@ -16,7 +16,6 @@ Usage:
     python scripts/setup.py \
         --url https://org.crm.dynamics.com \
         --bot-id abc-123-def \
-        --title-id metaos-title-id \
         --name "Employee Self-Service IT" \
         --schema msdyn_ESSAgent \
         --managed \
@@ -532,9 +531,6 @@ def write_config(agent_info, slug, output_dir, template_configs_discovered,
         "slug": slug,
         "folder": output_dir.replace("\\", "/"),
     })
-    if agent_info.get("titleId"):
-        agent_entry["titleId"] = agent_info["titleId"]
-
     # Detect schema migration. write_config always stamps the current
     # EXPECTED_CONFIG_VERSION; if the existing file was on an older
     # version, surface that to the operator so they know /setup just
@@ -689,8 +685,6 @@ def main():
                         help="Power Platform environment URL")
     parser.add_argument("--bot-id", required=True,
                         help="Selected bot ID from Dataverse")
-    parser.add_argument("--title-id",
-                        help="MetaOS title ID for landing-page configuration")
     parser.add_argument("--name", required=True,
                         help="Agent display name")
     parser.add_argument("--schema", required=True,
@@ -714,7 +708,6 @@ def main():
     agent_info = {
         "name": args.name,
         "botId": args.bot_id,
-        "titleId": args.title_id,
         "schema": args.schema,
         "managed": args.managed,
         "url": args.url,

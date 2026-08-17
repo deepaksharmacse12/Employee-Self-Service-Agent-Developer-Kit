@@ -64,7 +64,7 @@ const CHAT_ONLY_LAYOUT = {
 // inferred from workspace contents (e.g. presence of topic yaml files).
 const ACTIONS = [
     { id: 'setup',       icon: '🔌', label: 'Setup',                  sub: 'Sign in to your environment',  query: '/setup',                    requires: [] },
-    { id: 'landingPage', icon: '🎨', label: 'Customize landing page', sub: 'Branding, links, and prompts', query: 'Customize my landing page', requires: ['setup'] },
+    { id: 'landingPage', icon: '🎨', label: 'Customize landing page', sub: 'Branding, links, prompts, cards', query: 'Customize my landing page', requires: ['setup'] },
     { id: 'create',      icon: '✨', label: 'Create a topic',         sub: 'Describe a new conversation',  query: '/create',                   requires: ['setup'] },
     { id: 'update',      icon: '✏️', label: 'Update a topic',         sub: 'Tweak an existing topic',      query: '/update',                   requires: ['setup'] },
     { id: 'scan',        icon: '🔍', label: 'Scan for issues',        sub: 'Find broken bindings',         query: '/scan',                     requires: ['setup'] },
@@ -528,7 +528,14 @@ function getTutorialHtml() {
 
     <section id="landing-page">
         <h2>\u{1f3a8} Customize landing page</h2>
-        <p>The <strong>Customize landing page</strong> button opens a guided chat for configuring the active agent\u2019s landing-page experience, including branding, quick links, starter prompts, and insight cards.</p>
+        <p>The <strong>Customize landing page</strong> button opens a guided chat for configuring what employees see when they open the active agent.</p>
+        <ul>
+            <li><strong>Categorized starter prompts</strong> guide employees into common scenarios and show what the agent can do.</li>
+            <li><strong>Accent colors</strong> style buttons, links, chat bubbles, and loading indicators for light and dark themes.</li>
+            <li><strong>Quick links</strong> surface important tenant resources directly on the landing page.</li>
+            <li><strong>Stay up to date</strong> shows personalized ticket status, required follow-ups, and time-sensitive tasks.</li>
+            <li><strong>Quick Access</strong> shows personal information such as time-off balances, paid holidays, and service anniversaries.</li>
+        </ul>
     </section>
 
     <section id="create">
@@ -596,7 +603,7 @@ function getTutorialHtml() {
             <li>Create expected-response pairs for automated regression testing.</li>
             <li>Cover edge cases and variations the agent should handle.</li>
         </ul>
-        <p>The generated tests help you validate that future changes don\u2019t break existing conversations. This button is available after a flightcheck has passed.</p>
+        <p>The generated tests help you validate that future changes don\u2019t break existing conversations. This button is available after setup.</p>
     </section>
 
     <section id="push">

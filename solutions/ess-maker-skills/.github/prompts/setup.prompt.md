@@ -6,7 +6,13 @@ description: "Type Enter to set up your ESS customization environment"
 # Setup
 
 **Idempotency check.** Read `.local/config.json`. If it exists AND
-`setup` is `"complete"`, show:
+`setup` is `"complete"`, first run this command without showing it to the user:
+
+```powershell
+python -m pip install -r scripts/requirements.txt
+```
+
+If dependency installation fails, show the error and stop. Otherwise, show:
 
 > Your environment is already set up. Re-running setup will replace your local agent files.
 > Type `RESET` to confirm a full re-setup, or anything else to cancel.

@@ -81,6 +81,9 @@ only on individual tool descriptions.
     explain that effect and obtain explicit confirmation immediately before
     calling it, even when the maker's initial request already said to delete or
     reset all landing-page configuration.
+22. When the maker asks what a setting controls for employees, follow
+    **Explain landing-page settings**. Use Microsoft Learn for end-user behavior
+    only; use this skill and the MCP tool contracts for configuration behavior.
 
 ## Resolve the target
 
@@ -142,7 +145,9 @@ After `list_agent_configs` or `search_agents` returns an unambiguous match:
 1. Read the complete `.local/config.json`.
 2. Find the target entry in `agents`. Match the already-selected local target by
    `botId` when available, then by `slug`. Use `name` only when it is
-   unambiguous.
+   unambiguous. When the active target exists only in the backward-compatible
+   `agent` object, copy that complete object into `agents` before adding
+   `titleId`; this migrates the legacy shape without inventing agent fields.
 3. Add or replace only that entry's `titleId`.
 4. When the target is active, also add or replace `agent.titleId`. Treat the
    target as active when its `slug` equals `activeAgent` or its `botId`/`slug`
@@ -151,13 +156,38 @@ After `list_agent_configs` or `search_agents` returns an unambiguous match:
    field, and every top-level config field.
 6. Write valid JSON back to `.local/config.json`.
 
-**Completion gate:** Reread `.local/config.json` after writing it. Do not
-respond or continue until the matching `agents` entry contains the resolved
-`titleId` and, for the active target, `agent.titleId` contains the same value.
+**Completion gate:** Reread `.local/config.json` after writing it. When a local
+target exists, do not respond or continue until the matching `agents` entry
+contains the resolved `titleId` and, for the active target, `agent.titleId`
+contains the same value.
 
 Do not create a partial `agents` entry from an MCP result. When no matching local
 entry exists, use the resolved `titleId` for the current request, but do not
 invent `botId`, `schemaName`, `isManaged`, `slug`, or `folder`.
+
+## Explain landing-page settings
+
+Use [Customize the Employee Self-Service agent](https://learn.microsoft.com/en-us/microsoft-365/copilot/employee-self-service/customize#configure-employee-self-service-branding-and-landing-page-content-in-the-microsoft-365-admin-center)
+as the source for what these settings control in the end-user experience. Read
+only these sections:
+
+- **Configure categorized starter prompts**
+- **Configure accent colors**
+- **Configure quick links**
+- **Configure Stay up to date**
+- **Configure Quick Access**
+
+The page describes another administration surface. Do not use or repeat its
+navigation, upload, save, role, or configuration instructions. This skill and
+the MCP tool contracts define how configuration is performed here.
+
+| Setting | What it controls for employees |
+|---|---|
+| Categorized starter prompts | Show common ways to engage with the agent, communicate its capabilities, and guide employees into the right scenarios. Tenant-level categorized prompts override starter prompts from Copilot Studio. |
+| Accent colors | Style buttons, links, chat bubbles, and loading indicators in light and dark themes. Default Copilot colors apply when unset. |
+| Quick links | Surface important tenant resources directly on the landing page. No quick links appear when the list is empty. |
+| Stay up to date | Show a personalized carousel of actionable cards for in-progress ticket status, required follow-ups, and time-sensitive tasks. Employees can select a card to start a related conversation. Cards come from configured ticket-related sources and do not create or modify tickets. |
+| Quick Access | Show personalized, high-frequency information cards, such as time-off balance/status, upcoming paid holidays, and service anniversaries. Employees can select a card to start a conversation. |
 
 ## Start a guided configuration
 
@@ -170,14 +200,14 @@ When the maker asks to configure or set up the landing page:
      the guided summary needs the complete configuration.
 3. Present the current state:
 
-   | Area | Show |
-   |---|---|
-   | Branding | Configured light/dark accent colors, or defaults |
-   | Quick links | Link count and ordered labels |
-   | Starter prompts | Pivot count and prompts per pivot |
-   | Stay Up to Date | Enabled or disabled |
-   | Quick Access | Enabled or disabled |
-   | Agent identity | Read-only name and whether an icon is available |
+   | Area | Show | End-user effect |
+   |---|---|---|
+   | Branding | Configured light/dark accent colors, or defaults | Styles buttons, links, chat bubbles, and loading indicators |
+   | Quick links | Link count and ordered labels | Gives direct access to important tenant resources |
+   | Starter prompts | Category count and prompts per category | Shows agent capabilities and guides employees into common scenarios |
+   | Stay up to date | Enabled or disabled | Surfaces personalized ticket updates, follow-ups, and time-sensitive tasks |
+   | Quick Access | Enabled or disabled | Surfaces high-frequency personal information as selectable cards |
+   | Agent identity | Read-only name and whether an icon is available | Identifies the agent in the employee experience |
 
 4. Ask which area the maker wants to configure.
 5. Complete one area at a time. Do not repeat `get_agent_config` before opening
@@ -189,7 +219,7 @@ When the maker asks to configure or set up the landing page:
 |---|---|
 | View or summarize current configuration | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` |
 | View the agent name | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` -> report the read-only name |
-| Show the agent icon | Resolve the target and establish existence -> use an available full config result or call `get_agent_config` -> decode and display the read-only PNG |
+| Show the agent icon | Resolve `titleId` -> `view_agent_icon`; the tool displays the read-only PNG |
 | Apply exact branding/accent values | Resolve the target and establish existence -> get current branding only when a merge is required -> validate changed colors -> `update_agent_config` -> report success |
 | Explore or edit branding without exact values | Resolve the target and establish existence -> `open_accent_color`; the widget validates and publishes |
 | Apply an exact quick-links list/CSV or deterministic link change | Resolve the target and establish existence -> get current links only when a merge is required -> validate the complete result -> `update_agent_config` -> report success |
@@ -311,6 +341,10 @@ new value for each affected section. Omit every unaffected section.
 
 ## Branding
 
+Accent colors control end-user styling for buttons, links, chat bubbles, and
+loading indicators in light and dark themes. Default Copilot colors apply when
+branding is unset.
+
 1. Read the current branding section.
 2. Track the theme colors the maker requested to change.
 3. Normalize changed colors to uppercase `#RRGGBB`.
@@ -357,7 +391,9 @@ A reset does not run contrast validation.
 
 ## Quick links
 
-The presence of quick-link entries controls whether quick links appear.
+Quick links give employees direct access to important tenant resources from the
+landing page. The presence of quick-link entries controls whether quick links
+appear.
 
 Validate the complete replacement array before writing:
 
@@ -382,6 +418,10 @@ replaces the complete array after confirmation. Clearing sends:
 
 ## Starter prompts
 
+Categorized starter prompts show employees common ways to engage with the agent
+and guide them into the right scenarios. These tenant-level prompts override
+starter prompts configured in Copilot Studio.
+
 When `open_starter_prompts` returns an empty or absent `pivots` array, the widget
 opens with a default set of starter prompts. Accompany the widget with:
 
@@ -401,8 +441,18 @@ Add, remove, and reorder operations use read-merge-write. Clearing sends
 
 ## Insight cards
 
-The insight-card section contains both controls. Read the current section,
-merge the requested toggle, and submit both values together:
+The insight-card section contains both controls:
+
+- **Stay up to date** surfaces personalized, actionable cards for in-progress
+  ticket status, required follow-ups, and time-sensitive tasks. Employees can
+  select a card to start a related conversation. The cards use configured
+  ticket-related sources and do not create or modify tickets.
+- **Quick Access** surfaces high-frequency personal information, such as
+  time-off balance/status, upcoming paid holidays, and service anniversaries.
+  Employees can select a card to start a conversation.
+
+Read the current section, merge the requested toggle, and submit both values
+together:
 
 ```json
 {
@@ -418,44 +468,13 @@ merge the requested toggle, and submit both values together:
 
 ## Display the read-only agent icon
 
-1. Resolve the target and current configuration.
-2. Read `icon` from the returned configuration and require it to begin with
-   `data:image/png;base64,`.
-3. Take everything after `base64,` verbatim and write it to
-   `.local/landing-page-config/agent-icon.b64`.
-4. Run:
-
-   ```powershell
-   python scripts/decode_agent_icon.py `
-     --input ".local/landing-page-config/agent-icon.b64" `
-     --output ".local/landing-page-config/agent-icon.png"
-   ```
-
-5. If decoding fails, call `get_agent_config` again and rewrite the complete
-   payload. Never repair the payload by adding `=`.
-6. Delete the `.b64` file after a successful decode.
-7. Display the PNG through a user-visible host capability. A model-only image
-   inspection does not display it to the maker.
-8. Do not issue an update for the read-only icon.
-
-### VS Code
-
-Invoke `run_vscode_command`:
-
-```text
-commandId: simpleBrowser.show
-args: ["file:///c:/absolute/path/to/.local/landing-page-config/agent-icon.png"]
-skipCheck: true
-```
-
-Use `simpleBrowser.show`, a `file:///` URI, and forward slashes. Do not use
-`vscode.open` with a string URI.
-
-### Other hosts
-
-Use the host's user-visible file preview/open capability. If the host has none,
-provide the PNG path and state that it cannot be opened automatically. Never
-claim the maker can see an image rendered only to the model.
+1. Resolve `titleId`.
+2. Call `view_agent_icon`. The tool returns text plus MCP `image` content so the
+   host displays the PNG directly in the conversation.
+3. When the tool reports that the agent has no custom icon, explain that to the
+   maker.
+4. Do not call `get_agent_config`, decode base64, write a local file, open a
+   widget, or issue an update for this read-only request.
 
 ## Errors
 

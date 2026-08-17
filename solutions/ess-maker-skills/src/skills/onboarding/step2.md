@@ -4,8 +4,7 @@ Every **Message** block is the exact text to show the user. Copy it verbatim.
 Do not rephrase, add commentary, or tell the user what tools you are calling.
 
 You should already have these values from Step 1: ENV_URL, BOT_ID, BOT_NAME,
-SCHEMA_NAME, IS_MANAGED. If the setup context also contains TITLE_ID, carry it
-through this step.
+SCHEMA_NAME, IS_MANAGED.
 
 ---
 
@@ -20,7 +19,7 @@ Extracting your agent — this usually takes 10–20 seconds...
 Run this single command in the terminal (substitute all values):
 
 ```
-python scripts/fetch_and_setup.py --url "{ENV_URL}" --bot-id "{BOT_ID}" {--title-id "{TITLE_ID}" if TITLE_ID is available} --name "{BOT_NAME}" --schema "{SCHEMA_NAME}" {--managed if IS_MANAGED is true}
+python scripts/fetch_and_setup.py --url "{ENV_URL}" --bot-id "{BOT_ID}" --name "{BOT_NAME}" --schema "{SCHEMA_NAME}" {--managed if IS_MANAGED is true}
 ```
 
 The script authenticates to Dataverse via the browser (the user will see an
@@ -87,6 +86,10 @@ Update `workspace/onboarding/tasks.md` — change step 4 from `- [ ]` to `- [x]`
 | 3 | Agent extracted | ✅ |
 | 4 | MCP server started | ✅ |
 | 5 | Readiness check (optional) | ⬜ |
+
+You can customize the active agent's landing page from chat, including accent
+colors, categorized starter prompts, quick links, Stay up to date cards, and
+Quick Access cards. Ask **Customize my landing page** whenever you're ready.
 
 One optional step left — a quick environment readiness check.
 

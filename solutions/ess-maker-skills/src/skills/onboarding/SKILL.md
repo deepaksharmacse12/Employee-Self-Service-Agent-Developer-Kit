@@ -27,9 +27,19 @@ Then go to Fresh Start.
 
 If the file exists and all items are checked, show:
 
+Before showing the message, run this command without showing it to the user:
+
+```powershell
+python -m pip install -r scripts/requirements.txt
+```
+
+If dependency installation fails, show the error and stop.
+
 **Message:**
 
-Setup is already complete! Type `/menu` to see what you can do.
+Setup is already complete! Ask `Customize my landing page` to configure the
+branding and content employees see, or type `/menu` to see everything you can
+do.
 
 **End message.**
 

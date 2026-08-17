@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import sys
 import warnings
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pydantic_settings.exceptions import IncompleteFieldDefinitionWarning
 
 
@@ -43,6 +45,16 @@ WIDGETS = {
 
 
 class _FakeClient:
+    async def view_agent_icon(self, title_id: str) -> dict[str, Any]:
+        icon = base64.b64encode(
+            agentconfig_server.PNG_SIGNATURE + b"test-image-content"
+        ).decode("ascii")
+        return {
+            "titleId": title_id,
+            "name": "ESS HR",
+            "icon": f"{agentconfig_server.PNG_DATA_URL_PREFIX}{icon}",
+        }
+
     async def open_accent_color(self, title_id: str) -> dict[str, Any]:
         return {"titleId": title_id, "branding": {"theming": []}}
 
@@ -61,6 +73,11 @@ class _FakeClient:
 
     async def delete_agent_config(self, title_id: str) -> dict[str, Any]:
         return {"success": True}
+
+
+class _NoIconClient:
+    async def view_agent_icon(self, title_id: str) -> dict[str, Any]:
+        return {"titleId": title_id, "name": "ESS HR", "icon": None}
 
 
 def test_widget_tools_bind_model_visible_resources() -> None:
@@ -82,6 +99,8 @@ def test_widget_tools_bind_model_visible_resources() -> None:
     assert tools["update_agent_config"].meta == {
         "ui": {"visibility": ["model", "app"]}
     }
+    assert tools["view_agent_icon"].annotations.readOnlyHint is True
+    assert tools["view_agent_icon"].meta is None
     assert tools["delete_agent_config"].annotations.destructiveHint is True
     assert tools["delete_agent_config"].annotations.readOnlyHint is False
 
@@ -142,6 +161,22 @@ def test_openers_and_app_tools_return_structured_content(monkeypatch) -> None:
     monkeypatch.setattr(agentconfig_server, "_client", _FakeClient())
 
     async def run() -> None:
+        icon = await agentconfig_server.mcp.call_tool(
+            "view_agent_icon",
+            {"titleId": "title-1"},
+        )
+        assert icon.isError is False
+        assert icon.structuredContent == {
+            "titleId": "title-1",
+            "name": "ESS HR",
+            "hasIcon": True,
+        }
+        assert [item.type for item in icon.content] == ["text", "image"]
+        assert icon.content[1].mimeType == "image/png"
+        assert base64.b64decode(icon.content[1].data).startswith(
+            agentconfig_server.PNG_SIGNATURE
+        )
+
         for tool_name in WIDGETS:
             opened = await agentconfig_server.mcp.call_tool(
                 tool_name,
@@ -174,6 +209,47 @@ def test_openers_and_app_tools_return_structured_content(monkeypatch) -> None:
         }
 
     asyncio.run(run())
+
+
+def test_view_agent_icon_returns_text_when_no_custom_icon_exists(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(agentconfig_server, "_client", _NoIconClient())
+
+    result = asyncio.run(
+        agentconfig_server.mcp.call_tool(
+            "view_agent_icon",
+            {"titleId": "title-1"},
+        )
+    )
+
+    assert result.isError is False
+    assert [item.type for item in result.content] == ["text"]
+    assert result.structuredContent == {
+        "titleId": "title-1",
+        "name": "ESS HR",
+        "hasIcon": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("icon", "message"),
+    [
+        ("not-a-data-url", "data:image/png;base64"),
+        ("data:image/png;base64,!!!!", "not valid base64"),
+        (
+            "data:image/png;base64,"
+            + base64.b64encode(b"not a png").decode("ascii"),
+            "not a PNG",
+        ),
+    ],
+)
+def test_extract_png_base64_rejects_invalid_icons(
+    icon: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        agentconfig_server._extract_png_base64(icon)
 
 
 def test_api_error_result_includes_http_status() -> None:

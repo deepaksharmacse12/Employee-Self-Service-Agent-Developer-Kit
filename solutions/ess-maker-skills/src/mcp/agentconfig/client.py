@@ -36,10 +36,11 @@ logger = logging.getLogger("ess-landing-page-config")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-_CLIENT_ID = "20f262e3-27df-425a-9ef7-ff7ada27dbae"
+_CLIENT_ID = "417219b4-3a7d-42a2-bdb1-972bd8281a02"
 _SCOPE = ["https://substrate.office.com/weve/.default"]
 _AUTHORITY = "https://login.microsoftonline.com/organizations"
-_LOCAL_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".local")
+_AGENTCONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOCAL_STATE_DIR = os.path.join(_AGENTCONFIG_DIR, ".local")
 _TOKEN_CACHE_PATH = os.path.join(_LOCAL_STATE_DIR, "msal_token_cache.bin")
 _MAX_TITLE_ID_LENGTH = 256
 _MAX_SEARCH_LENGTH = 256
@@ -205,12 +206,7 @@ def acquire_token_msal_interactive() -> str:
 
 
 def _acquire_token_interactive_form_post(app: Any) -> dict[str, Any]:
-    prompt = (
-        "select_account"
-        if os.environ.get("AGENTCONFIG_FORCE_ACCOUNT_PICKER", "").lower()
-        in ("1", "true", "yes")
-        else None
-    )
+    prompt = _interactive_prompt()
 
     server = http.server.HTTPServer(("127.0.0.1", 0), _FormPostCaptureHandler)
     redirect_uri = f"http://localhost:{server.server_port}"
@@ -240,6 +236,16 @@ def _acquire_token_interactive_form_post(app: Any) -> dict[str, Any]:
         flow,
         _FormPostCaptureHandler.captured,
     )
+
+
+def _interactive_prompt() -> str | None:
+    if os.environ.get("AGENTCONFIG_FORCE_ACCOUNT_PICKER", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return "select_account"
+    return None
 
 
 def _decode_tenant_id_from_jwt(token: str) -> str:
@@ -470,6 +476,12 @@ class AgentConfigClient:
         return await self._request(
             "DELETE",
             self._agent_path(title_id),
+        )
+
+    async def view_agent_icon(self, title_id: str) -> dict[str, Any]:
+        return await self.get_agent_config(
+            title_id,
+            select_fields=("titleId", "name", "icon"),
         )
 
     async def open_accent_color(self, title_id: str) -> dict[str, Any]:

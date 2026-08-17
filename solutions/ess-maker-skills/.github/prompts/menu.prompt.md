@@ -13,6 +13,7 @@ Here's what I can help you with:
 
 | Command | What it does |
 |---------|-------------|
+| `Customize my landing page` | Configure the branding and content employees see when they open the ESS agent |
 | `/connect` | Type Enter to connect ServiceNow or Workday to your agent |
 | `/create` | Type Enter to create a new topic or workflow |
 | `/update` | Type Enter to modify an existing topic or workflow |

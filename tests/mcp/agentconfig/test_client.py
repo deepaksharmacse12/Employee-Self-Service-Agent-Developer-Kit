@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import httpx
+import pytest
 
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -44,6 +45,35 @@ def _make_client(
     monkeypatch.delenv("AGENTCONFIG_ACCESS_TOKEN_FILE", raising=False)
     transport = httpx.MockTransport(handler)
     return agentconfig_client.AgentConfigClient(transport=transport), token
+
+
+def test_token_cache_uses_agentconfig_local_state() -> None:
+    assert Path(agentconfig_client._TOKEN_CACHE_PATH) == (
+        REPO_ROOT
+        / "solutions"
+        / "ess-maker-skills"
+        / "src"
+        / "mcp"
+        / "agentconfig"
+        / ".local"
+        / "msal_token_cache.bin"
+    )
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes"])
+def test_force_account_picker_uses_select_account(
+    value: str,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGENTCONFIG_FORCE_ACCOUNT_PICKER", value)
+
+    assert agentconfig_client._interactive_prompt() == "select_account"
+
+
+def test_account_picker_is_optional(monkeypatch) -> None:
+    monkeypatch.delenv("AGENTCONFIG_FORCE_ACCOUNT_PICKER", raising=False)
+
+    assert agentconfig_client._interactive_prompt() is None
 
 
 def test_sends_resolved_token_as_bearer_without_exposing_it(
@@ -152,6 +182,7 @@ def test_open_tools_select_the_production_server_fields(monkeypatch) -> None:
     client, _ = _make_client(monkeypatch, handler)
 
     async def run() -> None:
+        await client.view_agent_icon("title-1")
         await client.open_accent_color("title-1")
         await client.open_quick_links("title-1")
         await client.open_starter_prompts("title-1")
@@ -160,6 +191,7 @@ def test_open_tools_select_the_production_server_fields(monkeypatch) -> None:
     asyncio.run(run())
 
     assert [request.url.params["$select"] for request in requests] == [
+        "titleId,name,icon",
         "titleId,branding",
         "titleId,quickLinksConfig",
         "titleId,pivots",

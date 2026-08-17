@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import json
 import os
@@ -14,17 +16,19 @@ from urllib.parse import urlsplit
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 
 from client import AgentConfigApiError, AgentConfigClient
 
 
-DEFAULT_WIDGET_ORIGIN = "https://workforceinsights.m365.sandbox.dev.microsoft"
+DEFAULT_WIDGET_ORIGIN = "https://workforceinsights.m365.cloud.dev.microsoft"
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
 
 ACCENT_COLOR_RESOURCE_URI = "ui://widget/accent-color/AccentColor.html"
 QUICK_LINKS_RESOURCE_URI = "ui://widget/quick-links/QuickLinks.html"
 STARTER_PROMPTS_RESOURCE_URI = "ui://widget/starter-prompts/StarterPrompts.html"
+PNG_DATA_URL_PREFIX = "data:image/png;base64,"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 _READ_ONLY_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=True,
@@ -150,6 +154,24 @@ def _structured_result(
     )
 
 
+def _extract_png_base64(icon: Any) -> str:
+    if not isinstance(icon, str) or not icon.startswith(PNG_DATA_URL_PREFIX):
+        raise ValueError("agent icon must be a data:image/png;base64 URL")
+
+    data = icon[len(PNG_DATA_URL_PREFIX) :]
+    if not data:
+        raise ValueError("agent icon payload is empty")
+
+    try:
+        decoded = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("agent icon payload is not valid base64") from error
+
+    if not decoded.startswith(PNG_SIGNATURE):
+        raise ValueError("agent icon payload is not a PNG")
+    return data
+
+
 def _widget_error_result(
     error: AgentConfigApiError | httpx.RequestError | ValueError,
 ) -> CallToolResult:
@@ -249,6 +271,43 @@ async def create_agent_config(titleId: str) -> str:
 async def get_agent_config(titleId: str) -> str:
     """Get an employee agent's complete landing-page configuration."""
     return _format(await get_client().get_agent_config(titleId))
+
+
+@mcp.tool(annotations=_READ_ONLY_ANNOTATIONS)
+async def view_agent_icon(titleId: str) -> CallToolResult:
+    """Display an employee agent's current PNG icon in the conversation."""
+    try:
+        payload = await get_client().view_agent_icon(titleId)
+        icon = payload.get("icon")
+        name = payload.get("name")
+        resolved_title_id = payload.get("titleId", titleId)
+
+        if icon is None:
+            return _structured_result(
+                {
+                    "titleId": resolved_title_id,
+                    "name": name,
+                    "hasIcon": False,
+                },
+                "This agent does not have a custom icon.",
+            )
+
+        image_data = _extract_png_base64(icon)
+    except (AgentConfigApiError, httpx.RequestError, ValueError) as error:
+        return _widget_error_result(error)
+
+    label = f" for {name}" if isinstance(name, str) and name else ""
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=f"Here is the current agent icon{label}."),
+            ImageContent(type="image", data=image_data, mimeType="image/png"),
+        ],
+        structuredContent={
+            "titleId": resolved_title_id,
+            "name": name,
+            "hasIcon": True,
+        },
+    )
 
 
 @mcp.tool(

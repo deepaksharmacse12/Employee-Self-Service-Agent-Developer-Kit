@@ -1,16 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Tests for landing-page title ID setup persistence."""
+"""Tests that setup preserves a title ID discovered by landing-page tools."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
-import fetch_and_setup
 import setup
 
 
@@ -18,7 +15,6 @@ def _agent_info(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "name": "Mock ESS Agent",
         "botId": "bot-1",
-        "titleId": None,
         "schema": "msdyn_copilotforemployeeselfservicehr",
         "managed": True,
         "url": "https://example.crm.dynamics.com",
@@ -43,24 +39,46 @@ def _write_config(
     )
 
 
-def test_write_config_persists_supplied_title_id(
+def _seed_config(
+    tmp_path: Path,
+    *,
+    name: str = "Mock ESS Agent",
+    bot_id: str = "bot-1",
+    slug: str = "mock-ess-agent",
+    title_id: str = "title-1",
+) -> None:
+    agent = {
+        "name": name,
+        "botId": bot_id,
+        "titleId": title_id,
+        "schemaName": "msdyn_copilotforemployeeselfservicehr",
+        "isManaged": True,
+        "slug": slug,
+        "folder": f"workspace/agents/{slug}",
+    }
+    local = tmp_path / ".local"
+    local.mkdir(parents=True, exist_ok=True)
+    (local / "config.json").write_text(
+        json.dumps(
+            {
+                "configVersion": 1,
+                "setup": "complete",
+                "agent": agent,
+                "activeAgent": slug,
+                "agents": [agent],
+                "dataverseEndpoint": "https://example.crm.dynamics.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_write_config_preserves_discovered_title_id(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-
-    config = _write_config(tmp_path, _agent_info(titleId="title-1"))
-
-    assert config["agent"]["titleId"] == "title-1"
-    assert config["agents"][0]["titleId"] == "title-1"
-
-
-def test_write_config_preserves_title_id_when_refresh_omits_it(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path, _agent_info(titleId="title-1"))
+    _seed_config(tmp_path)
 
     config = _write_config(tmp_path, _agent_info(name="Renamed Agent"))
 
@@ -73,7 +91,7 @@ def test_write_config_replaces_renamed_agent_by_bot_id(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path, _agent_info(titleId="title-1"))
+    _seed_config(tmp_path)
 
     config = _write_config(
         tmp_path,
@@ -91,7 +109,7 @@ def test_write_config_does_not_transfer_title_id_to_new_bot_with_same_slug(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path, _agent_info(titleId="title-1"))
+    _seed_config(tmp_path)
 
     config = _write_config(tmp_path, _agent_info(botId="bot-2"))
 
@@ -109,37 +127,3 @@ def test_write_config_omits_unresolved_title_id(
     config = _write_config(tmp_path, _agent_info())
 
     assert "titleId" not in config["agent"]
-
-
-def test_run_setup_forwards_title_id() -> None:
-    completed = SimpleNamespace(returncode=0)
-    with patch("fetch_and_setup.subprocess.run", return_value=completed) as run:
-        result = fetch_and_setup.run_setup(
-            "https://example.crm.dynamics.com",
-            "bot-1",
-            "Mock ESS Agent",
-            "msdyn_copilotforemployeeselfservicehr",
-            True,
-            {"components": "components.json"},
-            title_id="title-1",
-        )
-
-    assert result == 0
-    command = run.call_args.args[0]
-    assert command[command.index("--title-id") + 1] == "title-1"
-
-
-def test_refresh_prefers_supplied_title_id() -> None:
-    agent_config = {"titleId": "old-title"}
-
-    result = fetch_and_setup.resolve_title_id("new-title", agent_config)
-
-    assert result == "new-title"
-
-
-def test_refresh_preserves_configured_title_id_when_omitted() -> None:
-    agent_config = {"titleId": "old-title"}
-
-    result = fetch_and_setup.resolve_title_id(None, agent_config)
-
-    assert result == "old-title"

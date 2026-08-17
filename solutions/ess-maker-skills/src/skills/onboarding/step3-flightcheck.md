@@ -33,7 +33,8 @@ Do NOT update `workspace/onboarding/tasks.md`. Step 5 stays unchecked so
 **Message:**
 
 No problem — I'll keep this on your checklist. You can run
-`/flightcheck` any time, or `/setup` will offer it again.
+`/flightcheck` any time, or `/setup` will offer it again. You can continue by
+asking **Customize my landing page**, or type `/menu` to see every capability.
 
 **End message.**
 
@@ -86,6 +87,7 @@ Then show:
 
 | Command | What it does |
 |---------|-------------|
+| `Customize my landing page` | Configure landing-page branding and content |
 | `/create` | Create a new topic or workflow |
 | `/connect` | Set up ServiceNow or Workday integration |
 | `/scan` | Scan for compile errors |

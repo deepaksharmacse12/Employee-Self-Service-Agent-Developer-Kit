@@ -162,6 +162,8 @@ The installer provisions the following dependencies. Users do not need to instal
 | `msal` | Microsoft Authentication Library — Entra ID auth for FlightCheck |
 | `requests` | HTTP client for Dataverse / Graph API calls |
 | `urllib3` | HTTP transport layer (requests dependency, pinned) |
+| `httpx` | Async HTTP client for the AgentConfiguration API |
+| `mcp` | MCP server runtime for landing-page configuration tools and widgets |
 | `PyYAML` | YAML parsing for topic schema validation |
 | `defusedxml` | Safe XML parsing for Workday SOAP responses (XXE-hardened) |
 

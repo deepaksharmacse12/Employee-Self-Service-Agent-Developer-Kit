@@ -337,7 +337,8 @@ JSON format", "something went wrong with Workday".
 `src/skills/landing-page-config/SKILL.md`. This applies whether the user asks
 to configure the whole landing page or mentions branding, accent colors, quick
 links, starter prompts, Stay Up to Date, Quick Access, the agent name, or the
-agent icon. Do not call an AgentConfiguration MCP tool from a generic flow.
+agent icon, or asks what any landing-page setting controls for employees. Do
+not call an AgentConfiguration MCP tool from a generic flow.
 
 **Quality validation invocation:** When quality validation is requested on
 eval files — at step 4.3 of the eval create flow, step 4 of the eval
