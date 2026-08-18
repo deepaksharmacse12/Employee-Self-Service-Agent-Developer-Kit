@@ -250,8 +250,17 @@ def test_authenticate_resolves_tenant_name_before_start_session(
     resolved and cached the name -- picked it up). This is a regression
     test for that ordering: silent resolution runs first, its result is
     fed to ``set_identity``, and only then does ``start_session`` emit.
+
+    Asserts on the actual OneCollector envelope (not just call ordering)
+    so that a regression where ``start_session`` internally wipes the
+    ``tenant_name`` that ``set_identity`` just stored -- the exact
+    reviewer-flagged bug that ``set_identity``'s ``None``-sentinel refactor
+    fixes -- shows up as an assertion failure on the emitted payload.
     """
     import auth
+    import adk_telemetry
+    from flightcheck import graph_client
+    from flightcheck import telemetry as fc_telemetry
 
     class FakeCache:
         has_state_changed = False
@@ -275,55 +284,71 @@ def test_authenticate_resolves_tenant_name_before_start_session(
         def acquire_token_interactive(self, scopes, prompt):
             return {
                 "access_token": "fresh-token",
-                "id_token_claims": {"tid": "tenant-id"},
+                "id_token_claims": {
+                    "tid": "00000000-0000-0000-0000-0000000000ab"
+                },
             }
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(auth, "discover_tenant", lambda _url: "tenant-id")
+    # Isolate ADK telemetry state (so we don't touch ~/.adk on the dev box).
+    cfg_dir = tmp_path / ".adk"
+    monkeypatch.setattr(adk_telemetry, "CONFIG_DIR", str(cfg_dir))
+    monkeypatch.setattr(adk_telemetry, "CONFIG_PATH", str(cfg_dir / "config"))
+    monkeypatch.setattr(
+        adk_telemetry, "SESSION_PATH", str(cfg_dir / "session.json")
+    )
+    monkeypatch.setattr(
+        adk_telemetry, "BUFFER_PATH", str(cfg_dir / "telemetry-buffer.ndjson")
+    )
+    monkeypatch.setattr(adk_telemetry, "_SYNC", True)
+    monkeypatch.setattr(
+        adk_telemetry,
+        "_IDENTITY",
+        {"instance_id": "", "tenant_id": "", "tenant_name": ""},
+    )
+    monkeypatch.setenv("ESS_ADK_TELEMETRY", "on")
+
+    monkeypatch.setattr(
+        auth, "discover_tenant", lambda _url: "00000000-0000-0000-0000-0000000000ab"
+    )
     monkeypatch.setattr(auth, "_dataverse_accepts_token", lambda _url, _tok: True)
     monkeypatch.setattr(auth.msal, "SerializableTokenCache", FakeCache)
     monkeypatch.setattr(auth.msal, "PublicClientApplication", FakeApp)
 
-    # Instrument ADK telemetry + Graph resolver to record call order.
-    import adk_telemetry
-    from flightcheck import graph_client
-
-    calls: list[tuple[str, tuple, dict]] = []
-
-    def record(name):
-        def _rec(*args, **kwargs):
-            calls.append((name, args, kwargs))
-
-        return _rec
-
-    monkeypatch.setattr(adk_telemetry, "maybe_print_notice", record("notice"))
-    monkeypatch.setattr(adk_telemetry, "set_identity", record("set_identity"))
-    monkeypatch.setattr(adk_telemetry, "start_session", record("start_session"))
     monkeypatch.setattr(
         graph_client,
         "resolve_tenant_display_name_silent",
-        lambda tid: "Contoso Ltd" if tid == "tenant-id" else "",
+        lambda tid: (
+            "Contoso Ltd"
+            if tid == "00000000-0000-0000-0000-0000000000ab"
+            else ""
+        ),
     )
+
+    # Instrument the OneCollector boundary to assert on real payloads.
+    envelopes: list[tuple[str, list[dict]]] = []
+
+    def _fake_post(ikey, evs):
+        envelopes.append((ikey, evs))
+        return 200
+
+    monkeypatch.setattr(fc_telemetry, "_post", _fake_post)
 
     token = auth.authenticate("https://example.crm.dynamics.com")
     assert token == "fresh-token"
 
-    names = [c[0] for c in calls]
-    # set_identity(tenant_name=...) must happen BEFORE start_session so the
-    # first session_start emit picks up the resolved name from _IDENTITY.
-    assert "set_identity" in names, names
-    assert "start_session" in names, names
-    assert names.index("set_identity") < names.index("start_session"), names
-
-    # The resolved name from silent Graph is what got stored.
-    si = next(c for c in calls if c[0] == "set_identity")
-    assert si[2].get("tenant_name") == "Contoso Ltd"
-    assert si[2].get("tenant_id") == "tenant-id"
-
-    # start_session receives tenant_id so common_dimensions can pair the
-    # name (already in _IDENTITY) with the raw tenant GUID.
-    ss = next(c for c in calls if c[0] == "start_session")
-    assert ss[2].get("tenant_id") == "tenant-id"
+    starts = [
+        ev
+        for _ikey, batch in envelopes
+        for ev in batch
+        if ev.get("name") == "adk.session.start"
+    ]
+    assert starts, "expected a session_start envelope; got %r" % envelopes
+    data = starts[-1].get("data", {})
+    # Reviewer's Fix #2: start_session must NOT internally wipe the
+    # tenant_name that set_identity stored a millisecond earlier.
+    assert data.get("tenant_id") == "00000000-0000-0000-0000-0000000000ab", data
+    assert data.get("tenant_name") == "Contoso Ltd", data
 
 
 def test_authenticate_still_emits_when_silent_graph_returns_blank(
@@ -331,11 +356,23 @@ def test_authenticate_still_emits_when_silent_graph_returns_blank(
 ) -> None:
     """When silent Graph resolution yields no name (both scopes admin-only
     or unconsented), the bootstrap must still emit ``adk.session.start`` --
-    just without ``set_identity`` overriding tenant_name. Telemetry stays
-    best-effort and non-blocking; the missing-name case degrades to blank
-    (recoverable when the maker later runs FlightCheck).
+    just with a blank ``tenant_name``. Telemetry stays best-effort and
+    non-blocking; the missing-name case degrades to blank (recoverable when
+    the maker later runs FlightCheck).
+
+    This test is deliberately *end-to-end at the transport boundary*: it
+    monkeypatches only the OneCollector ``_post`` (as ``captured_post`` in
+    ``test_adk_telemetry.py`` does), so a regression that silently wipes
+    ``tenant_name`` inside ``start_session`` -- or that skips the session
+    emit entirely on the blank-name path -- shows up as a real assertion
+    failure on the actual envelope payload. Trivial recorders that only
+    watch ``set_identity`` / ``start_session`` call order would NOT catch
+    such a regression, because the wipe happens *inside* one of those.
     """
     import auth
+    import adk_telemetry
+    from flightcheck import graph_client
+    from flightcheck import telemetry as fc_telemetry
 
     class FakeCache:
         has_state_changed = False
@@ -359,26 +396,35 @@ def test_authenticate_still_emits_when_silent_graph_returns_blank(
         def acquire_token_interactive(self, scopes, prompt):
             return {
                 "access_token": "fresh-token",
-                "id_token_claims": {"tid": "tenant-id"},
+                "id_token_claims": {
+                    "tid": "00000000-0000-0000-0000-0000000000ab"
+                },
             }
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(auth, "discover_tenant", lambda _url: "tenant-id")
+    # Isolate ADK state so we don't leak into ~/.adk on the dev box.
+    cfg_dir = tmp_path / ".adk"
+    monkeypatch.setattr(adk_telemetry, "CONFIG_DIR", str(cfg_dir))
+    monkeypatch.setattr(adk_telemetry, "CONFIG_PATH", str(cfg_dir / "config"))
+    monkeypatch.setattr(
+        adk_telemetry, "SESSION_PATH", str(cfg_dir / "session.json")
+    )
+    monkeypatch.setattr(
+        adk_telemetry, "BUFFER_PATH", str(cfg_dir / "telemetry-buffer.ndjson")
+    )
+    monkeypatch.setattr(adk_telemetry, "_SYNC", True)
+    monkeypatch.setattr(
+        adk_telemetry,
+        "_IDENTITY",
+        {"instance_id": "", "tenant_id": "", "tenant_name": ""},
+    )
+    monkeypatch.setenv("ESS_ADK_TELEMETRY", "on")
+
+    monkeypatch.setattr(auth, "discover_tenant", lambda _url: "00000000-0000-0000-0000-0000000000ab")
     monkeypatch.setattr(auth, "_dataverse_accepts_token", lambda _url, _tok: True)
     monkeypatch.setattr(auth.msal, "SerializableTokenCache", FakeCache)
     monkeypatch.setattr(auth.msal, "PublicClientApplication", FakeApp)
 
-    import adk_telemetry
-    from flightcheck import graph_client
-
-    calls: list[str] = []
-    monkeypatch.setattr(adk_telemetry, "maybe_print_notice", lambda: calls.append("notice"))
-    monkeypatch.setattr(
-        adk_telemetry, "set_identity", lambda **kw: calls.append("set_identity")
-    )
-    monkeypatch.setattr(
-        adk_telemetry, "start_session", lambda **kw: calls.append("start_session")
-    )
     # Silent resolver returns "" (Organization.Read.All + User.Read both
     # silently unavailable, as happens for a large fraction of enterprise
     # tenants on first Dataverse sign-in).
@@ -386,14 +432,34 @@ def test_authenticate_still_emits_when_silent_graph_returns_blank(
         graph_client, "resolve_tenant_display_name_silent", lambda tid: ""
     )
 
+    # Capture actual envelopes at the OneCollector boundary. This is what
+    # would land in Aria in prod, so assertions here are the strongest
+    # possible: they catch any regression that wipes tenant_name inside
+    # set_identity / start_session, not just missing call orderings.
+    envelopes: list[tuple[str, list[dict]]] = []
+
+    def _fake_post(ikey, evs):
+        envelopes.append((ikey, evs))
+        return 200
+
+    monkeypatch.setattr(fc_telemetry, "_post", _fake_post)
+
     token = auth.authenticate("https://example.crm.dynamics.com")
     assert token == "fresh-token"
 
-    # start_session still fires; set_identity is NOT called (blank names
-    # would overwrite whatever the cache-fallback in common_dimensions
-    # might otherwise pick up).
-    assert "start_session" in calls
-    assert "set_identity" not in calls
+    # A session_start envelope must have been emitted, carrying the raw
+    # tenant_id (so it lands on the customer-filtered dashboard) with a
+    # blank tenant_name (silent resolution failed).
+    starts = [
+        ev
+        for _ikey, batch in envelopes
+        for ev in batch
+        if ev.get("name") == "adk.session.start"
+    ]
+    assert starts, "expected an adk.session.start envelope; got %r" % envelopes
+    data = starts[-1].get("data", {})
+    assert data.get("tenant_id") == "00000000-0000-0000-0000-0000000000ab", data
+    assert data.get("tenant_name") == "", data
     """Drives scripts/auth.py:query_all through the mock.
 
     query_all is the FlightCheck-relevant slice of auth.py — it's used by

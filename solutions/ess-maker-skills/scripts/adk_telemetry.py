@@ -198,8 +198,38 @@ _SESSION_LOCK = threading.Lock()
 
 
 # --- Identity model (spec) ------------------------------------------------
+# Canonical Entra tenant GUID: 8-4-4-4-12 lowercase-hex, dashes at fixed
+# offsets. Enforced *only* on tenant_id (the raw OII we ship to Aria) so
+# obvious test-fixture placeholders like ``"tenant-id"`` don't slip into
+# the prod stream and inflate the customer bucket. Also applied when
+# reading back from the on-disk ``.tenant_id`` cache, so a torn / legacy /
+# hand-edited file can never bypass the check.
+_GUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def _sanitize_tenant_id(tenant_id: str) -> str:
+    """Return ``tenant_id`` iff it looks like a canonical GUID, else ``""``.
+
+    Never raises. Empty input stays empty. Whitespace/case are tolerated so
+    a caller that passes ``"  ABCDEF01-2345-6789-ABCD-EF0123456789  "`` still
+    gets a valid identity (normalized to lowercase). Anything else
+    (``"tenant-id"``, ``"unknown"``, truncated GUIDs, org display names
+    accidentally routed here) normalizes to ``""`` so downstream
+    ``classify_tenant`` labels the event as ``"unknown"`` rather than as
+    a fake customer.
+    """
+    if not tenant_id:
+        return ""
+    v = tenant_id.strip().lower()
+    return v if _GUID_RE.match(v) else ""
+
+
 def set_identity(
-    tenant_id: str = "", instance_id: str | None = None, tenant_name: str = ""
+    tenant_id: str | None = None,
+    instance_id: str | None = None,
+    tenant_name: str | None = None,
 ) -> dict[str, str]:
     """Record the install + tenant identity for all subsequent events.
 
@@ -212,25 +242,53 @@ def set_identity(
     organization display name (OII identifying the enterprise tenant, not a
     person; privacy-approved without a Data Profile update) — best-effort,
     stored as ``""`` when unavailable. No developer/user id is collected.
+
+    All three parameters use a ``None`` sentinel to mean "don't touch". This
+    lets a later call like ``set_identity(tenant_id=<guid>)`` add / refresh
+    the tenant id without clobbering a tenant_name a previous call already
+    resolved (the reason ``start_session`` used to blank out ``tenant_name``
+    when it re-bootstrapped identity right after auth). Passing ``""`` for
+    any field explicitly clears it.
+
+    When ``tenant_id`` changes to a genuinely different GUID and the caller
+    does not simultaneously supply a matching ``tenant_name``, the stored
+    ``tenant_name`` is dropped — a name resolved for tenant A must never be
+    stamped on tenant B's events.
+
+    Any ``tenant_id`` that is not a well-formed Entra tenant GUID is
+    silently normalized to ``""`` (see ``_sanitize_tenant_id``).
     """
-    _IDENTITY["instance_id"] = (
-        _fc.get_instance_id() if instance_id is None else (instance_id or "")
-    )
-    _IDENTITY["tenant_id"] = tenant_id or ""
-    _IDENTITY["tenant_name"] = tenant_name or ""
-    # Persist tenant_id to disk so a *later* Python subprocess (e.g. the
+    if instance_id is not None:
+        _IDENTITY["instance_id"] = instance_id or _fc.get_instance_id()
+    elif not _IDENTITY["instance_id"]:
+        _IDENTITY["instance_id"] = _fc.get_instance_id()
+
+    if tenant_id is not None:
+        new_tid = _sanitize_tenant_id(tenant_id)
+        if (
+            new_tid
+            and _IDENTITY["tenant_id"]
+            and new_tid != _IDENTITY["tenant_id"]
+            and tenant_name is None
+        ):
+            # Tenant switch with no fresh name supplied: drop the stale one
+            # rather than stamp tenant A's name onto tenant B's events.
+            _IDENTITY["tenant_name"] = ""
+        _IDENTITY["tenant_id"] = new_tid
+
+    if tenant_name is not None:
+        _IDENTITY["tenant_name"] = tenant_name or ""
+
+    # Persist tenant_id so a *later* Python subprocess (e.g. the
     # emit_capability.py shim launched from a SKILL.md step) — which never
     # calls set_identity itself — can still stamp the tenant on its events.
-    # Without this, subprocess-emitted events land with an empty tenant_id,
-    # classify as "unknown", and never show on the customer-filtered dashboard.
     if _IDENTITY["tenant_id"]:
         _fc.cache_tenant_id(_IDENTITY["tenant_id"])
-    # When a Graph-capable flow (FlightCheck) resolves the org display name,
-    # persist it so ADK events emitted later in a *different* process (which
-    # only has a Dataverse/BAP token and can't resolve it) can reuse it. The
-    # cache is keyed by tenant_id in flightcheck.telemetry.cache_tenant_name.
-    if tenant_name:
-        _fc.cache_tenant_name(_IDENTITY["tenant_id"], tenant_name)
+    # Persist the tenant name so ADK events emitted later in a *different*
+    # process (which only has a Dataverse/BAP token and can't resolve it)
+    # can reuse it. Only cache when both fields are present.
+    if _IDENTITY["tenant_name"] and _IDENTITY["tenant_id"]:
+        _fc.cache_tenant_name(_IDENTITY["tenant_id"], _IDENTITY["tenant_name"])
     return dict(_IDENTITY)
 
 
@@ -385,9 +443,11 @@ def common_dimensions(
     # SKILL.md step). Without this, capability events emitted by the shim
     # carry an empty tenant_id, classify as "unknown" via classify_tenant(""),
     # and never appear on the customer-filtered External dashboard even
-    # though the maker's earlier auth flow knew the tenant.
+    # though the maker's earlier auth flow knew the tenant. Re-run the cache
+    # value through the same GUID sanitizer used in ``set_identity`` so a
+    # torn / legacy / hand-edited file can never bypass the check.
     if not tid and tenant_id is None:
-        tid = _fc.get_cached_tenant_id()
+        tid = _sanitize_tenant_id(_fc.get_cached_tenant_id())
     tname = _IDENTITY["tenant_name"] if tenant_name is None else tenant_name
     # Fall back to the org display name a prior Graph-capable run (FlightCheck)
     # cached for THIS tenant, so pure-ADK events (session/build/deploy/
@@ -580,9 +640,23 @@ def start_session(
 
     Safe to call at the top of every skill: if the current session is still
     active (within the 30-min window) no duplicate start is emitted.
+
+    Only bootstraps identity when this process has none yet, or when the
+    caller supplies a genuinely different ``tenant_id`` / ``instance_id``.
+    That preserves any ``tenant_name`` that was resolved by an earlier
+    ``set_identity`` call (e.g. auth.py's silent Graph lookup) instead of
+    blanking it back to ``""``.
     """
-    if tenant_id or instance_id is not None or not _IDENTITY["instance_id"]:
-        set_identity(tenant_id=tenant_id, instance_id=instance_id)
+    _need_set = (
+        instance_id is not None
+        or not _IDENTITY["instance_id"]
+        or (tenant_id and tenant_id != _IDENTITY["tenant_id"])
+    )
+    if _need_set:
+        set_identity(
+            tenant_id=tenant_id if tenant_id else None,
+            instance_id=instance_id,
+        )
     sid, is_new = get_session(surface)
     if not is_new:
         return {"sent": False, "reason": "existing-session", "session_id": sid}

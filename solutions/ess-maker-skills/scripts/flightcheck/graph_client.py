@@ -153,22 +153,60 @@ def resolve_tenant_display_name_silent(tenant_id: str) -> str:
         accounts = app.get_accounts()
         if not accounts:
             return ""
-        name = _try_organization_lookup(app, accounts[0])
-        if not name:
+        name, transport_ok = _try_organization_lookup(app, accounts[0])
+        # Track which source produced the label so ``cache_tenant_name`` can
+        # refuse to downgrade an authoritative /organization entry to a
+        # per-user /me entry on a later ADK invocation.
+        source = "organization"
+        if not name and transport_ok:
+            # Only try the /me fallback when /organization got a real HTTP
+            # response (even a 401/403 auth failure). If the transport itself
+            # is broken — DNS resolution failure, no network, TLS handshake
+            # timeout — /me will hit the exact same failure, so skip it and
+            # let the caller record a blank tenant_name for this session.
             name = _try_me_company_name_lookup(app, accounts[0])
+            if name:
+                source = "me"
         # Persist any silently-refreshed token so later processes stay silent.
         _persist_token_cache(cache, cache_path)
+        # Cache the resolved label with the correct source so a later
+        # per-user /me result can't overwrite the authoritative one. This is
+        # the *only* place the ``source`` is known — set_identity's own
+        # caching would default to "organization" for both and get it wrong.
+        if name:
+            try:
+                # Local import: this module is imported by pure-telemetry code
+                # paths that must stay dependency-free of the Graph client.
+                from . import telemetry as _t
+                _t.cache_tenant_name(tenant_id, name, source=source)
+            except Exception:  # noqa: BLE001
+                pass
         return name or ""
     except Exception:  # noqa: BLE001 — name resolution is strictly best-effort
         return ""
 
 
-def _try_organization_lookup(app, account) -> str:
-    """Silent ``/organization`` via ``Organization.Read.All``; ``""`` on any error."""
+def _try_organization_lookup(app, account) -> tuple[str, bool]:
+    """Silent ``/organization`` via ``Organization.Read.All``.
+
+    Returns ``(display_name, transport_ok)`` where ``transport_ok`` is False
+    only when the HTTP request itself failed (no network, DNS failure,
+    connection reset, socket / TLS timeout). An auth failure (401/403 because
+    the tenant hasn't pre-consented ``Organization.Read.All``) or an unrelated
+    non-200 response still counts as ``transport_ok=True`` — the network works,
+    Graph just refused this specific query — so the caller can meaningfully
+    fall through to ``/me?$select=companyName``. When the transport is broken
+    the ``/me`` call would fail identically, so we tell the caller to skip it.
+    """
     try:
         result = app.acquire_token_silent(_ORG_READ_SCOPE, account=account)
         if not result or "access_token" not in result:
-            return ""
+            # Silent token acquisition failed — that's an auth-shape problem,
+            # not a transport problem, so /me is still worth trying.
+            return "", True
+    except Exception:  # noqa: BLE001
+        return "", True
+    try:
         resp = _SESSION.get(
             f"{GRAPH_BASE}/organization",
             headers={
@@ -177,12 +215,17 @@ def _try_organization_lookup(app, account) -> str:
             },
             timeout=15,
         )
-        if resp.status_code != 200:
-            return ""
-        orgs = (resp.json() or {}).get("value", []) or []
-        return (orgs[0].get("displayName", "") if orgs else "") or ""
+    except (requests.ConnectionError, requests.Timeout):
+        return "", False
     except Exception:  # noqa: BLE001
-        return ""
+        return "", True
+    if resp.status_code != 200:
+        return "", True
+    try:
+        orgs = (resp.json() or {}).get("value", []) or []
+        return (orgs[0].get("displayName", "") if orgs else "") or "", True
+    except Exception:  # noqa: BLE001
+        return "", True
 
 
 def _try_me_company_name_lookup(app, account) -> str:

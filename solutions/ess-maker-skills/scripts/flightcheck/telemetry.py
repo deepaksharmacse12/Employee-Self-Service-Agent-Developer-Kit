@@ -66,6 +66,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -257,7 +258,10 @@ _TENANT_NAME_FILE = ".tenant_name"
 
 
 def cache_tenant_name(
-    tenant_id: str, tenant_name: str, local_dir: str = ".local"
+    tenant_id: str,
+    tenant_name: str,
+    local_dir: str = ".local",
+    source: str = "organization",
 ) -> None:
     """Persist the resolved org display name for reuse by later ADK events.
 
@@ -266,14 +270,44 @@ def cache_tenant_name(
     ``(tenant_id, tenant_name)`` pair. ``tenant_name`` is OII (org display
     name); it is written under the gitignored ``.local/`` dir on the maker's
     own machine, mirroring how ``.instance_id`` is persisted.
+
+    ``source`` records where the name came from. ``"organization"`` means it
+    came from Graph's ``/organization`` endpoint — the authoritative source.
+    ``"me"`` means it came from ``/me?$select=companyName``, which is a
+    per-user attribute (some tenants leave it unset or use a different
+    display value than the org record). A cached ``"organization"`` entry
+    is never overwritten by an ``"me"`` entry for the same tenant, so a
+    single unlucky call can't downgrade the label the whole dashboard uses.
+    A same-tenant write with the *same or better* source (organization ≥ me)
+    always wins.
     """
     if not tenant_id or not tenant_name:
         return
     path = os.path.join(local_dir, _TENANT_NAME_FILE)
+    _rank = {"organization": 2, "me": 1}
+    new_rank = _rank.get(source, 0)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        if (
+            isinstance(existing, dict)
+            and existing.get("tenant_id") == tenant_id
+            and _rank.get(existing.get("source", "organization"), 0) > new_rank
+        ):
+            return
+    except (OSError, ValueError):
+        pass
     try:
         os.makedirs(local_dir, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"tenant_id": tenant_id, "tenant_name": tenant_name}, f)
+            json.dump(
+                {
+                    "tenant_id": tenant_id,
+                    "tenant_name": tenant_name,
+                    "source": source,
+                },
+                f,
+            )
     except OSError:
         pass
 
@@ -296,26 +330,69 @@ def cache_tenant_id(tenant_id: str, local_dir: str = ".local") -> None:
     The value is written under the gitignored ``.local/`` dir on the maker's
     own machine, mirroring how ``.instance_id`` is persisted. Overwrites any
     prior value so a maker who switches tenants sees the latest one.
+
+    Write is atomic (``tempfile`` + ``os.replace``) so a concurrent reader
+    can never observe a truncated / half-written file — otherwise the reader
+    would silently see ``""`` and stamp the event as anonymous. Stored as
+    versioned JSON so a torn / legacy write from an older ADK build is
+    recognizable and discarded on read.
     """
     if not tenant_id:
         return
     path = os.path.join(local_dir, _TENANT_ID_FILE)
+    payload = {"version": 1, "tenant_id": str(tenant_id).strip()}
     try:
         os.makedirs(local_dir, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(str(tenant_id).strip())
+        # tempfile.NamedTemporaryFile with delete=False so we can rename it in
+        # place with os.replace, which is atomic on POSIX AND Windows.
+        fd, tmp = tempfile.mkstemp(prefix=".tenant_id.", dir=local_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     except OSError:
         pass
 
 
 def get_cached_tenant_id(local_dir: str = ".local") -> str:
-    """Return the persisted tenant GUID, or ``""`` if unavailable/unreadable."""
+    """Return the persisted tenant GUID, or ``""`` if unavailable/unreadable.
+
+    Reads the versioned JSON produced by ``cache_tenant_id`` and validates
+    the schema before returning the value. A missing / malformed / wrong-
+    schema-version file returns ``""`` — the caller's fallback path treats
+    that as "no cache" and either uses the in-memory identity or lets
+    ``classify_tenant`` label the event ``"unknown"``. That is safer than
+    returning a torn / legacy raw string that would silently ride onto
+    real events.
+
+    A very small compatibility shim recognizes the pre-versioning raw-string
+    format (a single line whose contents look like a GUID) so a maker who
+    upgrades mid-session doesn't lose their cached tenant. Any other content
+    (truncated GUID, JSON at a future schema version, garbage) is discarded.
+    """
     path = os.path.join(local_dir, _TENANT_ID_FILE)
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
+            raw = f.read().strip()
     except OSError:
         return ""
+    if not raw:
+        return ""
+    if raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+        except ValueError:
+            return ""
+        if not isinstance(obj, dict) or obj.get("version") != 1:
+            return ""
+        return str(obj.get("tenant_id", "")).strip()
+    # Legacy raw-string format from pre-versioned ADK builds.
+    return raw
 
 
 def get_cached_tenant_name(tenant_id: str, local_dir: str = ".local") -> str:
