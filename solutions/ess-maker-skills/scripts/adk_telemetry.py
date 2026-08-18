@@ -437,17 +437,19 @@ def common_dimensions(
     tenant_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the dimensions present on every event (spec Common Dimensions)."""
-    tid = _IDENTITY["tenant_id"] if tenant_id is None else tenant_id
-    # Fall back to the disk-persisted tenant_id when this process never
-    # called set_identity (subprocess launched by emit_capability.py from a
-    # SKILL.md step). Without this, capability events emitted by the shim
-    # carry an empty tenant_id, classify as "unknown" via classify_tenant(""),
-    # and never appear on the customer-filtered External dashboard even
-    # though the maker's earlier auth flow knew the tenant. Re-run the cache
-    # value through the same GUID sanitizer used in ``set_identity`` so a
-    # torn / legacy / hand-edited file can never bypass the check.
-    if not tid and tenant_id is None:
-        tid = _sanitize_tenant_id(_fc.get_cached_tenant_id())
+    # Single sanitization choke point: EVERY tenant_id source (explicit kwarg,
+    # in-memory identity, disk cache) flows through ``_sanitize_tenant_id``
+    # here, so a non-GUID value from *any* source normalizes to "" and the
+    # event lands in the "unknown" bucket instead of leaking into "customer".
+    # This matches the guarantee ``set_identity`` gives on ingress and closes
+    # the last back-door where an explicit ``common_dimensions(tenant_id=...)``
+    # kwarg (used by the ``emit_*`` helpers) could bypass the check.
+    if tenant_id is None:
+        tid = _IDENTITY["tenant_id"] or _sanitize_tenant_id(
+            _fc.get_cached_tenant_id()
+        )
+    else:
+        tid = _sanitize_tenant_id(tenant_id)
     tname = _IDENTITY["tenant_name"] if tenant_name is None else tenant_name
     # Fall back to the org display name a prior Graph-capable run (FlightCheck)
     # cached for THIS tenant, so pure-ADK events (session/build/deploy/

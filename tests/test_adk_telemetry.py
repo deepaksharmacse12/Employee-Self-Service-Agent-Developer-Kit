@@ -296,6 +296,39 @@ def test_classify_tenant_env_allowlist_extends(monkeypatch):
     assert _fc.classify_tenant("11111111-1111-1111-1111-111111111111") == "customer"
 
 
+def test_get_cached_tenant_id_rejects_non_guid_legacy_string(tmp_path):
+    # The legacy raw-string compatibility shim in get_cached_tenant_id must
+    # validate against _GUID_RE before returning — otherwise a torn /
+    # hand-edited / garbage .tenant_id file would ride onto real events.
+    d = tmp_path / "state"
+    d.mkdir()
+    (d / _fc._TENANT_ID_FILE).write_text("tenant-id", encoding="utf-8")
+    assert _fc.get_cached_tenant_id(local_dir=str(d)) == ""
+    # A canonical raw-string GUID (older ADK builds) is still honored.
+    (d / _fc._TENANT_ID_FILE).write_text(
+        "ABCDEF01-2345-6789-abcd-ef0123456789", encoding="utf-8"
+    )
+    assert (
+        _fc.get_cached_tenant_id(local_dir=str(d))
+        == "abcdef01-2345-6789-abcd-ef0123456789"
+    )
+
+
+def test_common_dimensions_sanitizes_explicit_tenant_id_kwarg(monkeypatch):
+    # Single choke point: EVERY tenant_id source (explicit kwarg included)
+    # is sanitized in common_dimensions, so an emit_* helper that forwards
+    # a caller-supplied non-GUID never lands in the customer bucket.
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    dims = adk.common_dimensions(adk.SURFACE_CLI, tenant_id="tenant-id")
+    assert dims["tenant_id"] == ""
+    assert dims["tenant_class"] == _fc.TENANT_CLASS_UNKNOWN
+    # A well-formed GUID is preserved (and lowercased).
+    dims = adk.common_dimensions(
+        adk.SURFACE_CLI, tenant_id="ABCDEF01-2345-6789-abcd-ef0123456789"
+    )
+    assert dims["tenant_id"] == "abcdef01-2345-6789-abcd-ef0123456789"
+
+
 def test_tenant_class_flows_into_dimensions(monkeypatch):
     monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
     adk.set_identity(tenant_id=_fc.MICROSOFT_CORP_TENANT_ID, instance_id="inst-9")

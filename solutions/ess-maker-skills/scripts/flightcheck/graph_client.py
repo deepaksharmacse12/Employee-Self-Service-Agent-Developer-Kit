@@ -56,6 +56,16 @@ GRAPH_SCOPES = [
     "https://graph.microsoft.com/ExternalConnection.Read.All",
 ]
 
+# Wall-clock ceiling for the two silent lookups called from the interactive
+# auth hot path (``resolve_tenant_display_name_silent`` → /organization then
+# /me). Kept small — the sign-in critical path must not stall on a
+# best-effort telemetry-only label. ``tenant_class`` is driven by the ``tid``
+# claim already extracted from the token, so a timeout here only degrades
+# ``tenant_name`` to blank (recoverable on the next FlightCheck run), never
+# to a misclassification. Total worst case per authenticate() is
+# 2 × _SILENT_LOOKUP_TIMEOUT.
+_SILENT_LOOKUP_TIMEOUT = 3.0
+
 # Module-level requests Session with bounded retry-with-backoff for 429/5xx.
 # Mirrors the auth.py pattern - Graph throttles on /users and /servicePrincipals
 # in larger tenants, and one transient 503 mid-FlightCheck would otherwise blow
@@ -197,6 +207,13 @@ def _try_organization_lookup(app, account) -> tuple[str, bool]:
     Graph just refused this specific query — so the caller can meaningfully
     fall through to ``/me?$select=companyName``. When the transport is broken
     the ``/me`` call would fail identically, so we tell the caller to skip it.
+
+    Called on the interactive auth hot path so the socket timeout is short
+    (``_SILENT_LOOKUP_TIMEOUT``) and a plain ``requests.get`` is used instead
+    of the module-level ``_SESSION`` — the session's 3x 429/5xx retry with
+    ``backoff_factor=1`` would add up to ~7s of extra wait per lookup on a
+    throttled tenant, which is unacceptable on the sign-in critical path
+    for a best-effort telemetry label.
     """
     try:
         result = app.acquire_token_silent(_ORG_READ_SCOPE, account=account)
@@ -207,13 +224,13 @@ def _try_organization_lookup(app, account) -> tuple[str, bool]:
     except Exception:  # noqa: BLE001
         return "", True
     try:
-        resp = _SESSION.get(
+        resp = requests.get(
             f"{GRAPH_BASE}/organization",
             headers={
                 "Authorization": f"Bearer {result['access_token']}",
                 "Accept": "application/json",
             },
-            timeout=15,
+            timeout=_SILENT_LOOKUP_TIMEOUT,
         )
     except (requests.ConnectionError, requests.Timeout):
         return "", False
@@ -237,18 +254,26 @@ def _try_me_company_name_lookup(app, account) -> str:
     the same classification we already have for ``tenant_name`` — and never
     EUPI: we only read a single organizational attribute, not the user's
     name / UPN / id.
+
+    Runs on the interactive auth hot path in the common admin-consent-gap
+    case where ``/organization`` returned nothing, so the same bounded
+    ``_SILENT_LOOKUP_TIMEOUT`` + no-retry policy as the organization lookup
+    applies here. ``tenant_class`` is driven by the ``tid`` claim already in
+    the token, not by this call, so failing fast never hurts dashboard
+    correctness — it only degrades ``tenant_name`` to blank until the next
+    (interactive) FlightCheck run resolves and caches it.
     """
     try:
         result = app.acquire_token_silent(_USER_READ_SCOPE, account=account)
         if not result or "access_token" not in result:
             return ""
-        resp = _SESSION.get(
+        resp = requests.get(
             f"{GRAPH_BASE}/me?$select=companyName",
             headers={
                 "Authorization": f"Bearer {result['access_token']}",
                 "Accept": "application/json",
             },
-            timeout=15,
+            timeout=_SILENT_LOOKUP_TIMEOUT,
         )
         if resp.status_code != 200:
             return ""

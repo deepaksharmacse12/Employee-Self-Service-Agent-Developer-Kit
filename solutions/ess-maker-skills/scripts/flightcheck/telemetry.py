@@ -66,6 +66,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -121,6 +122,17 @@ MICROSOFT_CORP_TENANT_ID = "72f988bf-86f1-41af-91ab-2d7cd011db47"
 TENANT_CLASS_INTERNAL = "internal"
 TENANT_CLASS_CUSTOMER = "customer"
 TENANT_CLASS_UNKNOWN = "unknown"
+
+# Canonical Entra tenant GUID (8-4-4-4-12 lowercase hex). Used by
+# ``get_cached_tenant_id`` to validate the legacy raw-string cache format
+# so a torn / hand-edited / garbage ``.tenant_id`` file can never leak onto
+# real events. Duplicated from ``adk_telemetry._GUID_RE`` (this module
+# cannot import from adk_telemetry — the dependency direction goes the
+# other way); the two regexes are kept in lock-step by a regression test
+# in ``test_adk_telemetry.py``.
+_GUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 
 def _internal_tenant_ids() -> frozenset[str]:
@@ -299,15 +311,26 @@ def cache_tenant_name(
         pass
     try:
         os.makedirs(local_dir, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "tenant_id": tenant_id,
-                    "tenant_name": tenant_name,
-                    "source": source,
-                },
-                f,
-            )
+        # Atomic write via tempfile + os.replace, matching cache_tenant_id.
+        # A concurrent reader (a sibling emit_capability.py subprocess spawned
+        # from a SKILL.md step) must never see a truncated file — otherwise
+        # the reader would fall back to a blank tenant_name for the whole
+        # session, undoing the very cache we're populating.
+        payload = {
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name,
+            "source": source,
+        }
+        fd, tmp = tempfile.mkstemp(prefix=".tenant_name.", dir=local_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     except OSError:
         pass
 
@@ -371,9 +394,11 @@ def get_cached_tenant_id(local_dir: str = ".local") -> str:
     real events.
 
     A very small compatibility shim recognizes the pre-versioning raw-string
-    format (a single line whose contents look like a GUID) so a maker who
-    upgrades mid-session doesn't lose their cached tenant. Any other content
-    (truncated GUID, JSON at a future schema version, garbage) is discarded.
+    format (a single line whose contents look like a canonical GUID) so a
+    maker who upgrades mid-session doesn't lose their cached tenant. The
+    raw string is validated against ``_GUID_RE`` (case-insensitive) before
+    being returned; any other content (truncated GUID, non-hex, garbage,
+    JSON at a future schema version) is discarded.
     """
     path = os.path.join(local_dir, _TENANT_ID_FILE)
     try:
@@ -391,8 +416,13 @@ def get_cached_tenant_id(local_dir: str = ".local") -> str:
         if not isinstance(obj, dict) or obj.get("version") != 1:
             return ""
         return str(obj.get("tenant_id", "")).strip()
-    # Legacy raw-string format from pre-versioned ADK builds.
-    return raw
+    # Legacy raw-string format from pre-versioned ADK builds: only trust the
+    # value when it matches the canonical GUID shape. Otherwise return ""
+    # and let the caller's fallback path (or classify_tenant) treat it as
+    # unknown — never leak a torn / hand-edited / garbage cache onto real
+    # events. Matches the docstring guarantee above.
+    v = raw.lower()
+    return v if _GUID_RE.match(v) else ""
 
 
 def get_cached_tenant_name(tenant_id: str, local_dir: str = ".local") -> str:

@@ -71,7 +71,7 @@ def test_success_returns_display_name():
     )
     resp = _resp(200, {"value": [{"displayName": "Contoso Ltd"}]})
     with patch.object(graph_client.msal, "PublicClientApplication", return_value=app), \
-         patch.object(graph_client._SESSION, "get", return_value=resp) as mock_get:
+         patch.object(graph_client.requests, "get", return_value=resp) as mock_get:
         assert (
             graph_client.resolve_tenant_display_name_silent("tenant-Z") == "Contoso Ltd"
         )
@@ -88,7 +88,7 @@ def test_non_200_response_returns_empty():
         accounts=[SimpleNamespace()], silent_result={"access_token": "tok"}
     )
     with patch.object(graph_client.msal, "PublicClientApplication", return_value=app), \
-         patch.object(graph_client._SESSION, "get", return_value=_resp(403)):
+         patch.object(graph_client.requests, "get", return_value=_resp(403)):
         assert graph_client.resolve_tenant_display_name_silent("tenant-Z") == ""
 
 
@@ -97,7 +97,7 @@ def test_empty_org_list_returns_empty():
         accounts=[SimpleNamespace()], silent_result={"access_token": "tok"}
     )
     with patch.object(graph_client.msal, "PublicClientApplication", return_value=app), \
-         patch.object(graph_client._SESSION, "get", return_value=_resp(200, {"value": []})):
+         patch.object(graph_client.requests, "get", return_value=_resp(200, {"value": []})):
         assert graph_client.resolve_tenant_display_name_silent("tenant-Z") == ""
 
 
@@ -138,7 +138,7 @@ def test_falls_back_to_me_company_name_when_organization_scope_unavailable():
         return _resp(200, {"companyName": "  Fabrikam Corp  "})
 
     with patch.object(graph_client.msal, "PublicClientApplication", return_value=app), \
-         patch.object(graph_client._SESSION, "get", side_effect=fake_get):
+         patch.object(graph_client.requests, "get", side_effect=fake_get):
         # Whitespace on companyName is stripped so downstream label matches
         # what /organization would return.
         assert (
@@ -184,5 +184,5 @@ def test_me_fallback_missing_company_name_returns_empty():
 
     app.acquire_token_silent.side_effect = silent
     with patch.object(graph_client.msal, "PublicClientApplication", return_value=app), \
-         patch.object(graph_client._SESSION, "get", return_value=_resp(200, {})):
+         patch.object(graph_client.requests, "get", return_value=_resp(200, {})):
         assert graph_client.resolve_tenant_display_name_silent("tenant-Z") == ""
