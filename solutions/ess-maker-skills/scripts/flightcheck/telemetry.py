@@ -159,16 +159,33 @@ def classify_tenant(tenant_id: str) -> str:
     """Map a raw Entra tenant GUID to ``internal`` | ``customer`` | ``unknown``.
 
     Empty / missing tenant -> ``unknown`` (we never guess). A tenant in the
-    internal allow-list -> ``internal``; anything else is an external
-    ``customer``. Case/whitespace-insensitive.
+    internal allow-list -> ``internal``. Any well-formed non-internal Entra
+    tenant GUID -> ``customer``. Case/whitespace-insensitive.
+
+    Defense-in-depth: a non-empty ``tenant_id`` that is **not** a canonical
+    Entra tenant GUID (test-fixture placeholders like ``"tenant-id"``, org
+    display names accidentally routed here, truncated / garbage values that
+    escaped ``set_identity``'s sanitizer, hand-edited cache files) maps to
+    ``unknown`` rather than ``customer``. Without this guard the External
+    dashboard's ``tenant_class == "customer"`` filter would silently absorb
+    any such value into the customer bucket — the exact failure mode that
+    produced 391 fixture-leak events in prod before the autouse conftest
+    guard landed. Aligns with the guarantee ``adk_telemetry._sanitize_tenant_id``
+    already gives at the identity ingress layer, and the same _GUID_RE
+    validation ``get_cached_tenant_id`` applies to the on-disk cache.
+
+    The internal allow-list is checked BEFORE the GUID shape check so that
+    non-GUID strings added to ``ESS_ADK_INTERNAL_TENANTS`` (e.g. a
+    non-canonical CI marker) still classify as ``internal``.
     """
     if not tenant_id:
         return TENANT_CLASS_UNKNOWN
-    return (
-        TENANT_CLASS_INTERNAL
-        if str(tenant_id).strip().lower() in _internal_tenant_ids()
-        else TENANT_CLASS_CUSTOMER
-    )
+    v = str(tenant_id).strip().lower()
+    if v in _internal_tenant_ids():
+        return TENANT_CLASS_INTERNAL
+    if not _GUID_RE.match(v):
+        return TENANT_CLASS_UNKNOWN
+    return TENANT_CLASS_CUSTOMER
 
 
 def _env_disabled() -> bool:

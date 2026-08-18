@@ -296,6 +296,31 @@ def test_classify_tenant_env_allowlist_extends(monkeypatch):
     assert _fc.classify_tenant("11111111-1111-1111-1111-111111111111") == "customer"
 
 
+def test_classify_tenant_non_guid_maps_to_unknown():
+    # Defense-in-depth: a non-empty tenant_id that isn't a canonical Entra
+    # tenant GUID must NEVER classify as "customer" — otherwise the External
+    # dashboard silently absorbs fixture / placeholder / garbage values into
+    # the customer bucket (the exact regression that produced 391 fixture
+    # leak events in prod before the autouse conftest guard landed). This is
+    # a second safety net on top of _sanitize_tenant_id at set_identity
+    # ingress: even if a bad value bypasses the sanitizer (test that
+    # overrides ESS_ADK_TELEMETRY, hand-edited cache file, future caller
+    # that skips set_identity entirely), classify_tenant still labels it
+    # "unknown" so it's excluded from customer usage counts.
+    assert _fc.classify_tenant("tenant-id") == "unknown"       # fixture leak
+    assert _fc.classify_tenant("unknown") == "unknown"          # sentinel
+    assert _fc.classify_tenant("Contoso") == "unknown"          # display name
+    assert _fc.classify_tenant("11111111-1111-1111-1111-11111") == "unknown"  # short
+
+
+def test_guid_re_matches_adk_telemetry():
+    # adk_telemetry._GUID_RE and flightcheck.telemetry._GUID_RE must stay in
+    # lock-step (this module cannot import from adk_telemetry, so the regex
+    # is duplicated). A drift would let one entry point accept a value the
+    # other rejects.
+    assert adk._GUID_RE.pattern == _fc._GUID_RE.pattern
+
+
 def test_get_cached_tenant_id_rejects_non_guid_legacy_string(tmp_path):
     # The legacy raw-string compatibility shim in get_cached_tenant_id must
     # validate against _GUID_RE before returning — otherwise a torn /
@@ -791,3 +816,54 @@ def test_emit_capability_shim_subprocess_stamps_cached_tenant_id(tmp_path):
     data = ev.get("data", {})
     assert data.get("tenant_id") == "00000000-0000-0000-0000-0000000000ab", data
     assert data.get("adk_capability") == "setup", data
+
+
+# --- tenant-id sanitization (test-fixture leak defense) --------------------
+# Historical bug: tests that monkey-patched ``auth.discover_tenant`` to return
+# the literal string ``"tenant-id"`` (or that let it fall through the auth
+# path with a similarly non-GUID value) shipped real ``adk.*`` events to the
+# prod Aria cube during CI/local runs. Those events classified as ``customer``
+# (since ``"tenant-id"`` is neither the Microsoft nor EmployeeHub GUID) and
+# polluted the ``backup_template_configs`` / ``restore_template_configs``
+# customer usage counts. The autouse ``_disable_adk_telemetry`` fixture in
+# ``tests/conftest.py`` is the primary defense (short-circuits at
+# ``telemetry_enabled()``); this sanitizer in ``set_identity`` is the second
+# layer so that even if a future test overrides that env var, a bad
+# ``tenant_id`` still can't reach the wire.
+def test_set_identity_normalizes_non_guid_tenant_id_to_empty(monkeypatch):
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    ident = adk.set_identity(tenant_id="tenant-id")  # the historical leak value
+    assert ident["tenant_id"] == ""
+    # common_dimensions must NOT stamp a bad tenant on the event either.
+    dims = adk.common_dimensions(adk.SURFACE_CLI, session_id="sid-1")
+    assert dims["tenant_id"] == ""
+    # classify_tenant then labels the event as "unknown" (excluded from the
+    # customer bucket on the External dashboard).
+    assert _fc.classify_tenant(dims["tenant_id"]) == "unknown"
+
+
+def test_set_identity_accepts_canonical_guid_and_normalizes_case(monkeypatch):
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
+    # Mixed-case + surrounding whitespace round-trip to lowercase, dashes preserved.
+    ident = adk.set_identity(tenant_id="  ABCDEF01-2345-6789-ABCD-EF0123456789  ")
+    assert ident["tenant_id"] == "abcdef01-2345-6789-abcd-ef0123456789"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "tenant-id",                              # historical fixture leak
+        "unknown",                                # sentinel string
+        "abcdef01-2345-6789-abcd-ef012345678",    # 11-char trailing group (short)
+        "abcdef012345-6789-abcd-ef0123456789",    # dash in wrong offset
+        "gggggggg-gggg-gggg-gggg-gggggggggggg",   # non-hex
+        "Contoso",                                # display name accidentally routed here
+    ],
+)
+def test_sanitize_tenant_id_rejects_non_guid(bad):
+    assert adk._sanitize_tenant_id(bad) == ""
+
+
+def test_sanitize_tenant_id_preserves_empty():
+    assert adk._sanitize_tenant_id("") == ""
+    assert adk._sanitize_tenant_id("   ") == ""
