@@ -116,6 +116,22 @@ def test_set_identity_stores_instance_and_raw_tenant(monkeypatch):
     assert ident["tenant_id"] == "00000000-0000-0000-0000-0000000000ab"
 
 
+def test_set_identity_explicit_empty_instance_id_clears(monkeypatch, tmp_path):
+    """Passing ``instance_id=""`` must clear (not silently re-populate).
+
+    The docstring guarantees an explicit ``""`` clears any field. A prior
+    version wrote ``instance_id or get_instance_id()``, which turned the
+    explicit-clear intent into an auto-fetch — regression covered here.
+    """
+    monkeypatch.chdir(tmp_path)  # isolate any .local/ writes
+    monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-should-not-fire")
+    monkeypatch.setattr(
+        adk, "_IDENTITY", {"instance_id": "prev-guid", "tenant_id": "", "tenant_name": ""}
+    )
+    ident = adk.set_identity(instance_id="")
+    assert ident["instance_id"] == ""
+
+
 def test_set_identity_stores_tenant_name(monkeypatch):
     monkeypatch.setattr(_fc, "get_instance_id", lambda: "install-guid-1")
     ident = adk.set_identity(tenant_id="00000000-0000-0000-0000-0000000000ab", tenant_name="Contoso")

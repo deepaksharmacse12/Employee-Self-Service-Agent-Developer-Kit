@@ -463,6 +463,48 @@ def get_cached_tenant_name(tenant_id: str, local_dir: str = ".local") -> str:
     return name if isinstance(name, str) else ""
 
 
+def resolve_tenant_name(
+    tenant_id: str,
+    live_resolver: Any = None,
+    local_dir: str = ".local",
+) -> str:
+    """Return the best-available tenant display name for ``tenant_id``.
+
+    Tries ``live_resolver()`` first when supplied (any zero-arg callable
+    returning a display name string or ``""``); on empty/error it falls back
+    to the persisted ``.local/.tenant_name`` cache. A non-empty live result
+    is written to the cache so a subsequent process that can't talk to Graph
+    (e.g. the ``emit_capability.py`` shim launched from a SKILL.md step)
+    still stamps the tenant name on its events. Never raises.
+
+    Consolidates the live-then-cache fallback logic previously duplicated at
+    the two ``emit_flightcheck_telemetry`` call sites in ``flightcheck/cli.py``.
+    """
+    tid = tenant_id or ""
+    if not tid:
+        # No tenant to attach a name to: mirror ``get_cached_tenant_name``'s
+        # blank-on-blank contract so callers get a consistent story.
+        return ""
+    live = ""
+    if live_resolver is not None:
+        try:
+            live = live_resolver() or ""
+        except Exception:  # noqa: BLE001 - telemetry name is best-effort
+            live = ""
+        if not isinstance(live, str):
+            live = ""
+    if live:
+        try:
+            cache_tenant_name(tid, live, local_dir=local_dir)
+        except Exception:  # noqa: BLE001 - caching is best-effort
+            pass
+        return live
+    try:
+        return get_cached_tenant_name(tid, local_dir=local_dir) or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def get_adk_version() -> str:
     """Best-effort ADK version string (System Metadata).
 

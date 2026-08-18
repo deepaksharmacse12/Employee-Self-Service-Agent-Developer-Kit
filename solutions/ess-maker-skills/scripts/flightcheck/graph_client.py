@@ -62,8 +62,11 @@ GRAPH_SCOPES = [
 # best-effort telemetry-only label. ``tenant_class`` is driven by the ``tid``
 # claim already extracted from the token, so a timeout here only degrades
 # ``tenant_name`` to blank (recoverable on the next FlightCheck run), never
-# to a misclassification. Total worst case per authenticate() is
-# 2 × _SILENT_LOOKUP_TIMEOUT.
+# to a misclassification. ``requests`` applies this value separately to the
+# connect and read phases, so a pathological connect-then-read stall can
+# take up to ~2× this per call; the typical case (fast fail on either phase)
+# stays well under it. Total wall-clock ceiling per authenticate() therefore
+# sits between 2 × and 4 × _SILENT_LOOKUP_TIMEOUT in the worst case.
 _SILENT_LOOKUP_TIMEOUT = 3.0
 
 # Module-level requests Session with bounded retry-with-backoff for 429/5xx.

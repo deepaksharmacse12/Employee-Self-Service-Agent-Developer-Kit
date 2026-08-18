@@ -331,3 +331,46 @@ def test_emit_noop_when_disabled(monkeypatch, tmp_path):
     assert out["sent"] is False
     assert out["reason"] == "disabled"
     assert called["n"] == 0
+
+
+def test_resolve_tenant_name_uses_live_and_caches(tmp_path, monkeypatch):
+    """Live resolver returns a name -> we get it back and it's cached to disk."""
+    monkeypatch.chdir(tmp_path)
+    tid = "11111111-1111-1111-1111-111111111111"
+    got = telemetry.resolve_tenant_name(tid, live_resolver=lambda: "Contoso Ltd")
+    assert got == "Contoso Ltd"
+    # Written to cache so a later process without Graph still gets the name.
+    assert telemetry.get_cached_tenant_name(tid) == "Contoso Ltd"
+
+
+def test_resolve_tenant_name_falls_back_to_cache(tmp_path, monkeypatch):
+    """Live resolver blank -> cache is consulted."""
+    monkeypatch.chdir(tmp_path)
+    tid = "22222222-2222-2222-2222-222222222222"
+    telemetry.cache_tenant_name(tid, "Fabrikam Inc")
+    got = telemetry.resolve_tenant_name(tid, live_resolver=lambda: "")
+    assert got == "Fabrikam Inc"
+
+
+def test_resolve_tenant_name_swallows_live_errors(tmp_path, monkeypatch):
+    """Live resolver raising must not break the caller; cache still consulted."""
+    monkeypatch.chdir(tmp_path)
+    tid = "33333333-3333-3333-3333-333333333333"
+    telemetry.cache_tenant_name(tid, "Northwind Traders")
+
+    def boom():
+        raise RuntimeError("graph exploded")
+
+    got = telemetry.resolve_tenant_name(tid, live_resolver=boom)
+    assert got == "Northwind Traders"
+
+
+def test_resolve_tenant_name_no_tenant_id_returns_blank(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert telemetry.resolve_tenant_name("", live_resolver=lambda: "Ignored") == ""
+
+
+def test_resolve_tenant_name_no_resolver_and_no_cache(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tid = "44444444-4444-4444-4444-444444444444"
+    assert telemetry.resolve_tenant_name(tid) == ""

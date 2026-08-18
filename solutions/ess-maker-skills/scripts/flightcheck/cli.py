@@ -867,25 +867,22 @@ def _run_single_checkpoint(args):
         )
         # Best-effort tenant display name (OII; privacy-approved). Reuses the
         # already-authenticated Graph client when one was needed; never re-auths.
-        # Falls back to the persisted ``.local/.tenant_name`` cache when the
-        # live lookup is unavailable (e.g. infra-only scope where ``graph`` is
-        # None, or Graph auth failed for lack of ``Organization.Read.All``
-        # consent) so previously-resolved tenants keep their name on the event
-        # instead of emitting blank. Same-tenant guard is enforced inside the
-        # cache helper.
-        tenant_name = ""
-        try:
-            if graph is not None:
-                tenant_name = (graph.get_organization() or {}).get("displayName", "") or ""
-        except Exception:  # noqa: BLE001 — telemetry name is best-effort
-            tenant_name = ""
+        # Delegates to ``telemetry.resolve_tenant_name`` (live-then-cache
+        # fallback) so this block stays in one place. Live path degrades to
+        # cache on missing scope, missing graph, or Graph error; blank on
+        # every-source failure. Same-tenant guard enforced inside cache
+        # helpers.
         try:
             from flightcheck import telemetry
 
-            if not tenant_name and (tenant_id or ""):
-                tenant_name = telemetry.get_cached_tenant_name(tenant_id or "")
-            elif tenant_name and (tenant_id or ""):
-                telemetry.cache_tenant_name(tenant_id or "", tenant_name)
+            tenant_name = telemetry.resolve_tenant_name(
+                tenant_id or "",
+                live_resolver=(
+                    (lambda: (graph.get_organization() or {}).get("displayName", "") or "")
+                    if graph is not None
+                    else None
+                ),
+            )
 
             _tele = telemetry.emit_flightcheck_telemetry(
                 result,
@@ -1342,24 +1339,20 @@ def main():
         )
         # Best-effort tenant display name (OII; privacy-approved). Reuses the
         # already-authenticated Graph client's /organization record — no extra
-        # auth. Falls back to the persisted ``.local/.tenant_name`` cache when
-        # ``graph`` is None or the live lookup fails (e.g. Graph auth was
-        # skipped or ``Organization.Read.All`` isn't consented on this tenant)
-        # so previously-resolved tenants keep their name instead of blank.
-        # Never blocks the run.
-        tenant_name = ""
-        try:
-            if graph is not None:
-                tenant_name = (graph.get_organization() or {}).get("displayName", "") or ""
-        except Exception:  # noqa: BLE001 — telemetry name is best-effort
-            tenant_name = ""
+        # auth. Delegates to ``telemetry.resolve_tenant_name`` (live-then-cache
+        # fallback) so this block stays in one place. Same-tenant guard
+        # enforced inside cache helpers. Never blocks the run.
         try:
             from flightcheck import telemetry
 
-            if not tenant_name and tenant_id:
-                tenant_name = telemetry.get_cached_tenant_name(tenant_id)
-            elif tenant_name and tenant_id:
-                telemetry.cache_tenant_name(tenant_id, tenant_name)
+            tenant_name = telemetry.resolve_tenant_name(
+                tenant_id,
+                live_resolver=(
+                    (lambda: (graph.get_organization() or {}).get("displayName", "") or "")
+                    if graph is not None
+                    else None
+                ),
+            )
 
             _tele = telemetry.emit_flightcheck_telemetry(
                 result,

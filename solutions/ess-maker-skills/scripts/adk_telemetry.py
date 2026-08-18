@@ -259,7 +259,10 @@ def set_identity(
     silently normalized to ``""`` (see ``_sanitize_tenant_id``).
     """
     if instance_id is not None:
-        _IDENTITY["instance_id"] = instance_id or _fc.get_instance_id()
+        # Explicit "" clears (matches docstring); auto-fetch only happens
+        # via the default-None path so an intentional clear isn't silently
+        # re-populated.
+        _IDENTITY["instance_id"] = instance_id
     elif not _IDENTITY["instance_id"]:
         _IDENTITY["instance_id"] = _fc.get_instance_id()
 
