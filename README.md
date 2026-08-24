@@ -108,12 +108,35 @@ personal data is collected.
 **To opt out**, run either of the following (both are persistent and take effect immediately):
 
 ```bash
-# From the solutions/ess-maker-skills directory:
+# 1. From the solutions/ess-maker-skills directory:
 python scripts/adk_telemetry.py off
 
-# Or set the environment variable (any shell / CI):
-ESS_ADK_TELEMETRY=off
+# 2. Or set the ESS_ADK_TELEMETRY environment variable to off (any shell / CI).
+#    Syntax varies by shell — set it before running any ADK command.
 ```
+
+Setting `ESS_ADK_TELEMETRY=off` inline before a command works in bash / zsh
+(`ESS_ADK_TELEMETRY=off python scripts/...`). To persist it, add it to your
+shell profile:
+
+```bash
+# bash / zsh (~/.bashrc, ~/.zshrc):
+export ESS_ADK_TELEMETRY=off
+```
+
+```powershell
+# PowerShell ($PROFILE) — persistent:
+$env:ESS_ADK_TELEMETRY = "off"
+# ...or for the current session only, run the same line at the prompt.
+```
+
+```cmd
+:: cmd.exe — current session only:
+set ESS_ADK_TELEMETRY=off
+:: For persistence use setx ESS_ADK_TELEMETRY off (takes effect in new shells).
+```
+
+The env var overrides the config-file setting.
 
 Re-enable later with `python scripts/adk_telemetry.py on` or by unsetting the
 env var. See
