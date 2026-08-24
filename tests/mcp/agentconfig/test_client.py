@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 
 import httpx
-import pytest
 
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -60,20 +59,50 @@ def test_token_cache_uses_agentconfig_local_state() -> None:
     )
 
 
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes"])
-def test_force_account_picker_uses_select_account(
-    value: str,
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("AGENTCONFIG_FORCE_ACCOUNT_PICKER", value)
+def test_client_uses_production_api_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("AGENTCONFIG_BASE_URL", raising=False)
+    monkeypatch.setenv("AGENTCONFIG_ACCESS_TOKEN", _token())
+    monkeypatch.delenv("AGENTCONFIG_ACCESS_TOKEN_FILE", raising=False)
 
-    assert agentconfig_client._interactive_prompt() == "select_account"
+    client = agentconfig_client.AgentConfigClient()
+
+    assert client.base_url == agentconfig_client.DEFAULT_AGENTCONFIG_BASE_URL
+    assert client.base_url == BASE_URL
 
 
-def test_account_picker_is_optional(monkeypatch) -> None:
-    monkeypatch.delenv("AGENTCONFIG_FORCE_ACCOUNT_PICKER", raising=False)
+def test_interactive_auth_always_prompts_for_account_selection(monkeypatch) -> None:
+    captured: dict[str, object] = {}
 
-    assert agentconfig_client._interactive_prompt() is None
+    class FakeServer:
+        server_port = 12345
+
+        def handle_request(self) -> None:
+            agentconfig_client._FormPostCaptureHandler.captured = {
+                "code": "authorization-code"
+            }
+
+        def server_close(self) -> None:
+            pass
+
+    class FakeApp:
+        def initiate_auth_code_flow(self, **kwargs):
+            captured.update(kwargs)
+            return {"auth_uri": "https://login.example.test"}
+
+        def acquire_token_by_auth_code_flow(self, flow, response):
+            return {"access_token": "token"}
+
+    monkeypatch.setattr(
+        agentconfig_client.http.server,
+        "HTTPServer",
+        lambda *args: FakeServer(),
+    )
+    monkeypatch.setattr(agentconfig_client.webbrowser, "open", lambda url: True)
+
+    result = agentconfig_client._acquire_token_interactive_form_post(FakeApp())
+
+    assert result == {"access_token": "token"}
+    assert captured["prompt"] == "select_account"
 
 
 def test_sends_resolved_token_as_bearer_without_exposing_it(

@@ -39,6 +39,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 _CLIENT_ID = "417219b4-3a7d-42a2-bdb1-972bd8281a02"
 _SCOPE = ["https://substrate.office.com/weve/.default"]
 _AUTHORITY = "https://login.microsoftonline.com/organizations"
+DEFAULT_AGENTCONFIG_BASE_URL = "https://substrate.office.com/weveb2/api/v1.1"
 _AGENTCONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 _LOCAL_STATE_DIR = os.path.join(_AGENTCONFIG_DIR, ".local")
 _TOKEN_CACHE_PATH = os.path.join(_LOCAL_STATE_DIR, "msal_token_cache.bin")
@@ -206,15 +207,13 @@ def acquire_token_msal_interactive() -> str:
 
 
 def _acquire_token_interactive_form_post(app: Any) -> dict[str, Any]:
-    prompt = _interactive_prompt()
-
     server = http.server.HTTPServer(("127.0.0.1", 0), _FormPostCaptureHandler)
     redirect_uri = f"http://localhost:{server.server_port}"
     flow = app.initiate_auth_code_flow(
         scopes=_SCOPE,
         redirect_uri=redirect_uri,
         response_mode="form_post",
-        prompt=prompt,
+        prompt="select_account",
     )
 
     _FormPostCaptureHandler.captured = {}
@@ -236,16 +235,6 @@ def _acquire_token_interactive_form_post(app: Any) -> dict[str, Any]:
         flow,
         _FormPostCaptureHandler.captured,
     )
-
-
-def _interactive_prompt() -> str | None:
-    if os.environ.get("AGENTCONFIG_FORCE_ACCOUNT_PICKER", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return "select_account"
-    return None
 
 
 def _decode_tenant_id_from_jwt(token: str) -> str:
@@ -282,9 +271,10 @@ class AgentConfigClient:
     """Async client for production EmployeeAgents list/search/create/get/PATCH."""
 
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None):
-        base_url = os.environ.get("AGENTCONFIG_BASE_URL", "")
-        if not base_url:
-            raise ValueError("AGENTCONFIG_BASE_URL environment variable is required")
+        base_url = os.environ.get(
+            "AGENTCONFIG_BASE_URL",
+            DEFAULT_AGENTCONFIG_BASE_URL,
+        )
 
         parsed = urllib.parse.urlsplit(base_url)
         if (

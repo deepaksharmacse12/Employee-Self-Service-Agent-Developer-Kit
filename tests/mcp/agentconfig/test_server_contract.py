@@ -61,22 +61,14 @@ def test_server_exposes_the_skill_tool_contract() -> None:
     }
 
 
-def test_mcp_defaults_use_the_production_agentconfig_api() -> None:
+def test_mcp_defaults_defer_production_endpoints_to_server_fallbacks() -> None:
     config = json.loads(MCP_DEFAULTS_PATH.read_text(encoding="utf-8"))
 
     assert "ess-landing-page-config" in config["servers"]
     server = config["servers"]["ess-landing-page-config"]
     assert server["command"] == "{pythonExecutable}"
     assert server["args"] == ["server.py"]
-    assert (
-        server["env"]["AGENTCONFIG_BASE_URL"]
-        == "https://substrate.office.com/weveb2/api/v1.1"
-    )
-    assert (
-        server["env"]["VORPAL_WIDGET_ORIGIN"]
-        == "https://workforceinsights.m365.cloud.dev.microsoft"
-    )
-    assert server["env"]["AGENTCONFIG_FORCE_ACCOUNT_PICKER"] == "true"
+    assert "env" not in server
     serialized = json.dumps(config).lower()
     assert "localhost" not in serialized
     assert "tls_insecure" not in serialized

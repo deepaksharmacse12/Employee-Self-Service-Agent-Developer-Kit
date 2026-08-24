@@ -3,12 +3,7 @@
     "ess-landing-page-config": {
       "command": "{pythonExecutable}",
       "args": ["server.py"],
-      "cwd": "${workspaceFolder}/src/mcp/agentconfig",
-      "env": {
-        "AGENTCONFIG_BASE_URL": "https://substrate.office.com/weveb2/api/v1.1",
-        "VORPAL_WIDGET_ORIGIN": "https://workforceinsights.m365.cloud.dev.microsoft",
-        "AGENTCONFIG_FORCE_ACCOUNT_PICKER": "true"
-      }
+      "cwd": "${workspaceFolder}/src/mcp/agentconfig"
     }
   }
 }

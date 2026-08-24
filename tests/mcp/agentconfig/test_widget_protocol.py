@@ -44,6 +44,13 @@ WIDGETS = {
 }
 
 
+def test_widget_origin_uses_production_fallback() -> None:
+    assert (
+        agentconfig_server.DEFAULT_WIDGET_ORIGIN
+        == "https://workforceinsights.m365.cloud.microsoft"
+    )
+
+
 class _FakeClient:
     async def view_agent_icon(self, title_id: str) -> dict[str, Any]:
         icon = base64.b64encode(

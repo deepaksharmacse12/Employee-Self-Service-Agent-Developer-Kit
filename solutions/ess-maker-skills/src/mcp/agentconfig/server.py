@@ -21,7 +21,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from client import AgentConfigApiError, AgentConfigClient
 
 
-DEFAULT_WIDGET_ORIGIN = "https://workforceinsights.m365.cloud.dev.microsoft"
+DEFAULT_WIDGET_ORIGIN = "https://workforceinsights.m365.cloud.microsoft"
 WIDGET_MIME_TYPE = "text/html;profile=mcp-app"
 
 ACCENT_COLOR_RESOURCE_URI = "ui://widget/accent-color/AccentColor.html"
