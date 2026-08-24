@@ -3,11 +3,11 @@
 check_instruction_budget.py — Deterministically measure an agent's system
 instructions against the character budget.
 
-Hardening only ever *adds* text. Copilot Studio constrains how long an agent's
-instructions may be, so a hardening pass that does not measure will happily
-produce instructions that cannot be saved — or that get silently truncated,
-which is worse than not hardening at all (a truncated prompt can lose the very
-guardrail that was just added).
+Hardening usually lengthens instructions. Copilot Studio constrains how long an
+agent's instructions may be, so a hardening pass that does not measure will
+happily produce instructions that cannot be saved — or that get silently
+truncated, which is worse than not hardening at all (a truncated prompt can
+lose the very guardrail that was just added).
 
 Asking the agent to "count the characters" is model-dependent and was observed
 to drift. This script removes that variable: it reads the ``instructions`` block
@@ -52,6 +52,25 @@ DEFAULT_LIMIT = 8000
 TIGHT_HEADROOM = 250
 
 _AGENTS_DIR = Path(__file__).resolve().parent.parent / "workspace" / "agents"
+_SKILL_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_agent_dir(value):
+    """Resolve --agent from any of the forms a caller reasonably has to hand.
+
+    ``.local/config.json`` stores ``agent.folder`` as a path relative to the
+    solution root (``workspace/agents/<slug>``) and ``activeAgent`` as a bare
+    slug. Accepting only one of them means whichever the caller reaches for
+    first is a coin flip, and the failure is an unhelpful "not found" against a
+    doubled-up path.
+    """
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate
+    relative_to_root = _SKILL_ROOT / value
+    if relative_to_root.is_dir():
+        return relative_to_root
+    return _AGENTS_DIR / value
 
 
 def _read_instructions(path):
@@ -92,7 +111,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Measure agent instructions against the character budget."
     )
-    parser.add_argument("--agent", required=True, help="agent folder under workspace/agents/")
+    parser.add_argument("--agent", required=True,
+                        help="agent folder name under workspace/agents/, or the "
+                             "'agent.folder' path from .local/config.json")
     parser.add_argument(
         "--candidate",
         help="path to a file holding proposed replacement instructions "
@@ -107,7 +128,7 @@ def main(argv=None):
         print(_SENTINEL + json.dumps({"verdict": "unknown", "error": "invalid --limit"}))
         return 2
 
-    agent_dir = _AGENTS_DIR / args.agent
+    agent_dir = _resolve_agent_dir(args.agent)
     live_path = agent_dir / "agent.mcs.yml"
     baseline_path = agent_dir / ".baseline" / "agent.mcs.yml"
 

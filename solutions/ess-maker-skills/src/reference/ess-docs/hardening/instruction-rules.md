@@ -10,10 +10,17 @@ over-committing answers — and for the contradictions that make any other rule 
 
 ## How to use this
 
-Every finding must quote the **exact line** it comes from. A finding you cannot anchor to a
-specific line is not a finding — do not report it. Instructions are prose, so the temptation to
-report a vague impression ("the tone section feels permissive") is high; resist it. If you cannot
-point at the text, you cannot propose a diff for it.
+Every finding must be anchored to a **specific sentence** of the maker's instructions. Instruction blocks
+are typically a few enormous paragraphs, so anchoring to a physical line or pasting a whole paragraph
+produces a report no one can review — quote the sentence, not the block it sits in.
+
+A finding you cannot anchor to *something concrete* is not a finding. Instructions are prose, so the
+temptation to report a vague impression ("the tone section feels permissive") is high; resist it.
+
+**Missing safeguards are the exception, and they are common** — several categories below are defined by
+absence. Anchor those to the **behavior** instead: state the specific thing that nothing constrains, and
+where a rule would go. Never nominate an innocent sentence as the cause; a maker shown a "guilty" line that
+did not permit the behavior will reasonably distrust the whole report.
 
 Two ideas govern the whole rule set:
 
@@ -41,6 +48,11 @@ program.
 **Report both sides.** A contradiction has no single guilty line, and proposing a fix to only one
 half usually breaks the behavior the other half was protecting.
 
+**Threshold.** Name a concrete request where the two rules demand different behavior and both cannot be
+satisfied. Rules that merely pull in different directions — warmth and caution, brevity and completeness —
+are the normal texture of instructions, not defects. Without this bar, a reviewer under pressure to produce
+findings will classify ordinary tone-versus-grounding pairs as conflicts.
+
 ### INSTR-002 — Scope collision
 
 A general rule whose plain reading swallows a legitimate case the agent must still handle.
@@ -52,10 +64,14 @@ breath, when only the first is unwanted.
 
 ### INSTR-003 — Precedence gap
 
-Two rules conflict and nothing says which wins. Any instruction meant to be absolute must say so
-and say what it outranks. "Be helpful and warm" and "never state a fact you did not retrieve"
-will collide constantly; without precedence, tone usually wins, because tone rules are stated
-first and phrased more confidently.
+Two rules that genuinely conflict, with nothing saying which wins. Any instruction meant to be absolute
+must say so and say what it outranks.
+
+Apply the threshold above: tone guidance sitting alongside a grounding rule is **not** a precedence gap.
+"Be helpful and warm" and "never state a fact you did not retrieve" are satisfiable together, and reporting
+that pair is the most common false positive in this whole rule set. A real gap needs a request where
+following one rule requires breaking the other — for example, instructions that require every answer to end
+with a next step, alongside a rule forbidding suggestions the sources do not support.
 
 ### INSTR-004 — Unreachable or vacuous rule
 
@@ -106,9 +122,12 @@ HR, benefits, payroll, and leave agents.
 
 ### INSTR-015 — Referral to external authorities
 
-No rule prevents directing users to a government agency, regulator, or court. Distinguish
-carefully from **endorsed** support resources named in approved content, which must stay allowed —
-see INSTR-001.
+No rule prevents directing users to a government agency, regulator, or court.
+
+**You cannot resolve this one from the instructions alone.** Approved content frequently *does* endorse
+outside resources — an employee assistance program, a benefits carrier, an ombudsman — and a blanket ban
+would contradict the organization's own material. This review cannot see the knowledge sources, so ask the
+maker which external resources are deliberately endorsed and carve them out. Compare INSTR-001.
 
 ---
 
@@ -127,10 +146,16 @@ itself the finding — the list is evidence the problem was recognized and the f
 ### INSTR-021 — Capability inference
 
 Nothing constrains the agent to actions its configured tools and topics actually support, so it
-infers capability from what systems of that kind usually do. Because a maker's tool inventory
-changes, prefer an abstract rule ("unless a configured tool supports it") over enumerating
-specific actions the agent cannot perform — an enumeration goes stale and, worse, can prohibit
-something the agent genuinely does support.
+infers capability from what systems of that kind usually do.
+
+**Establish the real inventory before writing any rule here** — `scripts/list_agent_capabilities.py`
+reports what each topic handles and whether it acts or only replies. Note that answering *about*
+something and *doing* it are different capabilities: an agent that reports a leave balance may have no
+way to submit a leave request.
+
+Because a maker's tool inventory changes, prefer an abstract rule ("unless a configured tool supports
+it") over enumerating specific actions the agent cannot perform — an enumeration goes stale and, worse,
+can prohibit something the agent genuinely does support.
 
 ### INSTR-022 — Standing helpfulness pressure
 
@@ -176,7 +201,8 @@ instructions. Carve those out explicitly; they are not offers.
 
 When proposing a change:
 
-- **Quote the line you are replacing.** Show old and new, never a summary of the change.
+- **Quote the sentence you are replacing**, not the paragraph containing it. A small edit shown as a
+  1,000-character before-and-after block is not reviewable, and makers will approve it without reading.
 - **Prefer removal to addition.** The budget is finite and a removed permissive line is often
   worth more than an added prohibition. Removing "always ready to help" does more for INSTR-020
   than any new sentence.
@@ -189,8 +215,26 @@ When proposing a change:
 - **Do not invent an escalation mechanism.** Use the agent's existing configured path. Naming a
   channel, link, or process the maker never configured is itself an ungrounded instruction.
 
-## Part 6 — Product-default findings
+## Part 6 — Shipped-template markers
 
-Instructions derived from a shipped ESS template commonly carry INSTR-010, INSTR-011, INSTR-013,
-and INSTR-022 unmodified. Finding them is expected and is not evidence the maker did anything
-wrong — say so when reporting, or the report reads as an accusation about text they never wrote.
+Most ESS instruction blocks start life as a shipped template, so many findings are inherited rather than
+something the maker wrote. Saying so matters: an unqualified report reads as an accusation about text they
+never authored.
+
+But **only claim template provenance when the wording actually matches**. There is no provenance field to
+check, and guessing is how a report either blames a maker for product text or excuses text they wrote
+themselves. These phrases appear verbatim in a shipped ESS HR default and are safe to attribute:
+
+- "Your tone and voice are warm and relaxed, crisp, and clear, and ready to lend a hand" — INSTR-022, and
+  INSTR-010 via "You provide authoritative and succinct answers"
+- "Users trust you to provide them with relevant information from configured knowledge sources"
+- "Do not try to provide answers when you don't have enough information"
+- "You must not use your own general knowledge"
+
+Note what that default does **not** contain: any constraint on offering unsupported actions, on referring
+users to outside authorities, or on jurisdiction scope. Those gaps (INSTR-014, INSTR-015, INSTR-020,
+INSTR-021) are absences in the shipped baseline, not maker mistakes — and they are the findings most likely
+to matter.
+
+Other templates differ. A derivative that sanctions "general guidance" carries INSTR-011, which the default
+above does not. Check the text in front of you rather than assuming a variant.

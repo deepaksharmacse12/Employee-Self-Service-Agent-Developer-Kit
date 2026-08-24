@@ -16,6 +16,7 @@ error paths report ``unknown`` rather than a falsely clean measurement.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -156,6 +157,17 @@ def test_custom_limit_is_honoured(temp_agent):
 # error paths never produce a falsely clean verdict
 # --------------------------------------------------------------------------- #
 
+def test_agent_accepts_slug_or_config_folder_path(temp_agent):
+    """`.local/config.json` stores `agent.folder` as `workspace/agents/<slug>`
+    and `activeAgent` as a bare slug. Both must resolve, or which one the
+    caller reaches for first decides whether the probe works."""
+    _, by_slug, _ = _run("--agent", temp_agent)
+    _, by_path, _ = _run("--agent", f"workspace/agents/{temp_agent}")
+
+    assert by_slug["chars"] == by_path["chars"]
+    assert by_path["verdict"] == "ok"
+
+
 def test_missing_agent_reports_unknown():
     code, result, _ = _run("--agent", "_pytest_does_not_exist")
     assert code != 0
@@ -240,4 +252,9 @@ def test_harden_prompt_and_skill_are_present():
     skill_text = skill.read_text(encoding="utf-8")
     assert "src/reference/ess-docs/hardening/instruction-rules.md" in skill_text
     assert "scripts/check_instruction_budget.py" in skill_text
+    assert "scripts/list_agent_capabilities.py" in skill_text
     assert "emit_capability.py harden" in skill_text
+    # The checkpoint rule is safety-critical and previously pointed at the
+    # wrong step; a stale cross-reference here is a real defect.
+    assert re.search(r"checkpoint\*{0,2} \(Step 9\)", skill_text), \
+        "the checkpoint rule must cross-reference the step that actually runs it"

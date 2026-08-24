@@ -13,33 +13,48 @@ the agent is behaving well: a rule contradicted elsewhere is not in force, howev
 > the maker approves. Instructions govern every answer the agent gives, so an unreviewed edit here is far
 > more dangerous than an unreviewed edit to a single topic.
 
+**All paths in this skill are relative to the solution root** — the folder containing `scripts/`, `src/`,
+and `workspace/`. They are not relative to this file.
+
 ## Rules
 
-- **Never rewrite the instructions wholesale.** Propose the smallest set of line-level changes that address
-  what was actually found. A rewrite is unreviewable — the maker cannot tell an intended change from an
-  incidental one — and it discards wording their organization may have chosen deliberately.
+- **Never rewrite the instructions wholesale.** Propose the smallest set of changes that address what was
+  actually found. A rewrite is unreviewable — the maker cannot tell an intended change from an incidental
+  one — and it discards wording their organization may have chosen deliberately.
 - **Do not tighten just because you were invoked.** If the review finds nothing and the maker reports no
   problem, say so and stop. Adding prohibitions "to be safe" causes the agent to refuse questions its
   sources fully answer, which is a real regression traded for a hypothetical one.
-- **Quote before proposing.** Every finding and every proposed change names the exact line it applies to.
-  Findings you cannot anchor to a line do not get reported.
-- **Never propose a rule that blocks a supported action.** Check the agent's configured topics and tools
-  before prohibiting anything the agent might legitimately do (see `INSTR-032`).
-- **Never apply changes without a checkpoint** (Step 7).
+- **Anchor every finding to a sentence** — see "Anchoring" below. Never attribute a problem to a sentence
+  that did not cause it.
+- **Never propose a rule that blocks a supported action.** Establish what the agent supports (Step 5)
+  before prohibiting anything.
+- **Never apply changes without a checkpoint** (Step 9).
 - **Do not push.** This skill writes locally. Pushing is the maker's separate, explicit decision via `/push`.
-- **Run the analysis silently.** Steps 3–5 are internal. Do not narrate which files you are reading, which
-  rule ids matched, or what you are about to check. The maker sees Step 6 onward.
-- **Speak the maker's language.** Never show `INSTR-*` ids, rule-pack filenames, or the words "detector",
-  "rule pack", or "probe". Describe each finding in plain language and quote the maker's own text. Their
-  instruction wording is *their* language and should be shown in full.
-- **TRACK PROGRESS**: use the todo list tool to track the steps below so the maker can see where you are.
+- **Run the analysis silently.** Steps 3–5 are internal. Do not narrate which files you are reading, what
+  you are about to check, or what you found until Step 8. Keep progress labels generic — "Reviewing the
+  instructions" is fine, "Checking for jurisdiction-scope gaps" is not.
+- **Speak the maker's language.** Never show `INSTR-*` ids, the filenames of this skill's own reference
+  material, or the words "detector", "rule pack", or "probe". Describe findings in plain language. The
+  maker's own instruction wording is *their* language and is shown verbatim.
+- **TRACK PROGRESS**: use the todo list tool for the steps below.
+
+## Anchoring
+
+Instruction blocks are usually a handful of enormous paragraphs — a single "line" can run past 1,000
+characters. Quoting a whole paragraph to justify a nine-word change produces a proposal no one can review.
+
+- **Anchor to the sentence**, not the physical line or the paragraph.
+- **Quote only the sentence you are changing**, plus at most a few words either side if the change would
+  otherwise be ambiguous.
+- **For a missing safeguard, do not pick a "guilty" sentence.** Say plainly that nothing in the
+  instructions constrains the behavior, and name where the new rule would go — for example "in the same
+  paragraph as the existing restrictions". Inventing a culprit misleads the maker about their own text.
 
 ## What this checks and what it does not
 
-This skill reads **only the instructions text**, plus the agent's topic and tool inventory for the
-capability checks. It **cannot** tell you whether the agent actually produces a bad answer — instructions
-are one input to that, and retrieval quality, knowledge-source coverage, and the underlying model matter at
-least as much.
+This skill reads the **instructions text** and the agent's **topic and workflow inventory**. It **cannot**
+see the agent's knowledge sources, and it cannot tell you whether the agent actually produces a bad answer
+— retrieval quality, knowledge-source coverage, and the underlying model matter at least as much.
 
 Say this plainly when it is relevant. A maker whose agent gives ungrounded answers because a knowledge
 source is not being retrieved will get no benefit from tighter instructions, and letting them believe
@@ -47,15 +62,16 @@ otherwise costs them the time they should have spent on retrieval. Two signals t
 wrong lever:
 
 - the agent answers correctly when the maker pastes the source content into the chat, but not otherwise;
-- the agent says it cannot find information that the maker knows is in an attached source.
+- the agent says it cannot find information the maker knows is in an attached source.
 
 Both point at knowledge-source configuration. Route those makers to `/flightcheck` and `/troubleshoot`
 rather than editing instructions.
 
 ## Step 1: Resolve the agent
 
-Read `.local/config.json` for the agent folder. The instructions live at
-`workspace/agents/{agent.folder}/agent.mcs.yml` in the `instructions:` block.
+Read `.local/config.json`. The active agent's folder is `agent.folder` — a path relative to the solution
+root, e.g. `workspace/agents/<slug>`. The instructions are the `instructions:` block of
+`{agent.folder}/agent.mcs.yml`.
 
 If the file is missing, tell the maker their agent has not been extracted yet and to run `/setup`, then STOP.
 
@@ -78,34 +94,55 @@ and it determines whether Step 6 proposes changes or only reports.
 
 Record their answer. Do not paraphrase a vague answer into a specific complaint — if they said "it makes
 things up sometimes" without an example, you have a **theme**, not a case, and Step 6 treats those
-differently.
+differently. Wanting the agent "locked down" before a rollout is not a reported problem; it is branch B.
 
-## Step 3: Read the instructions and the rule pack
+## Step 3: Read the instructions and the reference guidance
 
-Read the full `instructions:` value and the rule pack at
-[`instruction-rules.md`](src/reference/ess-docs/hardening/instruction-rules.md).
+Read the full `instructions:` value and `src/reference/ess-docs/hardening/instruction-rules.md`.
 
-Split the instructions into numbered lines so every finding can be anchored precisely. Keep the maker's
-original wording, spelling, and casing exactly — you will be quoting it back and later diffing against it.
+Split the instructions into numbered **sentences** so findings can be anchored precisely (see "Anchoring").
+Keep the maker's original wording, spelling, and casing exactly — you will quote it back and diff against it.
 
 ## Step 4: Contradiction pass (always runs)
 
-Apply Part 1 of the rule pack (`INSTR-001` … `INSTR-005`). This pass runs regardless of the maker's answer
-in Step 2.
+Apply Part 1 of the reference guidance (`INSTR-001` … `INSTR-005`). This pass runs regardless of the
+maker's answer in Step 2.
 
-For each contradiction, record **both** conflicting lines. Do not decide which one is "right" — the maker
-knows which behavior they intended, and guessing produces a fix that removes a guardrail they wanted.
+**Threshold.** Report a contradiction only when you can state a **concrete request** where the two rules
+demand different behavior and both cannot be satisfied. Tone guidance and grounding rules coexisting is not
+by itself a contradiction — "be warm and authoritative" and "don't answer without enough information" are
+routinely satisfiable together. Without this bar you will manufacture a conflict to justify the run.
+
+For each contradiction, record **both** sentences. Do not decide which one is "right": the maker knows which
+behavior they intended. In Step 8 you present the conflict and the options, and let them choose.
 
 ## Step 5: Grounding and over-commitment pass
 
-Apply Parts 2 and 3 of the rule pack (`INSTR-010` … `INSTR-022`).
+Apply Parts 2 and 3 of the reference guidance (`INSTR-010` … `INSTR-022`).
 
-Where the maker gave specific bad responses in Step 2, work backward from each one: identify which
-instruction *permitted* it, or which instruction that would have prevented it is **absent**. An absence is a
-valid finding as long as you can state the specific behavior that is unconstrained.
+Where the maker gave specific bad responses in Step 2, work backward from each one: identify which sentence
+*permitted* it, or state that nothing constrains it. A missing safeguard is a valid finding — anchor it as
+described under "Anchoring".
 
-For capability findings (`INSTR-021`), read the agent's topic files (`{agent.folder}/topics/`) and tool
-inventory first. You need to know what the agent *can* do before writing a rule about what it cannot.
+**Establish what the agent supports before writing any capability rule.** Run:
+
+```
+python scripts/list_agent_capabilities.py --agent {agent.folder}
+```
+
+This lists every topic with what the model is told it handles and whether it merely replies or invokes a
+flow, connector, or HTTP call, plus the workflow inventory. Use it — do not read the topic tree by hand. A
+stock agent has dozens of topics, several of them large generated files, so reading them is both expensive
+and unreliable, and a capability conclusion drawn from a sample is exactly how a supported action gets
+prohibited. Open an individual topic only when the inventory is genuinely ambiguous about a capability you
+are about to write a rule for.
+
+Note the distinction the inventory draws: a topic that *answers about* something is not the same as a topic
+that *does* it. "Look up leave balance" and "submit a time-off request" are different capabilities.
+
+The inventory lists workflows by name only, and a name like "create case" does not reveal what the workflow
+actually does or who calls it. If a capability rule depends on a workflow's behavior, ask the maker rather
+than inferring it from the name.
 
 For any finding where an existing rule already targets the reported behavior **by listing forbidden
 phrases**, record that the mechanism itself failed. Phrase lists are evaded by rewording; the replacement
@@ -121,23 +158,38 @@ either a reported behavior or a contradiction. Do not append unrelated hardening
 to be open.
 
 **B — the maker reported nothing specific.**
-Propose fixes for **contradictions** (Step 4) and for findings where a rule is **internally inconsistent or
+Propose fixes only for **contradictions** (Step 4) and for rules that are **internally inconsistent or
 vacuous** (`INSTR-004`, `INSTR-005`). Report the grounding and over-commitment findings from Step 5 as
 observations with the risk each carries, and ask whether the maker wants any of them addressed. Do not
-propose those changes pre-approved.
+propose those changes pre-approved. Reporting risks and proposing nothing is a **legitimate and complete
+outcome** of this branch — it is not a failed run.
 
-The reason is worth stating to the maker if they push back: prohibitions have a cost. Each one makes the
-agent more likely to decline a question it could have answered, and without a reported problem there is
-nothing to weigh that cost against.
+Worth saying to the maker if they push back: prohibitions have a cost. Each one makes the agent more likely
+to decline a question it could have answered, and without a reported problem there is nothing to weigh that
+cost against.
 
-Before finalizing any proposal, check it against Part 4 of the rule pack (`INSTR-030` … `INSTR-033`). Any
-prohibition needs a stated alternative behavior, and the proposal as a whole needs a line stating the
-prohibitions restrict invention rather than helpfulness.
+**Before finalizing any proposal**, check it against Part 4 of the reference guidance (`INSTR-030` …
+`INSTR-033`):
+
+- every prohibition states what the agent should do instead;
+- the proposal as a whole includes a sentence stating the prohibitions restrict invention, not helpfulness;
+- nothing prohibits a capability the Step 5 inventory shows the agent has.
+
+**One caveat you cannot resolve alone:** you cannot see the knowledge sources. If a proposed rule would ban
+referrals to outside organizations, ask the maker whether any external resource — an employee assistance
+program, a benefits carrier, an ombudsman — is deliberately endorsed in their content, and carve it out.
+A blanket ban can contradict their own approved material.
 
 ## Step 7: Check the character budget
 
-Instructions have a length ceiling in Copilot Studio, and hardening only adds text. Write the proposed full
-instructions to `.local/harden/candidate.txt`, then run:
+**If Step 6 produced no proposal, skip this step and go to Step 8.** There is nothing to measure, and
+building a candidate identical to the current instructions only creates a file to clean up.
+
+Instructions have a length ceiling in Copilot Studio, and hardening usually lengthens them, so measure the
+complete candidate rather than estimating the delta.
+
+Create `.local/harden/` if it does not exist, write the proposed **full** instructions to
+`.local/harden/candidate.txt`, then run:
 
 ```
 python scripts/check_instruction_budget.py --agent {agent.folder} --candidate .local/harden/candidate.txt
@@ -147,28 +199,43 @@ Read the `###INSTRUCTION_BUDGET_JSON###` line. **Its verdict is authoritative �
 yourself and do not override it.**
 
 - `ok` — proceed.
-- `tight` — proceed, and tell the maker how little room is left.
+- `tight` — proceed, and tell the maker how little room is left. Do **not** cut further wording just to
+  reach `ok`; deleting the maker's text to buy headroom they did not ask for is its own regression.
 - `over` — **do not present the proposal as-is.** Identify what to remove and propose that too. Prefer
-  removing permissive or vacuous lines (`INSTR-004`, `INSTR-011`, `INSTR-022`) — removing a line that invites
-  the bad behavior is usually worth more than the prohibition you were trying to add. Re-run until `ok`.
+  removing permissive or vacuous sentences (`INSTR-004`, `INSTR-011`, `INSTR-022`) — removing a sentence
+  that invites the bad behavior is usually worth more than the prohibition you were trying to add. Re-run
+  until the verdict is `ok` or `tight`.
 
-The default limit is the kit's working assumption, not a verified platform constant. If the maker knows
+The default limit is this kit's working assumption, not a verified platform constant. If the maker knows
 their real ceiling, pass it with `--limit`.
+
+If you finish the run without applying anything — the maker declines, defers, or you had nothing to propose
+— delete `.local/harden/candidate.txt`. A stale candidate is worse than none: a later run can measure or
+present the wrong proposal.
 
 ## Step 8: Present the proposal and get approval
 
 Present, in this order:
 
-1. **What you found**, in plain language, grouped as contradictions first, then risks. Quote the maker's
-   own line for each. If the instructions came from a shipped template, say that where it applies — several
-   common findings are inherited defaults, not something the maker wrote.
-2. **What you propose to change**, as before-and-after pairs:
+1. **What you found**, in plain language, contradictions first, then risks. Quote the maker's own sentence
+   for each; for a missing safeguard, say nothing constrains the behavior rather than blaming a sentence.
 
-   > **Currently:** "{exact original line}"
-   > **Proposed:** "{exact replacement}"
+   Only attribute wording to the shipped template when it matches the marker text listed in Part 6 of the
+   reference guidance. Otherwise say nothing about where it came from — a wrong attribution either blames
+   the maker for product text or excuses text they wrote themselves.
+
+2. **What you propose to change**, as before-and-after pairs at sentence granularity:
+
+   > **Currently:** "{the exact sentence being changed}"
+   > **Proposed:** "{the exact replacement}"
    > **Why:** {one or two sentences tied to what this prevents}
 
-   For a removal, show the line and say it is being removed and what that changes.
+   For a removal, quote the sentence and say what removing it changes. For an addition, quote nothing —
+   show the new sentence and say where it goes. **Never paste an entire paragraph** to show a small edit.
+
+   For a contradiction with no obvious winner, present both directions as options and ask which behavior
+   they intended, rather than choosing for them.
+
 3. **The length**, in one line: the new total and the remaining headroom.
 4. **What this does not cover**: instructions do not fix a knowledge source the agent cannot retrieve. If
    the maker's reported examples looked like retrieval problems (see "What this checks"), say so here.
@@ -176,6 +243,8 @@ Present, in this order:
 Then ask for approval. The maker may accept all, accept some, or decline. Apply exactly what they accept.
 
 If there is nothing to propose, say so directly and stop — do not manufacture a finding to justify the run.
+If you have risks but nothing to propose (branch B), present the risks, ask whether they want any addressed,
+and stop there; that is a complete outcome.
 
 ## Step 9: Apply
 
@@ -189,16 +258,19 @@ python scripts/emit_capability.py harden
 The `emit_capability.py` line records anonymous usage telemetry (best-effort, non-blocking); it needs no
 user-facing message and never fails the step.
 
-Then edit the `instructions:` block in `workspace/agents/{agent.folder}/agent.mcs.yml`, changing only the
-approved lines. Preserve the YAML block scalar style and the indentation of the surrounding file.
+Then edit the `instructions:` block in `{agent.folder}/agent.mcs.yml`, changing only the approved sentences.
+Preserve the YAML block scalar style and the indentation of the surrounding file.
 
 Preserve **exactly** any `{System.Bot.Components.Topics...}` references or other placeholder tokens in the
 instructions. These are live references, not example text — rewording one silently breaks the behavior it
 drives.
 
-Re-run the budget check without `--candidate` to confirm the written file measures as expected.
+If the maker accepted only part of the proposal, rebuild the candidate from what they accepted and re-run
+the Step 7 check before writing. The measurement of a proposal they did not take does not describe the file
+you are about to write.
 
-Delete `.local/harden/candidate.txt` once applied.
+Re-run the budget check without `--candidate` to confirm the written file measures as expected, then delete
+`.local/harden/candidate.txt`.
 
 ## Step 10: Hand off to validation
 
@@ -221,6 +293,7 @@ questions — and that a few normal, in-scope questions are worth testing alongs
 
 ## References
 
-- [`instruction-rules.md`](src/reference/ess-docs/hardening/instruction-rules.md) — the rule pack:
-  contradiction classes, grounding and over-commitment risks, over-restriction risks, and rewriting
-  principles.
+- `src/reference/ess-docs/hardening/instruction-rules.md` — contradiction classes, grounding and
+  over-commitment risks, over-restriction risks, rewriting principles, and the shipped-template markers.
+- `scripts/list_agent_capabilities.py` — topic and workflow inventory (Step 5).
+- `scripts/check_instruction_budget.py` — character-budget measurement (Step 7).
