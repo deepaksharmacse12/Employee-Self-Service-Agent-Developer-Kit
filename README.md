@@ -103,9 +103,22 @@ SUPPORT.md              Support model
 
 The ESS Maker Skills CLI collects pseudonymous usage telemetry (enabled by
 default) to help improve the product. No developer identity, agent content, or
-personal data is collected. See
+personal data is collected.
+
+**To opt out**, run either of the following (both are persistent and take effect immediately):
+
+```bash
+# From the solutions/ess-maker-skills directory:
+python scripts/adk_telemetry.py off
+
+# Or set the environment variable (any shell / CI):
+ESS_ADK_TELEMETRY=off
+```
+
+Re-enable later with `python scripts/adk_telemetry.py on` or by unsetting the
+env var. See
 [Telemetry & Privacy](solutions/ess-maker-skills/README.md#telemetry--privacy)
-for what's collected and how to opt out.
+for the full data model and event catalog.
 
 ## Contributing
 

@@ -39,20 +39,25 @@ then maintainers **must file a new release request** in the [Open Source Portal]
 
 This toolkit:
 
-- **Collects no telemetry.** Microsoft does not receive any data from your use of this kit. There is no telemetry SDK, no usage reporting, no crash reporting, and no opt-in/opt-out switch because there is nothing to switch off.
-- **Stores no data on Microsoft systems.** All data flows are between your local VS Code workspace and your own Power Platform / Copilot Studio tenant.
-- **Processes no personal data on Microsoft's behalf.** Any customer data you author or test against (topic content, evaluation prompts, sample employee records) stays in your tenant under your existing Copilot Studio / Power Platform license terms.
+- **Collects pseudonymous usage telemetry** (enabled by default) to help us understand which capabilities are used and where they fail, so we can improve the product. What is emitted is a random per-install `instance_id`, the tenant GUID and organization display name (OII, not developer identity), capability names (e.g. `setup`, `connect`, `topic_create`), FlightCheck run outcomes, latency, and scrubbed error codes. **No developer/user identifier, agent content, credentials, prompts, or personal data is collected.** A one-time notice is printed the first time you run a CLI command. See [Telemetry & Privacy](solutions/ess-maker-skills/README.md#telemetry--privacy) for the full data model and event catalog.
+- **Opt out any time** via either of:
+  - `python scripts/adk_telemetry.py off` (from `solutions/ess-maker-skills`), or
+  - the `ESS_ADK_TELEMETRY=off` environment variable.
+- **Stores no customer data on Microsoft systems.** All data flows for authoring / testing (topic content, evaluation prompts, sample employee records) go between your local VS Code workspace and your own Power Platform / Copilot Studio tenant under your existing license terms.
+- **Processes no personal data on Microsoft's behalf.** The telemetry above is product-improvement usage data, not customer content — no customer data (Copilot Studio topics, workflow definitions, evaluation prompts, employee records) is ever transmitted to Microsoft by this toolkit.
 
 For privacy questions about Copilot Studio, Power Platform, or GitHub Copilot themselves, see the [Microsoft Privacy Statement](https://privacy.microsoft.com).
 
 ## Service dependencies
 
-The toolkit's scripts call the following Microsoft services on your behalf. Every call goes from your machine to your own tenant under your existing license - no data is sent to Microsoft beyond standard authentication exchanges with the services listed below.
+The toolkit's scripts call the following Microsoft services on your behalf. Every call is either against your own tenant under your existing license, or against Microsoft's Aria/1DS collector for the pseudonymous telemetry described under [Privacy](#privacy) — no other data is sent to Microsoft.
 
 | Service | Purpose | Auth | Tenant |
 |---|---|---|---|
 | Power Platform / Dataverse Web API | Read agent components, push template config records | MSAL (delegated, your identity) | Your Power Platform environment |
 | Copilot Studio (via Dataverse) | Read/update topics, push changes | MSAL (delegated) | Your Copilot Studio environment |
+| Microsoft Graph (optional) | Resolve tenant display name for telemetry (`Organization.Read.All` silent → `/me?$select=companyName` fallback) | MSAL (delegated) | Your Entra tenant |
+| Aria / 1DS OneCollector | Pseudonymous usage telemetry (see [Privacy](#privacy); opt out with `python scripts/adk_telemetry.py off` or `ESS_ADK_TELEMETRY=off`) | Instrumentation key, no user auth | N/A — Microsoft telemetry service |
 | ServiceNow REST API (optional) | Topic integration testing | User-provided OAuth / basic | Your ServiceNow tenant |
 | Workday SOAP / REST API (optional) | Topic integration testing | User-provided | Your Workday tenant |
 | GitHub Copilot (in VS Code) | LLM that reads prompt and instruction files and generates content | GitHub Copilot license | N/A - GitHub Copilot service |

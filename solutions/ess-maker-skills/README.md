@@ -368,10 +368,17 @@ CLI command.
   active installs and DAU/WAU/MAU. It is **not** tied to your identity.
 - Your **tenant ID** (the Entra tenant GUID) — identifies the enterprise tenant,
   not an individual user.
-- A derived **tenant class** (`internal` or `customer`) — a coarse, two-value
-  flag computed from the tenant ID so we can report Microsoft-internal dogfood
-  usage separately from external customer usage. It is non-identifying and lower
-  sensitivity than the tenant ID it is derived from.
+- The **tenant display name** (organization display name for that tenant ID) —
+  resolved best-effort via a Microsoft Graph lookup on the auth path
+  (`Organization.Read.All` silent, falling back to `/me?$select=companyName`).
+  This is org-level Organization Identifiable Information (OII), not a personal
+  identifier. Left blank when the lookup can't be completed silently. See
+  [Service dependencies](../../CONTRIBUTING.md#service-dependencies) for the
+  Graph call details.
+- A derived **tenant class** (`internal`, `customer`, or `unknown`) — a coarse,
+  three-value flag computed from the tenant ID so we can report Microsoft-internal
+  dogfood usage separately from external customer usage. It is non-identifying and
+  lower sensitivity than the tenant ID it is derived from.
 - Non-identifying context: ADK version, surface, session ID, event name, and
   per-event enums/metrics (e.g. FlightCheck verdicts, durations, check categories).
 - Scrubbed, non-sensitive **error categories** when something fails.
