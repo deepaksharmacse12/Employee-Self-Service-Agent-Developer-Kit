@@ -13,6 +13,71 @@ Orchestrate landing-page configuration through the AgentConfiguration MCP
 server. Guide the maker through complete, safe section updates without relying
 only on individual tool descriptions.
 
+## Setup-state check
+
+For every request that reads or configures a tenant's landing page, read
+`.local/config.json` before resolving a target or calling an MCP tool.
+
+If the file does not exist, or its `setup` value is not `"complete"`, show:
+
+> Welcome to the ESS Maker Kit. Before using `/landing-page`, type `/setup` to set up your environment.
+
+and STOP.
+
+Reuse the loaded configuration during target resolution. Requests that only ask
+what a landing-page setting controls do not require local setup; follow
+**Explain landing-page settings** directly.
+
+## MCP availability check
+
+Before any request that requires an AgentConfiguration MCP tool, inspect the
+tools available in the current conversation for the
+`ess-landing-page-config` server.
+
+When its tools are available, continue to **Resolve the target**.
+
+When its tools are unavailable:
+
+1. Run:
+
+   ```text
+   python scripts/mcp_config.py validate --server ess-landing-page-config
+   ```
+
+2. Parse `MCP_CONFIG_STATUS_JSON:`:
+   - `configured`: follow **Start the landing-page MCP server**.
+   - `missing-file` or `missing-server`: run:
+
+     ```text
+     python scripts/mcp_config.py materialize-defaults
+     ```
+
+     Parse `MCP_CONFIG_RESULT_JSON:` and confirm
+     `ess-landing-page-config` appears in `addedServers`, or run `validate`
+     again and confirm its status is `configured`. Then follow **Start the
+     landing-page MCP server**.
+   - command failure or any other result: show the exact error and stop. Do not
+     replace malformed JSON or overwrite an existing configuration.
+
+### Start the landing-page MCP server
+
+Show:
+
+> The landing-page MCP server is configured, but its tools are not available in
+> this chat yet.
+>
+> 1. Press `Ctrl+Shift+P`.
+> 2. Run `MCP: List Servers`.
+> 3. Select `ess-landing-page-config`.
+> 4. Choose `Start`.
+>
+> Type `done` when the server shows `Running`.
+
+Wait for the maker. When they confirm, inspect the available tools again. If
+the tools are available, continue the original request. If they remain
+unavailable, tell the maker to reload the VS Code window, rerun
+`/landing-page`, and stop.
+
 ## Hard rules
 
 1. Route every call to the `ess-landing-page-config` MCP server through this
@@ -91,7 +156,8 @@ For a request to remove all landing-page configuration, follow **Delete all
 landing-page configuration**. That flow does not create or read a configuration
 before deleting it.
 
-1. Read `.local/config.json` and identify the local target:
+1. Use the `.local/config.json` loaded by **Setup-state check** to identify the
+   local target:
    - For the active agent, use the backward-compatible `agent` object.
    - For another locally configured agent, match its `agents` entry by `slug`,
      `botId`, or unambiguous `name`.
@@ -113,8 +179,8 @@ before deleting it.
    substring of the target agent name. The server does not require a
    three-character minimum.
 7. Use an unambiguous search result's `titleId`. When multiple candidates
-   match, ask the maker to choose. When none match, explain that the agent could
-   not be found and ask the maker to verify its name.
+   match, ask the maker to choose. When none match, follow **Target unavailable
+   to AgentConfiguration** and stop.
 8. Persist the search result's `titleId` according to
    **Persist a discovered title ID**, then follow
    **Create or recreate missing configuration**. Do not call
@@ -122,6 +188,27 @@ before deleting it.
 
 Do not guess the identifier from the agent name, schema name, `botId`, Teams
 app ID, or manifest ID.
+
+## Target unavailable to AgentConfiguration
+
+When `list_agent_configs` has no configured match and `search_agents` returns no
+matching tenant-visible agent:
+
+1. Do not guess a `titleId` or call `create_agent_config`.
+2. Tell the maker:
+
+   > I couldn't find **{agent name}** among your tenant's available Employee
+   > Self-Service agents. Confirm the agent name. If it is correct, publish the
+   > agent from Copilot Studio, submit it for admin approval, and have an
+   > administrator deploy it to your organization. Then return to
+   > `/landing-page`.
+
+3. When the maker asks whether the kit handles deployment, explain that
+   foundation setup can install and extract a supported ESS agent in the
+   selected Power Platform environment. Publishing from Copilot Studio,
+   submitting for admin approval, and deploying through Integrated apps are
+   separate maker and administrator steps.
+4. Stop. Do not continue to configuration creation or another discovery call.
 
 ## Persist a discovered title ID
 
@@ -281,7 +368,8 @@ Deletion removes the complete saved landing-page configuration and restores the
 default landing-page experience. It does not edit or remove the local agent
 entry or its stored `titleId`.
 
-1. Read `.local/config.json` and identify the local target.
+1. Use the `.local/config.json` loaded by **Setup-state check** to identify the
+   local target.
 2. Resolve `titleId` without creating or reading a configuration:
    - Use a maker-supplied `titleId` or the target entry's stored `titleId`.
    - When `titleId` is absent, call `list_agent_configs` and match the target

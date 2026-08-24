@@ -20,8 +20,12 @@ SERVER_PATH = (
     / "agentconfig"
     / "server.py"
 )
-MCP_CONFIG_PATH = (
-    REPO_ROOT / "solutions" / "ess-maker-skills" / ".vscode" / "mcp.json"
+MCP_DEFAULTS_PATH = (
+    REPO_ROOT
+    / "solutions"
+    / "ess-maker-skills"
+    / ".vscode"
+    / "mcp.defaults.json"
 )
 
 
@@ -57,12 +61,12 @@ def test_server_exposes_the_skill_tool_contract() -> None:
     }
 
 
-def test_mcp_config_uses_the_production_agentconfig_api() -> None:
-    config = json.loads(MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+def test_mcp_defaults_use_the_production_agentconfig_api() -> None:
+    config = json.loads(MCP_DEFAULTS_PATH.read_text(encoding="utf-8"))
 
-    assert list(config["servers"]) == ["ess-landing-page-config"]
+    assert "ess-landing-page-config" in config["servers"]
     server = config["servers"]["ess-landing-page-config"]
-    assert server["command"] == "python"
+    assert server["command"] == "{pythonExecutable}"
     assert server["args"] == ["server.py"]
     assert (
         server["env"]["AGENTCONFIG_BASE_URL"]

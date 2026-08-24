@@ -25,8 +25,9 @@ Run `/setup` and follow the prompts.
 
 ### 🎨 Customize the ESS Landing Page
 
-Configure the active agent's tenant landing page directly from chat. Ask
-`Customize my landing page` or use the **Customize landing page** Quick Action.
+Configure the active agent's tenant landing page directly from chat. Run
+`/landing-page`, ask `Customize my landing page`, or use the **Customize landing
+page** Quick Action.
 
 - **Categorized starter prompts** help employees understand the agent's
   capabilities and guide them into common scenarios.
@@ -41,6 +42,11 @@ Configure the active agent's tenant landing page directly from chat. Ask
 The agent can apply exact changes directly or open rich editors for exploratory
 updates. Landing-page configuration is saved through the production
 AgentConfiguration service and does not use the local topic push pipeline.
+
+Landing-page configuration requires the target agent to be published from
+Copilot Studio and deployed to the organization. `/setup` installs and extracts
+the Power Platform agent; publication, admin approval, and Integrated apps
+deployment are separate steps.
 
 ### 📖 Pre-Loaded ESS Documentation, Samples & Best Practices
 
@@ -325,6 +331,7 @@ Then **run `/setup`** in GitHub Copilot Chat to configure your environment.
 | Command | What it does |
 |---------|-------------|
 | `/setup` | First-time environment setup — authenticate, discover agent, extract, configure |
+| `/landing-page` | Configure landing-page branding and content |
 | `/connect` | Connect an external system (ServiceNow, Workday) — guided setup with MCP verification |
 | `/create` | Create an eval-driven topic, workflow, or evaluation test set |
 | `/update` | Update a simple topic with evals, a workflow, or an evaluation test set |

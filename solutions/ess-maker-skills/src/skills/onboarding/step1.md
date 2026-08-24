@@ -141,17 +141,14 @@ python -m pip install -r src/mcp/agentconfig/requirements.txt
 
 If installation fails, show the error and stop.
 
-Read `.vscode/mcp.json`. If it exists, parse it. If it does not exist, start
-with `{ "servers": {} }`. Set the `Dataverse` entry in `servers` to the HTTP
-configuration below, retaining every other server and any top-level `inputs`.
-Write the merged object to `.vscode/mcp.json`.
+Run:
 
-```json
-"Dataverse": {
-  "type": "http",
-  "url": "https://org.crm.dynamics.com/api/mcp"
-}
+```text
+python scripts/mcp_config.py configure dataverse --environment-url "{ENV_URL}"
 ```
+
+If configuration fails, show the exact error and stop. The command preserves
+every other server, input, and top-level field in `.vscode/mcp.json`.
 
 If FOUNDATION_REUSED is true, do not rerun the Allowed MCP Client prerequisite;
 it already passed in foundation `SETUP-02.2`. Continue directly to section 1.3.

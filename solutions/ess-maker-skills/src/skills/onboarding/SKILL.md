@@ -57,9 +57,8 @@ If dependency installation fails, show the error and stop.
 
 **Message:**
 
-Setup is already complete! Ask `Customize my landing page` to configure the
-branding and content employees see, or type `/menu` to see everything you can
-do.
+Setup is already complete! Run `/landing-page` to configure the branding and
+content employees see, or type `/menu` to see everything you can do.
 
 **End message.**
 
