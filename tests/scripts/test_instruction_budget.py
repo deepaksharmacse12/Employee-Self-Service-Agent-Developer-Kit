@@ -1,0 +1,243 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""
+Unit tests for ``check_instruction_budget`` — the deterministic probe the
+``/harden`` skill relies on to decide whether proposed instructions fit.
+
+Why this is probed rather than reasoned about: hardening only ever *adds*
+text, and instructions that exceed the ceiling can be silently truncated,
+which can drop the guardrail the pass just added. The skill is told the
+probe's verdict outranks its own estimate, so these tests lock down the
+contract that makes that safe — a sentinel line is always emitted, and the
+error paths report ``unknown`` rather than a falsely clean measurement.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+import pytest
+
+import check_instruction_budget as budget
+
+_SKILL_ROOT = Path(budget.__file__).resolve().parent.parent
+_SCRIPT = _SKILL_ROOT / "scripts" / "check_instruction_budget.py"
+_AGENTS_DIR = _SKILL_ROOT / "workspace" / "agents"
+
+_SENTINEL = "###INSTRUCTION_BUDGET_JSON###"
+
+
+def _agent_yaml(instructions: str) -> str:
+    body = "\n".join("  " + line for line in instructions.splitlines())
+    return f"kind: GptComponentMetadata\ninstructions: |-\n{body}\n"
+
+
+@pytest.fixture
+def temp_agent():
+    """A throwaway agent with a working and a baseline copy of its instructions.
+
+    Lives under the gitignored workspace/agents/ tree so it leaves no git
+    trace; removed on teardown.
+    """
+    name = f"_pytest_{uuid.uuid4().hex}"
+    agent_dir = _AGENTS_DIR / name
+    (agent_dir / ".baseline").mkdir(parents=True)
+
+    (agent_dir / "agent.mcs.yml").write_text(
+        _agent_yaml("You are an HR agent.\nAnswer only from your sources."),
+        encoding="utf-8",
+    )
+    (agent_dir / ".baseline" / "agent.mcs.yml").write_text(
+        _agent_yaml("You are an HR agent."),
+        encoding="utf-8",
+    )
+    try:
+        yield name
+    finally:
+        shutil.rmtree(agent_dir, ignore_errors=True)
+
+
+def _run(*args) -> tuple[int, dict, str]:
+    proc = subprocess.run(
+        [sys.executable, str(_SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    combined = proc.stdout + proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith(_SENTINEL)]
+    # Every path must emit exactly one verdict; the skill parses this line and
+    # has no fallback if it is missing or duplicated.
+    assert len(lines) == 1, f"expected one sentinel line, got {len(lines)}: {combined}"
+    return proc.returncode, json.loads(lines[0][len(_SENTINEL):]), combined
+
+
+# --------------------------------------------------------------------------- #
+# verdict thresholds
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize(
+    "chars, limit, expected",
+    [
+        (100, 8000, "ok"),
+        (7999, 8000, "tight"),      # under the limit but inside the warning band
+        (8000, 8000, "tight"),      # exactly at the limit is not over
+        (8001, 8000, "over"),
+        (7751, 8000, "tight"),      # 249 left -> still inside the band
+        (7750, 8000, "ok"),         # 250 left -> the first value outside it
+    ],
+)
+def test_verdict_thresholds(chars, limit, expected):
+    assert budget._verdict(chars, limit) == expected
+
+
+def test_limit_boundary_is_inclusive():
+    """Exactly at the limit is not over — an off-by-one here would send the
+    skill hunting for text to remove from instructions that already fit."""
+    assert budget._verdict(8000, 8000) != "over"
+
+
+# --------------------------------------------------------------------------- #
+# measuring a real agent
+# --------------------------------------------------------------------------- #
+
+def test_measures_working_instructions(temp_agent):
+    code, result, combined = _run("--agent", temp_agent)
+    assert code == 0, combined
+    assert result["verdict"] == "ok"
+    assert result["source"] == "working"
+    assert result["chars"] == len("You are an HR agent.\nAnswer only from your sources.")
+    assert result["headroom"] == result["limit"] - result["chars"]
+
+
+def test_reports_delta_against_baseline(temp_agent):
+    """The maker needs to see what a pass *added*, not just the total."""
+    _, result, _ = _run("--agent", temp_agent)
+    assert result["baseline_chars"] == len("You are an HR agent.")
+    assert result["delta"] == result["chars"] - result["baseline_chars"]
+
+
+def test_candidate_file_is_measured_instead(temp_agent, tmp_path):
+    candidate = tmp_path / "candidate.txt"
+    candidate.write_text("x" * 12, encoding="utf-8")
+
+    _, result, _ = _run("--agent", temp_agent, "--candidate", str(candidate))
+    assert result["source"] == "candidate"
+    assert result["chars"] == 12
+
+
+def test_over_budget_is_reported(temp_agent, tmp_path):
+    candidate = tmp_path / "candidate.txt"
+    candidate.write_text("x" * 50, encoding="utf-8")
+
+    code, result, combined = _run(
+        "--agent", temp_agent, "--candidate", str(candidate), "--limit", "40"
+    )
+    assert code == 0, combined
+    assert result["verdict"] == "over"
+    assert result["headroom"] == -10
+    assert "OVER BUDGET" in combined
+
+
+def test_custom_limit_is_honoured(temp_agent):
+    """The ceiling is the kit's working assumption, so a maker who knows their
+    real one must be able to override it rather than be blocked by ours."""
+    _, result, _ = _run("--agent", temp_agent, "--limit", "6000")
+    assert result["limit"] == 6000
+
+
+# --------------------------------------------------------------------------- #
+# error paths never produce a falsely clean verdict
+# --------------------------------------------------------------------------- #
+
+def test_missing_agent_reports_unknown():
+    code, result, _ = _run("--agent", "_pytest_does_not_exist")
+    assert code != 0
+    assert result["verdict"] == "unknown"
+    assert "chars" not in result
+
+
+def test_missing_instructions_block_reports_unknown(temp_agent):
+    (_AGENTS_DIR / temp_agent / "agent.mcs.yml").write_text(
+        "kind: GptComponentMetadata\n", encoding="utf-8"
+    )
+    code, result, _ = _run("--agent", temp_agent)
+    assert code != 0
+    assert result["verdict"] == "unknown"
+
+
+def test_empty_instructions_block_reports_unknown(temp_agent):
+    """An empty block means the agent was never configured. Reporting it as
+    "0 characters, plenty of headroom" would read as a clean pass."""
+    (_AGENTS_DIR / temp_agent / "agent.mcs.yml").write_text(
+        "kind: GptComponentMetadata\ninstructions:\n", encoding="utf-8"
+    )
+    code, result, _ = _run("--agent", temp_agent)
+    assert code != 0
+    assert result["verdict"] == "unknown"
+
+
+def test_unparseable_yaml_reports_unknown(temp_agent):
+    (_AGENTS_DIR / temp_agent / "agent.mcs.yml").write_text(
+        "instructions: [unclosed\n", encoding="utf-8"
+    )
+    code, result, _ = _run("--agent", temp_agent)
+    assert code != 0
+    assert result["verdict"] == "unknown"
+
+
+def test_missing_candidate_reports_unknown(temp_agent, tmp_path):
+    code, result, _ = _run(
+        "--agent", temp_agent, "--candidate", str(tmp_path / "nope.txt")
+    )
+    assert code != 0
+    assert result["verdict"] == "unknown"
+
+
+def test_missing_baseline_still_measures(temp_agent):
+    """A baseline is advisory context. Its absence must not block the measure —
+    an agent mid-edit may not have one."""
+    (_AGENTS_DIR / temp_agent / ".baseline" / "agent.mcs.yml").unlink()
+
+    code, result, combined = _run("--agent", temp_agent)
+    assert code == 0, combined
+    assert result["verdict"] == "ok"
+    assert result["baseline_chars"] is None
+    assert result["delta"] is None
+
+
+def test_invalid_limit_is_rejected(temp_agent):
+    code, result, _ = _run("--agent", temp_agent, "--limit", "0")
+    assert code != 0
+    assert result["verdict"] == "unknown"
+
+
+# --------------------------------------------------------------------------- #
+# wiring
+# --------------------------------------------------------------------------- #
+
+def test_harden_prompt_and_skill_are_present():
+    """The prompt delegates to the skill by path; a rename that breaks the
+    link is silent at runtime — the maker just gets an unguided response."""
+    prompt = _SKILL_ROOT / ".github" / "prompts" / "harden.prompt.md"
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    rules = (_SKILL_ROOT / "src" / "reference" / "ess-docs" / "hardening"
+             / "instruction-rules.md")
+
+    assert prompt.is_file()
+    assert skill.is_file()
+    assert rules.is_file()
+
+    prompt_text = prompt.read_text(encoding="utf-8")
+    assert "src/skills/instructions/harden/SKILL.md" in prompt_text
+
+    skill_text = skill.read_text(encoding="utf-8")
+    assert "src/reference/ess-docs/hardening/instruction-rules.md" in skill_text
+    assert "scripts/check_instruction_budget.py" in skill_text
+    assert "emit_capability.py harden" in skill_text

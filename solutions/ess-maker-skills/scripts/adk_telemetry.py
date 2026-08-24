@@ -113,6 +113,7 @@ EVENT_FLIGHTCHECK_ERROR = "adk.flightcheck.error"
 #   restore_template_configs-> Workday template-config restore
 #   publishing              -> push / deploy to Copilot Studio
 #   flightcheck             -> pre-deployment readiness check
+#   harden                  -> agent system-instruction hardening review
 ADK_CAPABILITIES = (
     "setup",
     "connect",
@@ -129,6 +130,7 @@ ADK_CAPABILITIES = (
     "restore_template_configs",
     "publishing",
     "flightcheck",
+    "harden",
 )
 _CAPABILITY_SET = frozenset(ADK_CAPABILITIES)
 
