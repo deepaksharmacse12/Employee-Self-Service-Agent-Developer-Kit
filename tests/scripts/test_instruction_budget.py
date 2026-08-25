@@ -292,6 +292,34 @@ def test_skill_rechecks_contradictions_in_the_proposal():
     assert "amend or remove that rule" in step_6.lower()
 
 
+def test_skill_states_changes_are_local_until_push():
+    """A maker told 'I updated agent.mcs.yml' reasonably concludes the change
+    is live, stops watching for the behaviour, and never pushes."""
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    skill_text = skill.read_text(encoding="utf-8")
+    step_9 = skill_text.split("## Step 9:")[1].split("## Step 10:")[0]
+
+    assert "still running the previous" in step_9
+    assert "`/push`" in step_9
+
+    # /evaluate uploads to the Copilot Studio Evaluation portal and /test
+    # drives a topic or workflow -- neither reads the local agent.mcs.yml, so
+    # the push has to come first or the evaluation measures the old text.
+    step_10 = skill_text.split("## Step 10:")[1].split("## References")[0]
+    assert "as deployed" in step_10
+    assert "does not exercise system instructions" in step_10
+
+
+def test_skill_requires_live_progress_tracking():
+    """The list was created and then never updated, so the maker could not
+    tell whether the run was working or waiting on them."""
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    skill_text = skill.read_text(encoding="utf-8")
+
+    assert "mark each in-progress as you start it" in skill_text
+    assert "Update it as you go rather than at the end" in skill_text
+
+
 def test_skill_forbids_option_menus_at_intake():
     """A maker offered a menu picks a category, and a category cannot be
     anchored to a change — the run then produces generic hardening."""

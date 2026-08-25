@@ -46,7 +46,11 @@ and `workspace/`. They are not relative to this file.
 - **Speak the maker's language.** Never show `INSTR-*` ids, the filenames of this skill's own reference
   material, or the words "detector", "rule pack", or "probe". Describe findings in plain language. The
   maker's own instruction wording is *their* language and is shown verbatim.
-- **TRACK PROGRESS**: use the todo list tool for the steps below.
+- **TRACK PROGRESS**: Use the todo list tool to track your progress through this skill's steps. Create a
+  todo list at the start with all the steps, mark each in-progress as you start it, and mark completed when
+  done. Update it as you go rather than at the end — several steps here wait on the maker's reply, and a
+  list that never moves gives them no idea whether you are working or waiting. If you loop back (Step 8 to
+  Step 6), reopen that step rather than leaving it complete.
 
 ## Anchoring
 
@@ -320,6 +324,13 @@ you are about to write.
 Re-run the budget check without `--candidate` to confirm the written file measures as expected, then delete
 `.local/harden/candidate.txt`.
 
+**Say where the change landed.** "I updated `agent.mcs.yml`" reads as done, and a maker who believes the
+change is live will stop watching for the behavior they reported. Be explicit that this is a local file and
+that the agent in Copilot Studio still has the old instructions:
+
+> I've updated your local copy of the agent. Your agent in Copilot Studio is still running the previous
+> instructions — the change reaches it when you run `/push`.
+
 ## Step 10: Hand off to validation
 
 **This step always runs — after applying, after a decline, and after a run that proposed nothing.** It is
@@ -329,36 +340,46 @@ findings.
 Instruction changes are behavioral changes, and this skill has no way to demonstrate that the new text
 produces better answers. Say that plainly and route the maker onward.
 
+**Know what the two commands actually do before you route someone to them.** `/evaluate` *authors*
+evaluation cases; the CSVs land in `workspace/tests/{date}/` and are uploaded to the Copilot Studio
+Evaluation portal, which runs them against the agent **as deployed**. `/test` drives a **topic or a
+workflow** to debug its runtime behavior — it does not exercise system instructions, so it is not the way
+to check an instruction change. Neither command reads the local `agent.mcs.yml`, which means an instruction
+change has to be pushed before any of this can observe it.
+
 **If changes were applied:**
 
-> These changes aren't verified yet — instructions affect every answer, so it's worth checking the agent
-> still behaves the way you want.
+> Two things to know before you check whether this worked.
 >
-> - `/evaluate` — turn the answers you didn't like into test cases, so you can tell whether this fixed them
-> - `/test` — try the agent's behaviour directly
-> - `/push` — send the change to Copilot Studio when you're ready
+> The change is in your local copy only — your agent in Copilot Studio is still running the previous
+> instructions. Run `/push` to send it.
+>
+> After that, `/evaluate` will turn the answers you didn't like into evaluation cases. It writes a CSV you
+> upload to the Copilot Studio Evaluation portal, which runs them against your agent and shows you whether
+> the behaviour actually changed.
 
 Where the maker gave specific bad responses in Step 2, carry them forward: those are the highest-value
 evaluation rows available, and they are the only direct evidence of whether this pass worked. Offer to run
 `/evaluate` with them.
 
 Also mention, once, that a change intended to prevent a bad answer can also cause the agent to decline good
-questions — and that a few normal, in-scope questions are worth testing alongside the failing ones.
+questions — so the evaluation set should include a few normal, in-scope questions alongside the failing
+ones. Without those rows, an agent that has started refusing everything still scores clean.
 
 **If the maker declined or deferred the proposal:**
 
-> Nothing has changed. If you want to see whether the behaviour I described actually shows up:
->
-> - `/test` — try the agent directly
-> - `/evaluate` — build test cases so you have a baseline before changing anything
+> Nothing has changed, locally or in Copilot Studio. If you want to find out whether the behaviour I
+> described actually shows up, `/evaluate` will build an evaluation set you can run against the agent as
+> it stands — that gives you a baseline before changing anything.
 
 **If nothing was proposed:**
 
 > I didn't find anything worth changing in the instructions. That doesn't mean the agent answers well —
 > instructions are only one input, and knowledge sources and topics matter at least as much.
 >
-> - `/test` — try the agent directly
-> - `/evaluate` — build a test set, which will find behaviour problems this review cannot see
+> `/evaluate` will build an evaluation set to run against the agent, which finds behaviour problems this
+> review cannot see. If you suspect one specific topic or workflow is misbehaving, `/test` drives that
+> component directly.
 
 Reading the instructions cannot tell you what the agent actually says. Do not let a clean review stand as
 evidence that the agent is fine.
