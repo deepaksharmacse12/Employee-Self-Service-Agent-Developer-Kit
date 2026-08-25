@@ -300,7 +300,9 @@ def test_skill_states_changes_are_local_until_push():
     step_9 = skill_text.split("## Step 9:")[1].split("## Step 10:")[0]
 
     assert "still running the previous" in step_9
-    assert "`/push`" in step_9
+    # Step 9 states location only; Step 10 owns the instruction to push, so
+    # the maker is not told the same thing twice in adjacent paragraphs.
+    assert "Step 10 gives the instruction to push" in step_9
 
     # /evaluate uploads to the Copilot Studio Evaluation portal and /test
     # drives a topic or workflow -- neither reads the local agent.mcs.yml, so
@@ -316,6 +318,21 @@ def test_skill_states_changes_are_local_until_push():
         ln for ln in applied.splitlines() if ln.lstrip().startswith(">")
     )
     assert "/test" not in maker_facing
+    # /push is the only command that makes the change real, and a run dropped
+    # it once the routing rule was read as "name one command".
+    assert "must** name `/push`" in applied
+    assert "`/push`" in maker_facing
+
+
+def test_skill_reports_the_contradiction_check_result():
+    """A silent pass is indistinguishable from a skipped check, so the result
+    is stated next to the length rather than left implied."""
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    step_8 = (skill.read_text(encoding="utf-8")
+              .split("## Step 8:")[1].split("## Step 9:")[0])
+
+    assert "state the result of the Step 6 re-check explicitly" in step_8
+    assert 'Say this even when the answer is "none"' in step_8
 
 
 def test_skill_requires_live_progress_tracking():

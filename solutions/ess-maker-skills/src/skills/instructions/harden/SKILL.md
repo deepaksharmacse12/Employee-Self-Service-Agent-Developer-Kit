@@ -46,9 +46,10 @@ and `workspace/`. They are not relative to this file.
 - **Speak the maker's language.** Never show `INSTR-*` ids, the filenames of this skill's own reference
   material, or the words "detector", "rule pack", or "probe". Describe findings in plain language. The
   maker's own instruction wording is *their* language and is shown verbatim.
-- **Recommend, don't disqualify.** Name the command that fits and stop. Do not tell the maker which
-  commands are *not* right for their situation, or why — that is this skill's routing logic, not their
-  next step, and it reads as hedging.
+- **Recommend, don't disqualify.** Do not tell the maker which commands are *not* right for their
+  situation, or why — that is this skill's routing logic, not their next step, and it reads as hedging.
+  This is not a limit on how many commands you name: when a path needs both `/push` and `/evaluate`, give
+  both, in order.
 - **TRACK PROGRESS**: Use the todo list tool to track your progress through this skill's steps. Create a
   todo list at the start with all the steps, mark each in-progress as you start it, and mark completed when
   done. Update it as you go rather than at the end — several steps here wait on the maker's reply, and a
@@ -286,7 +287,18 @@ Present, in this order:
    For a contradiction with no obvious winner, present both directions as options and ask which behavior
    they intended, rather than choosing for them.
 
-3. **The length**, in one line: the new total and the remaining headroom.
+3. **The checks you ran on the proposal**, in one or two lines alongside each other:
+
+   - **Contradictions**: state the result of the Step 6 re-check explicitly — that you read the proposed
+     text against the rules staying in place, and either that nothing conflicts or which surviving rule you
+     had to amend. Say this even when the answer is "none". The maker cannot see that this check happened,
+     and a silent pass is indistinguishable from a skipped one — which is the exact failure this skill
+     exists to catch, so leaving it implicit undermines the result.
+   - **Length**: the new total and the remaining headroom.
+
+   > Checked the new wording against the rules that stay in place — no conflicts. Length: 3,140 of 8,000
+   > characters, 4,860 to spare.
+
 4. **What this does not cover**: instructions do not fix a knowledge source the agent cannot retrieve. If
    the maker's reported examples looked like retrieval problems (see "What this checks"), say so here.
 
@@ -328,11 +340,13 @@ Re-run the budget check without `--candidate` to confirm the written file measur
 `.local/harden/candidate.txt`.
 
 **Say where the change landed.** "I updated `agent.mcs.yml`" reads as done, and a maker who believes the
-change is live will stop watching for the behavior they reported. Be explicit that this is a local file and
-that the agent in Copilot Studio still has the old instructions:
+change is live will stop watching for the behavior they reported. State that this is a local file:
 
 > I've updated your local copy of the agent. Your agent in Copilot Studio is still running the previous
-> instructions — the change reaches it when you run `/push`.
+> instructions.
+
+Leave it there — Step 10 gives the instruction to push. Do not write the two messages as separate
+paragraphs saying the same thing.
 
 ## Step 10: Hand off to validation
 
@@ -353,10 +367,14 @@ your reasoning instead of a next step.
 
 **If changes were applied:**
 
+The applied path **must** name `/push`, as its own instruction, before anything about evaluation. This is
+the only command that makes the change real, and it is the one most easily lost when it is bundled into a
+paragraph about testing. Do not merge it into the `/evaluate` sentence, and do not leave it implied.
+
 > Two things to know before you check whether this worked.
 >
 > The change is in your local copy only — your agent in Copilot Studio is still running the previous
-> instructions. Run `/push` to send it.
+> instructions. **Run `/push` to send it.**
 >
 > After that, `/evaluate` will turn the answers you didn't like into evaluation cases. It writes a CSV you
 > upload to the Copilot Studio Evaluation portal, which runs them against your agent and shows you whether
