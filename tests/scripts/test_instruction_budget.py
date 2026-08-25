@@ -258,3 +258,46 @@ def test_harden_prompt_and_skill_are_present():
     # wrong step; a stale cross-reference here is a real defect.
     assert re.search(r"checkpoint\*{0,2} \(Step 9\)", skill_text), \
         "the checkpoint rule must cross-reference the step that actually runs it"
+
+
+def test_skill_always_routes_to_validation():
+    """A real run ended on the diff and never mentioned validation. Reading
+    instructions cannot show that the agent's answers improved, so every
+    path has to hand off."""
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    skill_text = skill.read_text(encoding="utf-8")
+
+    assert "Never end the run without Step 10." in skill_text
+    assert "`/evaluate`" in skill_text
+    assert "`/test`" in skill_text
+    # Step 8 previously told the model to "stop" on the no-proposal paths,
+    # which is what skipped the handoff.
+    step_8 = skill_text.split("## Step 8:")[1].split("## Step 9:")[0]
+    assert "go to Step 10" in step_8
+    assert "and stop" not in step_8
+
+
+def test_skill_rechecks_contradictions_in_the_proposal():
+    """Step 4 reads the maker's text. Hardening then adds prohibitions to a
+    document that already has rules, so the candidate has to be checked too —
+    otherwise the skill introduces the defect it exists to find."""
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    step_6 = (skill.read_text(encoding="utf-8")
+              .split("## Step 6:")[1].split("## Step 7:")[0])
+
+    assert "run the Step 4 contradiction pass again" in step_6
+    assert "candidate as a whole" in step_6
+    # The fix for a collision is to amend the surviving rule, not to layer a
+    # stricter one on top and hope it wins.
+    assert "amend or remove that rule" in step_6.lower()
+
+
+def test_skill_forbids_option_menus_at_intake():
+    """A maker offered a menu picks a category, and a category cannot be
+    anchored to a change — the run then produces generic hardening."""
+    skill = _SKILL_ROOT / "src" / "skills" / "instructions" / "harden" / "SKILL.md"
+    step_2 = (skill.read_text(encoding="utf-8")
+              .split("## Step 2:")[1].split("## Step 3:")[0])
+
+    assert "Do not offer numbered options" in step_2
+    assert "ask again" in step_2

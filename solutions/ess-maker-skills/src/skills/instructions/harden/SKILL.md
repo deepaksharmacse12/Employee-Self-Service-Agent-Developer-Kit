@@ -22,12 +22,22 @@ and `workspace/`. They are not relative to this file.
   actually found. A rewrite is unreviewable — the maker cannot tell an intended change from an incidental
   one — and it discards wording their organization may have chosen deliberately.
 - **Do not tighten just because you were invoked.** If the review finds nothing and the maker reports no
-  problem, say so and stop. Adding prohibitions "to be safe" causes the agent to refuse questions its
-  sources fully answer, which is a real regression traded for a hypothetical one.
+  problem, say so and propose nothing (you still finish with Step 10). Adding prohibitions "to be safe"
+  causes the agent to refuse questions its sources fully answer, which is a real regression traded for a
+  hypothetical one.
 - **Anchor every finding to a sentence** — see "Anchoring" below. Never attribute a problem to a sentence
   that did not cause it.
 - **Never propose a rule that blocks a supported action.** Establish what the agent supports (Step 5)
   before prohibiting anything.
+- **Ask questions in prose, not as menus.** When you are eliciting what the maker has seen or wants
+  (Step 2), never present numbered or lettered options to pick from. A picked option is a category, and
+  categories are not evidence — you cannot anchor a change to one. Ask the open question and wait for their
+  own words. Offering a choice between concrete alternatives you have already drafted (Step 8) is fine;
+  that is a decision, not an interview.
+- **Never end the run without Step 10.** Every path that reached the analysis — applied, declined, nothing
+  found — ends by pointing at `/test` and `/evaluate`. This skill reads text; it cannot show that the
+  agent's answers improved. The only exceptions are the Step 1 gates, where there is no agent or no
+  instructions to review and the maker is sent to `/setup` instead.
 - **Never apply changes without a checkpoint** (Step 9).
 - **Do not push.** This skill writes locally. Pushing is the maker's separate, explicit decision via `/push`.
 - **Run the analysis silently.** Steps 3–5 are internal. Do not narrate which files you are reading, what
@@ -44,6 +54,8 @@ Instruction blocks are usually a handful of enormous paragraphs — a single "li
 characters. Quoting a whole paragraph to justify a nine-word change produces a proposal no one can review.
 
 - **Anchor to the sentence**, not the physical line or the paragraph.
+- **A bullet, a heading, or a standalone fragment counts as one unit** even when it is not a grammatical
+  sentence. Split on what the maker would recognize as a single rule, not on punctuation.
 - **Quote only the sentence you are changing**, plus at most a few words either side if the change would
   otherwise be ambiguous.
 - **For a missing safeguard, do not pick a "guilty" sentence.** Say plainly that nothing in the
@@ -83,6 +95,10 @@ usually means the agent's instructions were never configured rather than that th
 Ask before analyzing. What the maker has observed is better evidence than anything derivable from the text,
 and it determines whether Step 6 proposes changes or only reports.
 
+**Ask in plain prose. Do not offer numbered options, lettered choices, or a menu to pick from.** The
+answer you need is the maker's own description of what went wrong; a menu invites them to pick a category
+instead, and a category tells you nothing you can anchor a change to. Ask this as a single open question:
+
 > Before I look at your instructions — have you seen specific answers from your agent that you didn't like?
 >
 > If you can paste one or two, that helps most: the exact question and what the agent said. Otherwise, tell
@@ -91,6 +107,12 @@ and it determines whether Step 6 proposes changes or only reports.
 >
 > If nothing specific has gone wrong, that's fine too — say so and I'll check the instructions for
 > contradictions and gaps and tell you what I find.
+
+**If the answer names a category rather than a behavior, you do not have an answer yet — ask again.**
+"General concerns", "the usual problems", "hallucination", or picking one of your own examples back are
+labels, not evidence. Follow up in prose — *"What has it been doing that concerns you?"* — and wait. Do
+not proceed to Step 3 on a label. A proposal built from a category is a proposal built from nothing, and
+it will read as generic hardening because that is what it is.
 
 Record their answer. Do not paraphrase a vague answer into a specific complaint — if they said "it makes
 things up sometimes" without an example, you have a **theme**, not a case, and Step 6 treats those
@@ -105,8 +127,12 @@ Keep the maker's original wording, spelling, and casing exactly — you will quo
 
 ## Step 4: Contradiction pass (always runs)
 
-Apply Part 1 of the reference guidance (`INSTR-001` … `INSTR-005`). This pass runs regardless of the
-maker's answer in Step 2.
+Apply Part 1 of the reference guidance (`INSTR-001` … `INSTR-005`) to the **current** instructions. This
+pass runs regardless of the maker's answer in Step 2, and it runs here — before any proposal exists — so
+that what you find describes the maker's text rather than your own.
+
+A second contradiction pass runs in Step 6 against the proposed text. Hardening adds prohibitions to a
+document that already has rules, which is precisely how contradictions get created.
 
 **Threshold.** Report a contradiction only when you can state a **concrete request** where the two rules
 demand different behavior and both cannot be satisfied. Tone guidance and grounding rules coexisting is not
@@ -164,15 +190,32 @@ observations with the risk each carries, and ask whether the maker wants any of 
 propose those changes pre-approved. Reporting risks and proposing nothing is a **legitimate and complete
 outcome** of this branch — it is not a failed run.
 
+**A theme is branch A, narrowly.** "It makes things up about benefits" or "it offers to do things it
+can't" names a behavior class without an example. Treat it as branch A but scope every change to that
+class, and say in Step 8 which findings you addressed because they match the theme and which you are only
+reporting. Without an example you cannot confirm the instructions caused it, so present the change as your
+best reading rather than a diagnosis.
+
 Worth saying to the maker if they push back: prohibitions have a cost. Each one makes the agent more likely
 to decline a question it could have answered, and without a reported problem there is nothing to weigh that
 cost against.
 
-**Before finalizing any proposal**, check it against Part 4 of the reference guidance (`INSTR-030` …
-`INSTR-033`):
+**Before finalizing any proposal**, run the Step 4 contradiction pass again — this time against the
+**candidate as a whole**: your new and amended sentences read together with every original sentence you are
+leaving in place. Use the same threshold. A new prohibition frequently collides with a rule that stays
+behind: "never offer a next step" against an existing "always end by offering further help", or "answer
+only from retrieved content" against an existing instruction to fall back on general knowledge.
+
+When the candidate contradicts a surviving rule, **amend or remove that rule as part of the same
+proposal**. Do not stack a stricter rule on top and rely on it winning — that is the failure this skill
+exists to catch, and you would be introducing it. Show the surviving rule you changed in Step 8 alongside
+the rest, so the maker approves that removal explicitly rather than discovering it later.
+
+Then check the proposal against Part 4 of the reference guidance (`INSTR-030` … `INSTR-033`):
 
 - every prohibition states what the agent should do instead;
-- the proposal as a whole includes a sentence stating the prohibitions restrict invention, not helpfulness;
+- the proposal as a whole includes a sentence stating the prohibitions restrict invention, not helpfulness
+  — this sentence is part of proposing safely and is required even in a narrowly scoped theme run;
 - nothing prohibits a capability the Step 5 inventory shows the agent has.
 
 **One caveat you cannot resolve alone:** you cannot see the knowledge sources. If a proposed rule would ban
@@ -242,9 +285,14 @@ Present, in this order:
 
 Then ask for approval. The maker may accept all, accept some, or decline. Apply exactly what they accept.
 
-If there is nothing to propose, say so directly and stop — do not manufacture a finding to justify the run.
-If you have risks but nothing to propose (branch B), present the risks, ask whether they want any addressed,
-and stop there; that is a complete outcome.
+If there is nothing to propose, say so directly — do not manufacture a finding to justify the run — and go
+to Step 10. If you have risks but nothing to propose (branch B), present the risks, ask whether they want
+any addressed, and go to Step 10; that is a complete outcome. Do not end the conversation here on any path.
+
+**If a branch-B maker asks for one of the reported risks to be addressed**, that risk becomes a reported
+problem. Return to Step 6 and draft a proposal for the risks they named and nothing else, re-run the
+candidate contradiction check and Step 7, and come back here to present it. Do not draft it in the same
+message you asked the question in — you would be pre-approving the change you just said you would not.
 
 ## Step 9: Apply
 
@@ -274,8 +322,14 @@ Re-run the budget check without `--candidate` to confirm the written file measur
 
 ## Step 10: Hand off to validation
 
+**This step always runs — after applying, after a decline, and after a run that proposed nothing.** It is
+the last thing the maker sees. Do not end the conversation on a diff, on "done", or on a summary of
+findings.
+
 Instruction changes are behavioral changes, and this skill has no way to demonstrate that the new text
-produces better answers. Say that plainly and route the maker onward:
+produces better answers. Say that plainly and route the maker onward.
+
+**If changes were applied:**
 
 > These changes aren't verified yet — instructions affect every answer, so it's worth checking the agent
 > still behaves the way you want.
@@ -290,6 +344,24 @@ evaluation rows available, and they are the only direct evidence of whether this
 
 Also mention, once, that a change intended to prevent a bad answer can also cause the agent to decline good
 questions — and that a few normal, in-scope questions are worth testing alongside the failing ones.
+
+**If the maker declined or deferred the proposal:**
+
+> Nothing has changed. If you want to see whether the behaviour I described actually shows up:
+>
+> - `/test` — try the agent directly
+> - `/evaluate` — build test cases so you have a baseline before changing anything
+
+**If nothing was proposed:**
+
+> I didn't find anything worth changing in the instructions. That doesn't mean the agent answers well —
+> instructions are only one input, and knowledge sources and topics matter at least as much.
+>
+> - `/test` — try the agent directly
+> - `/evaluate` — build a test set, which will find behaviour problems this review cannot see
+
+Reading the instructions cannot tell you what the agent actually says. Do not let a clean review stand as
+evidence that the agent is fine.
 
 ## References
 
