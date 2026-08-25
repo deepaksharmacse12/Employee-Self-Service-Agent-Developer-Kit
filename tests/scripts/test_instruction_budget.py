@@ -308,6 +308,14 @@ def test_skill_states_changes_are_local_until_push():
     step_10 = skill_text.split("## Step 10:")[1].split("## References")[0]
     assert "as deployed" in step_10
     assert "does not exercise system instructions" in step_10
+    # That explanation is routing logic for the model. A real run leaked it to
+    # the maker, who was told what /test is not for instead of a next step.
+    assert "Internal — do not say any of this to the maker." in step_10
+    applied = step_10.split("**If changes were applied:**")[1].split("**If the maker declined")[0]
+    maker_facing = "\n".join(
+        ln for ln in applied.splitlines() if ln.lstrip().startswith(">")
+    )
+    assert "/test" not in maker_facing
 
 
 def test_skill_requires_live_progress_tracking():

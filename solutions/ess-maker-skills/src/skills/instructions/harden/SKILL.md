@@ -46,6 +46,9 @@ and `workspace/`. They are not relative to this file.
 - **Speak the maker's language.** Never show `INSTR-*` ids, the filenames of this skill's own reference
   material, or the words "detector", "rule pack", or "probe". Describe findings in plain language. The
   maker's own instruction wording is *their* language and is shown verbatim.
+- **Recommend, don't disqualify.** Name the command that fits and stop. Do not tell the maker which
+  commands are *not* right for their situation, or why — that is this skill's routing logic, not their
+  next step, and it reads as hedging.
 - **TRACK PROGRESS**: Use the todo list tool to track your progress through this skill's steps. Create a
   todo list at the start with all the steps, mark each in-progress as you start it, and mark completed when
   done. Update it as you go rather than at the end — several steps here wait on the maker's reply, and a
@@ -340,12 +343,13 @@ findings.
 Instruction changes are behavioral changes, and this skill has no way to demonstrate that the new text
 produces better answers. Say that plainly and route the maker onward.
 
-**Know what the two commands actually do before you route someone to them.** `/evaluate` *authors*
-evaluation cases; the CSVs land in `workspace/tests/{date}/` and are uploaded to the Copilot Studio
-Evaluation portal, which runs them against the agent **as deployed**. `/test` drives a **topic or a
-workflow** to debug its runtime behavior — it does not exercise system instructions, so it is not the way
-to check an instruction change. Neither command reads the local `agent.mcs.yml`, which means an instruction
-change has to be pushed before any of this can observe it.
+**Internal — do not say any of this to the maker.** `/evaluate` *authors* evaluation cases; the CSVs land
+in `workspace/tests/{date}/` and are uploaded to the Copilot Studio Evaluation portal, which runs them
+against the agent **as deployed**. `/test` drives a **topic or a workflow** to debug its runtime behavior;
+it does not exercise system instructions, so it is not the way to check an instruction change. Neither
+command reads the local `agent.mcs.yml`, which is why the push comes first. Use this to route correctly —
+name only the command you are recommending. A maker who is told which commands *not* to use has been handed
+your reasoning instead of a next step.
 
 **If changes were applied:**
 
