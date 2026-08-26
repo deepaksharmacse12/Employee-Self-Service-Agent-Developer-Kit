@@ -551,20 +551,52 @@ def test_report_client_events_rejects_empty_and_oversized_batches(captured_post)
     assert captured_post == []
 
 
-def test_report_client_events_rejects_invalid_identifiers(captured_post):
+_IDENTIFIER_FIELDS = {
+    "correlationId": ("corr-", "invalid_correlation_id"),
+    "mountId": ("mount-", "invalid_mount_id"),
+    "toolCallId": ("tool-", "invalid_tool_call_id"),
+}
+
+
+@pytest.mark.parametrize("field", list(_IDENTIFIER_FIELDS))
+def test_each_identifier_field_reports_its_own_rejection_reason(field, captured_post):
+    """A rejection must name the field that actually failed.
+
+    Sharing ``invalid_correlation_id`` across all three misattributes the
+    failure on any Vorpal-side dashboard or alert that buckets by
+    ``rejectedReason`` — a broken ``mountId`` would be triaged as a correlation
+    problem.
+    """
+    _prefix, expected_reason = _IDENTIFIER_FIELDS[field]
+
     result = adk.report_client_events(
-        _client_events_envelope(correlationId="request-123"),
+        _client_events_envelope(**{field: "not-the-right-prefix"}),
         block=True,
     )
 
-    assert result["rejectedReason"] == "invalid_correlation_id"
+    assert result["rejectedReason"] == expected_reason
     assert captured_post == []
 
 
-@pytest.mark.parametrize(
-    "field",
-    ["correlationId", "mountId", "toolCallId"],
-)
+def test_identifier_rejection_reasons_are_distinct():
+    # The whole point of the split: three fields, three reasons.
+    reasons = {reason for _prefix, reason in _IDENTIFIER_FIELDS.values()}
+    assert len(reasons) == 3
+    assert reasons <= adk._CLIENT_EVENTS_REJECTED_REASONS
+
+
+def test_rejection_reasons_survive_the_bounded_value_list_guard():
+    # _rejection() coerces anything outside _CLIENT_EVENTS_REJECTED_REASONS to
+    # invalid_event_shape, so a new reason that was not registered there would
+    # be silently swallowed rather than reported.
+    for reason in (
+        adk.CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID,
+        adk.CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID,
+    ):
+        assert adk._rejection(reason)["rejectedReason"] == reason
+
+
+@pytest.mark.parametrize("field", list(_IDENTIFIER_FIELDS))
 @pytest.mark.parametrize(
     "payload",
     [
@@ -588,14 +620,14 @@ def test_correlation_identifiers_are_not_a_free_text_tunnel(field, payload, capt
     id would silently stop stitching a mount's events together, which is worse
     than refusing the batch outright.
     """
-    prefix = {"correlationId": "corr-", "mountId": "mount-", "toolCallId": "tool-"}[field]
+    prefix, expected_reason = _IDENTIFIER_FIELDS[field]
 
     result = adk.report_client_events(
         _client_events_envelope(**{field: f"{prefix}{payload}"}),
         block=True,
     )
 
-    assert result["rejectedReason"] == "invalid_correlation_id"
+    assert result["rejectedReason"] == expected_reason
     assert captured_post == []
 
 

@@ -98,6 +98,17 @@ CLIENT_EVENTS_MAX_ARRAY_LENGTH = 10
 
 CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION = "unsupported_schema_version"
 CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID = "invalid_correlation_id"
+# Per-field reasons for the other two ephemeral identifiers. Reusing
+# ``invalid_correlation_id`` for these misattributes the failure on any
+# Vorpal-side dashboard or alert that buckets by ``rejectedReason``.
+#
+# These extend Vorpal's bounded ``BridgeRejectedReason`` union, so until the
+# matching Vorpal change ships its client maps them to ``unrecognized_reason``.
+# That degrades safely: ``getTelemetryBridgeOutcome`` still classifies an
+# unrecognized reason as a REJECTION, so the batch is dropped rather than
+# retried, exactly as before.
+CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID = "invalid_mount_id"
+CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID = "invalid_tool_call_id"
 CLIENT_EVENTS_REJECTED_EMPTY_BATCH = "empty_batch"
 CLIENT_EVENTS_REJECTED_BATCH_TOO_LARGE = "batch_too_large"
 CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE = "invalid_event_shape"
@@ -107,6 +118,8 @@ _CLIENT_EVENTS_REJECTED_REASONS = frozenset(
     {
         CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION,
         CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID,
+        CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID,
+        CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID,
         CLIENT_EVENTS_REJECTED_EMPTY_BATCH,
         CLIENT_EVENTS_REJECTED_BATCH_TOO_LARGE,
         CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE,
@@ -748,7 +761,7 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
     if not _valid_client_identifier(envelope.get("correlationId"), "corr-"):
         return CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID, []
     if not _valid_client_identifier(envelope.get("mountId"), "mount-"):
-        return CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID, []
+        return CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID, []
     if not _valid_bounded_string(envelope.get("appName")):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     if not _valid_bounded_string(envelope.get("buildEnvironment")):
@@ -757,7 +770,7 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     tool_call_id = envelope.get("toolCallId")
     if tool_call_id is not None and not _valid_client_identifier(tool_call_id, "tool-"):
-        return CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID, []
+        return CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID, []
 
     events = envelope.get("events")
     if not isinstance(events, list) or not events:
