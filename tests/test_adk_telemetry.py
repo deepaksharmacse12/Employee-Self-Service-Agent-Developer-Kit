@@ -562,6 +562,98 @@ def test_report_client_events_rejects_invalid_identifiers(captured_post):
 
 
 @pytest.mark.parametrize(
+    "field",
+    ["correlationId", "mountId", "toolCallId"],
+)
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "jdoe@contoso.com",
+        "C:\\Users\\jdoe\\secret.docx",
+        "https://contoso.sharepoint.com/x",
+        "6f7c8f9c-1234-4abc-9def-0123456789ab is the object id",
+        "a b c",  # a space is enough to turn the field into free text
+        "x" * 65,  # bounded well below the 200-char string cap
+    ],
+)
+def test_correlation_identifiers_are_not_a_free_text_tunnel(field, payload, captured_post):
+    """The ephemeral ids are emitted verbatim, so they must be identifier-shaped.
+
+    A prefix + length check alone would leave ~195 characters of arbitrary UTF-8
+    per field free to smuggle UPNs, paths, URLs and object ids into Aria. The
+    pre-existing negative test used ``"request-123"``, which failed on the
+    PREFIX rather than the content, so it never exercised this.
+
+    These are rejected rather than scrubbed on purpose: a redacted correlation
+    id would silently stop stitching a mount's events together, which is worse
+    than refusing the batch outright.
+    """
+    prefix = {"correlationId": "corr-", "mountId": "mount-", "toolCallId": "tool-"}[field]
+
+    result = adk.report_client_events(
+        _client_events_envelope(**{field: f"{prefix}{payload}"}),
+        block=True,
+    )
+
+    assert result["rejectedReason"] == "invalid_correlation_id"
+    assert captured_post == []
+
+
+def test_well_formed_correlation_identifiers_are_accepted(captured_post, monkeypatch):
+    # The charset gate must not reject the shapes Vorpal actually mints, incl.
+    # UUID-style suffixes and the dot/underscore/dash characters it allows.
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            correlationId="corr-6f7c8f9c-1234-4abc-9def-0123456789ab",
+            mountId="mount-1a2b_3c.4d",
+            toolCallId="tool-Call.42",
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    data = captured_post[0][1][0]["data"]
+    assert data["client_correlation_id"] == "corr-6f7c8f9c-1234-4abc-9def-0123456789ab"
+    assert data["client_mount_id"] == "mount-1a2b_3c.4d"
+    assert data["client_tool_call_id"] == "tool-Call.42"
+
+
+def test_report_client_events_rejects_non_ascii_event_names(captured_post):
+    # Correctly rejected by the event-name regex today, but previously unasserted.
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[{"eventName": "Widget\U0001f600Ready", "timeSinceAppStart": 1}]
+        ),
+        block=True,
+    )
+
+    assert result["rejectedReason"] == "invalid_event_shape"
+    assert captured_post == []
+
+
+def test_report_client_events_rejects_oversized_property_strings(captured_post):
+    # Per-string length is enforced by _valid_property_value; pin it so the
+    # 64KB envelope cap is not the only thing bounding a single value.
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {
+                    "eventName": "BigProp",
+                    "timeSinceAppStart": 1,
+                    "properties": {"blob": "x" * (adk.CLIENT_EVENTS_MAX_STRING_LENGTH + 1)},
+                }
+            ]
+        ),
+        block=True,
+    )
+
+    assert result["rejectedReason"] == "invalid_property_type"
+    assert captured_post == []
+
+
+@pytest.mark.parametrize(
     ("event", "reason"),
     [
         ({"eventName": "", "timeSinceAppStart": 1}, "invalid_event_shape"),
@@ -688,6 +780,46 @@ def test_client_events_batch_cap_matches_vorpal_batcher():
     # so this cap must stay >= the Vorpal-side batch maximum or a full batch is
     # silently and permanently dropped.
     assert adk.CLIENT_EVENTS_MAX_BATCH_EVENTS == 25
+
+
+def test_fail_open_echo_is_bounded_by_the_batch_cap(monkeypatch, captured_post):
+    """A fail-open acknowledgement must never echo an unbounded count.
+
+    On the normal path an oversized batch is rejected with ``batch_too_large``,
+    so the echo is already bounded. This path runs when validation ITSELF
+    faults, before the cap has been applied — without clamping, a caller could
+    hand over 100k events and be told all 100k were accepted, even though
+    nothing was emitted.
+    """
+    def _boom(_envelope):
+        raise RecursionError("validator blew up")
+
+    monkeypatch.setattr(adk, "_serialized_size", _boom)
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[{"eventName": "E", "timeSinceAppStart": 1} for _ in range(100_000)]
+        ),
+        block=True,
+    )
+
+    assert result["status"] == "accepted"
+    assert result["acceptedEventCount"] == adk.CLIENT_EVENTS_MAX_BATCH_EVENTS
+    assert captured_post == []
+
+
+def test_oversized_batch_is_rejected_on_the_normal_path(captured_post):
+    # Companion to the test above: with the validator healthy, the same batch
+    # is refused outright rather than fail-open acknowledged.
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[{"eventName": "E", "timeSinceAppStart": 1} for _ in range(100)]
+        ),
+        block=True,
+    )
+
+    assert result["rejectedReason"] == "batch_too_large"
+    assert captured_post == []
 
 
 # --- capability taxonomy + normalization ----------------------------------

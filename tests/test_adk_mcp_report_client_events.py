@@ -183,3 +183,31 @@ def test_tool_fails_open_when_the_telemetry_bridge_raises(monkeypatch):
 
     assert result.structuredContent == {"status": "accepted", "acceptedEventCount": 1}
     assert result.isError is False
+
+
+def test_tool_fail_open_echo_is_bounded_by_the_batch_cap(monkeypatch):
+    """The wrapper's own fail-open echo must be clamped too.
+
+    `_meta.ui.visibility: ["app"]` is advisory, so if a host does not filter
+    this tool from the model-visible list, a misbehaving caller could hand over
+    an arbitrarily large `events` list. Nothing is emitted on this path, but an
+    unclamped count would still report every one of them as accepted.
+    """
+    server = _load_adk_server()
+
+    def _boom(envelope):
+        raise OSError("state dir gone")
+
+    monkeypatch.setattr(server.adk_telemetry, "report_client_events", _boom)
+
+    args = {
+        **_valid_tool_args(),
+        "events": [{"eventName": "E", "timeSinceAppStart": 1} for _ in range(100_000)],
+    }
+    result = asyncio.run(server.report_client_events(**args))
+
+    assert result.structuredContent == {
+        "status": "accepted",
+        "acceptedEventCount": server.adk_telemetry.CLIENT_EVENTS_MAX_BATCH_EVENTS,
+    }
+    assert result.isError is False

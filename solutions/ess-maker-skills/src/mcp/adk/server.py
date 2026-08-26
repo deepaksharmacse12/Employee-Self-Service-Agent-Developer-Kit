@@ -568,9 +568,16 @@ async def report_client_events(
     try:
         result = adk_telemetry.report_client_events(envelope)
     except Exception:  # noqa: BLE001 — telemetry must never break the widget
+        # Echo the sent cardinality (Vorpal retries a partial acknowledgement),
+        # but capped: this path runs when the bridge itself faulted, so the
+        # validator's batch limit has not necessarily been applied.
         result = {
             "status": "accepted",
-            "acceptedEventCount": len(events) if isinstance(events, list) else 0,
+            "acceptedEventCount": (
+                min(len(events), adk_telemetry.CLIENT_EVENTS_MAX_BATCH_EVENTS)
+                if isinstance(events, list)
+                else 0
+            ),
         }
 
     message = (

@@ -119,6 +119,12 @@ _CLIENT_EVENTS_PROPERTY_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 # a free-text channel: it is emitted verbatim as a dimension, so a sentence
 # carrying customer content would ride straight into Aria.
 _CLIENT_EVENTS_EVENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+# The ephemeral correlation identifiers are emitted as dimensions, so a bounded
+# length alone would leave ~195 characters of arbitrary UTF-8 per field free to
+# smuggle UPNs, paths, URLs or object ids into Aria. Requiring an
+# identifier-shaped suffix rejects that outright rather than silently redacting
+# it, which is the posture the bridge claims: no free-text tunnel.
+_CLIENT_EVENTS_IDENTIFIER_SUFFIX_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _CLIENT_EVENTS_ENVELOPE_KEYS = frozenset(
     {
         "schemaVersion",
@@ -655,7 +661,18 @@ def _valid_bounded_string(value: Any, *, allow_empty: bool = False) -> bool:
 
 
 def _valid_client_identifier(value: Any, prefix: str) -> bool:
-    return _valid_bounded_string(value) and value.startswith(prefix)
+    """True when ``value`` is ``<prefix><identifier-shaped suffix>``.
+
+    The prefix keeps the three ephemeral correlation ids distinguishable (Vorpal
+    mints them as ``corr-`` / ``mount-`` / ``tool-``); the suffix charset is what
+    stops the field being a free-text channel. These ids are emitted verbatim as
+    dimensions, so anything that is not identifier-shaped is rejected rather
+    than scrubbed — a redacted correlation id would silently stop stitching
+    events together, which is worse than refusing the batch.
+    """
+    if not _valid_bounded_string(value) or not value.startswith(prefix):
+        return False
+    return bool(_CLIENT_EVENTS_IDENTIFIER_SUFFIX_RE.match(value[len(prefix):]))
 
 
 def _valid_property_value(value: Any) -> bool:
@@ -819,14 +836,18 @@ def report_client_events(envelope: dict[str, Any], *, block: bool = False) -> di
 
 
 def _client_events_batch_size(envelope: Any) -> int:
-    """Best-effort count of the events a caller sent.
+    """Best-effort count of the events a caller sent, capped at the batch max.
 
     Vorpal treats an acknowledgement that doesn't account for the whole batch as
     unreadable and retries it, so a fail-open acceptance must echo the sent
-    cardinality rather than zero.
+    cardinality rather than zero. The cap is defense-in-depth: the validator
+    already refuses anything above the maximum, but this path runs when
+    validation itself faulted, so the echo would otherwise be unbounded.
     """
     events = envelope.get("events") if isinstance(envelope, dict) else None
-    return len(events) if isinstance(events, list) else 0
+    if not isinstance(events, list):
+        return 0
+    return min(len(events), CLIENT_EVENTS_MAX_BATCH_EVENTS)
 
 
 def flush(timeout: float = 5.0) -> None:
