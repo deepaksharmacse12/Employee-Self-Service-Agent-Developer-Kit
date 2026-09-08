@@ -1089,8 +1089,8 @@ def test_oversized_properties_are_shed_until_the_blob_fits():
     No single value can overflow the blob on its own, since each is scrubbed to
     ``CLIENT_EVENTS_MAX_STRING_LENGTH`` first. The cap binds on property COUNT,
     which is exactly why it matters once the arbitrary <=25 properties limit is
-    gone: the backstop becomes Aria's field limit rather than a self-imposed
-    contract that killed the batch.
+    gone: overflow now sheds the widest properties instead of killing the whole
+    batch.
     """
     properties = {f"k{i}": "x" * 200 for i in range(60)}
 

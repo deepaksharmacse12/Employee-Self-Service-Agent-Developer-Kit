@@ -94,9 +94,11 @@ EVENT_CLIENT = "adk.client.event"
 
 CLIENT_EVENTS_SCHEMA_VERSION = 1
 # An out-of-memory guard, not a contract. This used to be exactly Vorpal's
-# ``TELEMETRY_MAX_BATCH_SIZE``, which meant raising the cap on the JavaScript
-# side would have killed every batch here until an ADK release shipped. A high
-# guard keeps ``batch_too_large`` meaningful without coupling the two.
+# ``TELEMETRY_MAX_BATCH_SIZE`` (confirmed at 25), which meant raising the cap on
+# the JavaScript side would have killed every batch here until an ADK release
+# shipped. A high guard keeps ``batch_too_large`` meaningful without coupling
+# the two: 1000 is ~40x the client's actual batcher max, so it cannot reject a
+# well-behaved batch in either direction.
 CLIENT_EVENTS_MAX_BATCH_EVENTS = 1000
 CLIENT_EVENTS_MAX_STRING_LENGTH = 200
 # Property keys become field names inside the JSON blob, so a single key must
@@ -104,15 +106,21 @@ CLIENT_EVENTS_MAX_STRING_LENGTH = 200
 # charset rule that used to reject the batch was protecting an Aria column-name
 # axis that no longer exists now that properties are one serialized value.
 CLIENT_EVENTS_MAX_PROPERTY_KEY_LENGTH = 64
-# Cap on the serialized ``client_properties`` blob. This is the one size limit
-# with a real backstop behind it — Aria's per-field string limit — rather than
-# a self-imposed contract. Properties are SHED until the blob fits, never
-# truncated: a truncated JSON string is unparseable by ``parse_json`` on the
-# KQL side, which would lose every property instead of the overflow.
+# Cap on the serialized ``client_properties`` blob. Properties are SHED until
+# the blob fits, never truncated: a truncated JSON string is unparseable by
+# ``parse_json`` on the KQL side, which would lose every property instead of
+# the overflow.
 #
-# PROVISIONAL: 8 KB is a conservative placeholder. The exact Aria limit is the
-# open question at the end of the PR #248 review; only this number changes when
-# it is confirmed.
+# This is a self-imposed budget. Aria documents no per-field string limit
+# (https://www.aria.ms/developers/deep-dives/service-limits); the only
+# ingestion ceiling is 2.5 MB uncompressed for a whole event, which one blob
+# cannot realistically approach. 8 KB is therefore a deliberate conservative
+# budget rather than a number derived from the backstop.
+#
+# Batch-level size is bounded in practice, not by this constant: Vorpal's
+# ``TELEMETRY_MAX_BATCH_SIZE`` is 25, so a real request carries at most ~200 KB
+# of blobs — far under the ~3.15 MB request ceiling the 1DS client enforces,
+# even though ``_emit_many_sync`` POSTs the whole batch unsplit.
 CLIENT_EVENTS_MAX_PROPERTIES_BYTES = 8 * 1024
 
 CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION = "unsupported_schema_version"
