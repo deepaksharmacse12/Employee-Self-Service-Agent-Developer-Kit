@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,22 +13,72 @@ import pytest
 
 pytestmark = pytest.mark.filterwarnings("ignore:Field 'lifespan'.*")
 
+_MCP_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "solutions"
+    / "ess-maker-skills"
+    / "src"
+    / "mcp"
+)
+
+
+def _load_server(folder: str, alias: str):
+    """Import one of the kit's MCP servers by folder name.
+
+    Each server does a sibling-relative ``sys.path.insert`` for ``client`` /
+    ``auth``, so its own directory has to be importable while it executes.
+    """
+    server_path = _MCP_ROOT / folder / "server.py"
+    sys.path.insert(0, str(_MCP_ROOT / folder))
+    try:
+        spec = importlib.util.spec_from_file_location(alias, server_path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.pop(0)
+
 
 def _load_adk_server():
-    server_path = (
-        Path(__file__).resolve().parents[1]
-        / "solutions"
-        / "ess-maker-skills"
-        / "src"
-        / "mcp"
-        / "adk"
-        / "server.py"
-    )
-    spec = importlib.util.spec_from_file_location("adk_mcp_server_under_test", server_path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """The server that hosts the bridge — i.e. the one serving widget resources.
+
+    The bridge moved from the `adk` server to `agentconfig`: MCP Apps only lets
+    a widget call tools on the SAME server connection it was loaded from, and
+    the widget resources live on `agentconfig`.
+    """
+    return _load_server("agentconfig", "agentconfig_mcp_server_under_test")
+
+
+def test_bridge_is_colocated_with_the_widget_resources():
+    """The bridge must live on whichever server serves the widgets.
+
+    This is the invariant whose absence shipped a silently-broken bridge: the
+    tool was registered on the `adk` server while the widgets were served from
+    `agentconfig`, so every widget call failed with
+
+        Tool not found on server: report_client_events
+
+    and the Vorpal queue swallowed it by design, so no telemetry arrived and
+    nothing surfaced an error. Every test passed, because they all called the
+    `adk` server directly and never crossed the connection boundary the widget
+    actually uses.
+    """
+    agentconfig = _load_server("agentconfig", "agentconfig_colocation_check")
+    adk = _load_server("adk", "adk_colocation_check")
+
+    def has_widgets(mod) -> bool:
+        return any(
+            str(getattr(t, "uri", "")).startswith("ui://widget/")
+            for t in mod.mcp._resource_manager._resources.values()
+        )
+
+    def has_bridge(mod) -> bool:
+        return "report_client_events" in mod.mcp._tool_manager._tools
+
+    # The server with widgets has the bridge; the one without must not.
+    assert has_widgets(agentconfig) and has_bridge(agentconfig)
+    assert not has_widgets(adk) and not has_bridge(adk)
 
 
 def test_report_client_events_tool_is_app_only():
@@ -35,6 +86,8 @@ def test_report_client_events_tool_is_app_only():
 
     tool = server.mcp._tool_manager._tools["report_client_events"]
 
+    # ["app"] only — NOT ["model", "app"] like update_agent_config, so the host
+    # keeps the bridge out of the model-visible tool list.
     assert tool.meta == {"ui": {"visibility": ["app"]}}
     assert tool.annotations.readOnlyHint is False
     assert tool.annotations.destructiveHint is False

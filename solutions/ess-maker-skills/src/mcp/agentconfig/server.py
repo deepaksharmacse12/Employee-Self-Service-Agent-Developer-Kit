@@ -10,6 +10,7 @@ import binascii
 import html
 import json
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -19,6 +20,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 
 from client import AgentConfigApiError, AgentConfigClient
+
+# Allow importing the telemetry SDK from scripts/ when the server is launched
+# directly. The client-event bridge has to live on THIS server: MCP Apps only
+# lets a widget call tools on the same server connection it was loaded from,
+# and the widget resources below are served from here.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
+
+import adk_telemetry  # type: ignore  # noqa: E402  # pylint: disable=import-error
 
 
 DEFAULT_WIDGET_ORIGIN = "https://workforceinsights.m365.cloud.microsoft"
@@ -46,6 +55,12 @@ _DELETE_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=True,
     idempotentHint=True,
+    openWorldHint=False,
+)
+_REPORT_CLIENT_EVENTS_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
     openWorldHint=False,
 )
 
@@ -87,6 +102,15 @@ def _widget_tool_meta(resource_uri: str) -> dict[str, Any]:
 
 def _app_tool_meta() -> dict[str, Any]:
     return {"ui": {"visibility": ["model", "app"]}}
+
+
+def _app_only_tool_meta() -> dict[str, Any]:
+    """Callable by a widget on this connection, hidden from the model.
+
+    Distinct from ``_app_tool_meta``: the telemetry bridge must NOT appear in
+    the model-visible tool list, so it omits ``"model"``.
+    """
+    return {"ui": {"visibility": ["app"]}}
 
 
 def _widget_resource_meta() -> dict[str, Any]:
@@ -377,6 +401,67 @@ async def open_starter_prompts(titleId: str) -> CallToolResult:
     return await _open_widget(
         lambda: get_client().open_starter_prompts(titleId),
         success_message="Opened the starter-prompts editor.",
+    )
+
+
+@mcp.tool(
+    meta=_app_only_tool_meta(),
+    annotations=_REPORT_CLIENT_EVENTS_ANNOTATIONS,
+)
+async def report_client_events(
+    schemaVersion: Any = None,
+    correlationId: Any = None,
+    mountId: Any = None,
+    appName: Any = None,
+    buildEnvironment: Any = None,
+    buildNumber: Any = None,
+    events: Any = None,
+    toolCallId: Any = None,
+) -> CallToolResult:
+    """Accept Vorpal client telemetry batches through the app-only bridge.
+
+    This lives on the landing-page server rather than the ADK automation server
+    because MCP Apps only lets a widget call tools on the SAME server
+    connection it was loaded from, and the widget resources are served here.
+    Hosting it elsewhere makes every call fail with "Tool not found on server",
+    which the Vorpal queue swallows by design — so the telemetry simply never
+    arrives, with no error surfaced anywhere.
+
+    Every parameter is deliberately untyped: FastMCP validates the tool
+    signature with Pydantic *before* the body runs, so a narrowly-typed
+    signature would turn an out-of-contract envelope into a ToolError carrying
+    no ``structuredContent``. Vorpal reads a result without a ``status`` as a
+    transient failure and retries it, so a permanently malformed batch would
+    retry forever. Widening the signature routes every envelope through the
+    bridge validator, which always answers with an explicit accepted/rejected
+    verdict.
+    """
+    envelope: dict[str, Any] = {
+        "schemaVersion": schemaVersion,
+        "correlationId": correlationId,
+        "mountId": mountId,
+        "appName": appName,
+        "buildEnvironment": buildEnvironment,
+        "buildNumber": buildNumber,
+        "events": events,
+    }
+    if toolCallId is not None:
+        envelope["toolCallId"] = toolCallId
+
+    # ``adk_telemetry.report_client_events`` is already total: it catches every
+    # exception internally and answers with a contract-shaped verdict, so a
+    # second guard here would only ever shadow a bug in that contract.
+    result = adk_telemetry.report_client_events(envelope)
+
+    message = (
+        f"Accepted {result['acceptedEventCount']} client telemetry event(s)."
+        if result.get("status") == "accepted"
+        else "Rejected the client telemetry batch."
+    )
+    return CallToolResult(
+        content=[TextContent(type="text", text=message)],
+        structuredContent=result,
+        isError=result.get("status") == "rejected",
     )
 
 
