@@ -43,11 +43,11 @@ def _load_server(folder: str, alias: str):
 def _load_adk_server():
     """The server that hosts the bridge — i.e. the one serving widget resources.
 
-    The bridge moved from the `adk` server to `agentconfig`: MCP Apps only lets
-    a widget call tools on the SAME server connection it was loaded from, and
-    the widget resources live on `agentconfig`.
+    The bridge moved off the `adk` automation server: MCP Apps only lets a
+    widget call tools on the SAME server connection it was loaded from, and the
+    widget resources live on the landing-page server.
     """
-    return _load_server("agentconfig", "agentconfig_mcp_server_under_test")
+    return _load_server("agentconfig_landing_page", "landing_page_mcp_server_under_test")
 
 
 def test_bridge_is_colocated_with_the_widget_resources():
@@ -64,7 +64,7 @@ def test_bridge_is_colocated_with_the_widget_resources():
     `adk` server directly and never crossed the connection boundary the widget
     actually uses.
     """
-    agentconfig = _load_server("agentconfig", "agentconfig_colocation_check")
+    agentconfig = _load_server("agentconfig_landing_page", "landing_page_colocation_check")
     adk = _load_server("adk", "adk_colocation_check")
 
     def has_widgets(mod) -> bool:
