@@ -561,7 +561,6 @@ def test_report_client_events_rejects_empty_and_oversized_batches(captured_post)
 _IDENTIFIER_FIELDS = {
     "correlationId": "invalid_correlation_id",
     "mountId": "invalid_mount_id",
-    "toolCallId": "invalid_tool_call_id",
 }
 
 
@@ -588,9 +587,10 @@ def test_each_identifier_field_reports_its_own_rejection_reason(field, captured_
 
 
 def test_identifier_rejection_reasons_are_distinct():
-    # The whole point of the split: three fields, three reasons.
+    # Two stitching-critical fields, two reasons. ``toolCallId`` is deliberately
+    # absent: it is omitted rather than rejected, so it has no reason at all.
     reasons = set(_IDENTIFIER_FIELDS.values())
-    assert len(reasons) == 3
+    assert len(reasons) == 2
     assert reasons <= adk._CLIENT_EVENTS_REJECTED_REASONS
 
 
@@ -598,11 +598,24 @@ def test_rejection_reasons_survive_the_bounded_value_list_guard():
     # _rejection() coerces anything outside _CLIENT_EVENTS_REJECTED_REASONS to
     # invalid_event_shape, so a new reason that was not registered there would
     # be silently swallowed rather than reported.
-    for reason in (
-        adk.CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID,
-        adk.CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID,
-    ):
-        assert adk._rejection(reason)["rejectedReason"] == reason
+    assert (
+        adk._rejection(adk.CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID)["rejectedReason"]
+        == adk.CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID
+    )
+
+
+def test_retired_reasons_are_gone_from_the_value_list():
+    """``invalid_property_type`` and ``invalid_tool_call_id`` are unreachable now.
+
+    Property faults degrade the property and tool-call-id faults omit the
+    field, so neither can be reported. Leaving them in the value list would
+    keep two dead members in Vorpal's ``BridgeRejectedReason`` union that no
+    ADK version can ever emit.
+    """
+    assert "invalid_property_type" not in adk._CLIENT_EVENTS_REJECTED_REASONS
+    assert "invalid_tool_call_id" not in adk._CLIENT_EVENTS_REJECTED_REASONS
+    assert not hasattr(adk, "CLIENT_EVENTS_REJECTED_INVALID_PROPERTY_TYPE")
+    assert not hasattr(adk, "CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID")
 
 
 @pytest.mark.parametrize("field", list(_IDENTIFIER_FIELDS))
@@ -822,8 +835,8 @@ def test_non_identifier_property_keys_are_kept_but_length_bounded():
     ("event", "reason"),
     [
         ({"eventName": "", "timeSinceAppStart": 1}, "invalid_event_shape"),
-        ({"eventName": "BadTime", "timeSinceAppStart": float("nan")}, "invalid_event_shape"),
-        ({"eventName": "BadProperty", "timeSinceAppStart": 1, "properties": {"x": {"nested": True}}}, "invalid_property_type"),
+        ({"eventName": 123, "timeSinceAppStart": 1}, "invalid_event_shape"),
+        ({"eventName": "BadLocale", "timeSinceAppStart": 1, "locale": 5}, "invalid_event_shape"),
     ],
 )
 def test_report_client_events_rejects_out_of_contract_events(event, reason, captured_post):
@@ -834,6 +847,100 @@ def test_report_client_events_rejects_out_of_contract_events(event, reason, capt
 
     assert result["rejectedReason"] == reason
     assert captured_post == []
+
+
+def test_non_finite_timing_degrades_to_a_sentinel(captured_post, monkeypatch):
+    """One unusable timing costs one column on one row, not the batch.
+
+    ``-1`` is unambiguous because ``performance.now()`` is non-negative, and
+    ``0`` has to stay a real value — a bootloader event legitimately fires at
+    time zero, so it cannot double as the failure marker.
+    """
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {"eventName": "NaNTime", "timeSinceAppStart": float("nan")},
+                {"eventName": "MissingTime"},
+                {"eventName": "StringTime", "timeSinceAppStart": "12"},
+                {"eventName": "ZeroTime", "timeSinceAppStart": 0},
+            ]
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 4}
+    times = [e["data"]["client_time_since_app_start_ms"] for e in captured_post[0][1]]
+    assert times == [-1, -1, -1, 0]
+
+
+def test_malformed_property_bag_costs_the_bag_not_the_event(captured_post, monkeypatch):
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {"eventName": "ListBag", "timeSinceAppStart": 1, "properties": ["not", "a", "dict"]},
+                {
+                    "eventName": "MixedBag",
+                    "timeSinceAppStart": 2,
+                    "properties": {"keep": "yes", "nested": {"a": 1}, "nan": float("inf")},
+                },
+            ]
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    first, second = (e["data"] for e in captured_post[0][1])
+    assert json.loads(first["client_properties"]) == {}
+    # A dropped bag stays distinguishable from an event that had no properties.
+    assert first["client_prop_dropped_count"] == 1
+    assert json.loads(second["client_properties"]) == {"keep": "yes"}
+    assert second["client_prop_dropped_count"] == 2
+
+
+def test_bad_tool_call_id_omits_the_field_and_keeps_the_batch(captured_post, monkeypatch):
+    """The HOST mints ``toolCallId``, so ADK has no authority over its format.
+
+    An id containing ``:`` or ``/`` would have killed every batch. Unlike
+    ``correlationId``/``mountId`` it is supplementary rather than what stitches
+    a mount together, so the field is dropped and the events survive.
+    """
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(toolCallId="tool/call:42"),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    data = captured_post[0][1][0]["data"]
+    assert "client_tool_call_id" not in data
+    # The fields that DO stitch a mount together are still rejected, not omitted.
+    assert data["client_correlation_id"] == "corr-test"
+
+
+def test_client_level_is_accepted_and_emitted(captured_post, monkeypatch):
+    # Vorpal already computes an info/error level and discards it, so accepting
+    # it now means it can start sending without another ADK release.
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {"eventName": "E", "timeSinceAppStart": 1, "level": "error"},
+                {"eventName": "F", "timeSinceAppStart": 2},
+            ]
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    first, second = (e["data"] for e in captured_post[0][1])
+    assert first["client_level"] == "error"
+    assert "client_level" not in second
 
 
 def test_unknown_envelope_fields_are_ignored_not_rejected(captured_post, monkeypatch):
@@ -864,10 +971,10 @@ def test_unknown_event_fields_are_ignored_not_rejected(captured_post, monkeypatc
     This is the twin of the envelope case above, and the one that was genuinely
     reachable: ``events`` is typed ``Any``, so Pydantic hands nested keys to the
     body untouched and the old closed key set really did fire. Rejecting here
-    meant that the day Vorpal started sending a field it already computes — the
-    info/error ``level`` at ``Logger.ts:75``, discarded at ``:88`` — every batch
-    would be rejected and dropped without retry until an ADK release shipped,
-    including the ``schemaVersion`` bump meant to signal the addition.
+    meant that the day Vorpal started sending a field it already computes,
+    every batch would be rejected and dropped without retry until an ADK
+    release shipped — including the ``schemaVersion`` bump meant to signal the
+    addition.
     """
     monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
 
@@ -877,7 +984,7 @@ def test_unknown_event_fields_are_ignored_not_rejected(captured_post, monkeypatc
                 {
                     "eventName": "WidgetReady",
                     "timeSinceAppStart": 12,
-                    "level": "info",
+                    "someFutureField": "not yet known to ADK",
                     "properties": {"stage": "loaded"},
                 }
             ]
@@ -889,7 +996,8 @@ def test_unknown_event_fields_are_ignored_not_rejected(captured_post, monkeypatc
     # Ignored, not passed through: the emit loop reads only known fields, so an
     # unrecognized key cannot mint an unreviewed Aria column on its own.
     data = captured_post[0][1][0]["data"]
-    assert not any("level" in key for key in data)
+    assert not any("someFutureField" in key for key in data)
+    assert not any(value == "not yet known to ADK" for value in data.values())
     assert data["client_event_name"] == "WidgetReady"
     assert json.loads(data["client_properties"]) == {"stage": "loaded"}
 
@@ -1021,13 +1129,11 @@ def test_report_client_events_rejection_leaves_no_session_side_effect(captured_p
     assert not os.path.exists(adk.SESSION_PATH)
 
     result = adk.report_client_events(
-        _client_events_envelope(
-            events=[{"eventName": "Bad", "timeSinceAppStart": 1, "properties": {"x": {"nested": 1}}}]
-        ),
+        _client_events_envelope(correlationId="not a valid id"),
         block=True,
     )
 
-    assert result["rejectedReason"] == "invalid_property_type"
+    assert result["rejectedReason"] == "invalid_correlation_id"
     assert not os.path.exists(adk.SESSION_PATH)
     assert captured_post == []
 

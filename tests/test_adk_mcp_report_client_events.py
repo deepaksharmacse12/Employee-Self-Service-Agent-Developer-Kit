@@ -130,7 +130,6 @@ def _valid_tool_args():
         ({"events": [1, 2]}, "invalid_event_shape"),
         ({"correlationId": 123}, "invalid_correlation_id"),
         ({"mountId": 123}, "invalid_mount_id"),
-        ({"toolCallId": 123}, "invalid_tool_call_id"),
         ({"schemaVersion": "2"}, "unsupported_schema_version"),
         ({"buildNumber": None}, "invalid_event_shape"),
         ({"events": None}, "empty_batch"),
@@ -185,7 +184,7 @@ def test_unknown_event_field_survives_the_real_call_tool_path():
     server = _load_adk_server()
     args = {
         **_valid_tool_args(),
-        "events": [{"eventName": "WidgetReady", "timeSinceAppStart": 1, "level": "info"}],
+        "events": [{"eventName": "WidgetReady", "timeSinceAppStart": 1, "someFutureField": "x"}],
     }
 
     result = asyncio.run(server.mcp.call_tool("report_client_events", args))

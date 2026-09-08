@@ -117,32 +117,28 @@ CLIENT_EVENTS_MAX_PROPERTIES_BYTES = 8 * 1024
 
 CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION = "unsupported_schema_version"
 CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID = "invalid_correlation_id"
-# Per-field reasons for the other two ephemeral identifiers. Reusing
-# ``invalid_correlation_id`` for these misattributes the failure on any
-# Vorpal-side dashboard or alert that buckets by ``rejectedReason``.
+# Per-field reason for the mount id. Reusing ``invalid_correlation_id`` for it
+# misattributes the failure on any Vorpal-side dashboard or alert that buckets
+# by ``rejectedReason``.
 #
-# These extend Vorpal's bounded ``BridgeRejectedReason`` union, so until the
-# matching Vorpal change ships its client maps them to ``unrecognized_reason``.
+# This extends Vorpal's bounded ``BridgeRejectedReason`` union, so until the
+# matching Vorpal change ships its client maps it to ``unrecognized_reason``.
 # That degrades safely: ``getTelemetryBridgeOutcome`` still classifies an
 # unrecognized reason as a REJECTION, so the batch is dropped rather than
 # retried, exactly as before.
 CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID = "invalid_mount_id"
-CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID = "invalid_tool_call_id"
 CLIENT_EVENTS_REJECTED_EMPTY_BATCH = "empty_batch"
 CLIENT_EVENTS_REJECTED_BATCH_TOO_LARGE = "batch_too_large"
 CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE = "invalid_event_shape"
-CLIENT_EVENTS_REJECTED_INVALID_PROPERTY_TYPE = "invalid_property_type"
 
 _CLIENT_EVENTS_REJECTED_REASONS = frozenset(
     {
         CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION,
         CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID,
         CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID,
-        CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID,
         CLIENT_EVENTS_REJECTED_EMPTY_BATCH,
         CLIENT_EVENTS_REJECTED_BATCH_TOO_LARGE,
         CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE,
-        CLIENT_EVENTS_REJECTED_INVALID_PROPERTY_TYPE,
     }
 )
 _CLIENT_EVENTS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -694,10 +690,19 @@ def _valid_client_identifier(value: Any) -> bool:
     return isinstance(value, str) and bool(_CLIENT_EVENTS_IDENTIFIER_RE.match(value))
 
 
-def _valid_property_value(value: Any) -> bool:
-    if isinstance(value, bool) or value is None or isinstance(value, str):
-        return True
-    return _is_finite_number(value)
+CLIENT_EVENTS_INVALID_TIME_SENTINEL = -1
+
+
+def _client_time_since_app_start(event: dict[str, Any]) -> Any:
+    """Degrade a non-finite timing to a sentinel instead of killing the batch.
+
+    ``-1`` is unambiguous: ``performance.now()`` is non-negative, and ``0`` is a
+    real value for a bootloader event, so neither can be confused with a
+    failure. A missing or NaN timing makes one column unusable on one row —
+    dropping the other 24 events to avoid it was never the right trade.
+    """
+    value = event.get("timeSinceAppStart")
+    return value if _is_finite_number(value) else CLIENT_EVENTS_INVALID_TIME_SENTINEL
 
 
 def _scrub_client_scalar(value: Any) -> Any:
@@ -757,7 +762,14 @@ def _client_properties_blob(properties: Any) -> tuple[str, int]:
     Keys are NOT scrubbed: they are call-site literals, and rewriting them
     would corrupt the field names analysts query.
     """
-    if not isinstance(properties, dict) or not properties:
+    if properties is None:
+        return "{}", 0
+    if not isinstance(properties, dict):
+        # A malformed bag costs the bag, not the event. Counting it as one drop
+        # keeps the loss visible in ``client_prop_dropped_count`` rather than
+        # making it indistinguishable from an event that carried no properties.
+        return "{}", 1
+    if not properties:
         return "{}", 0
 
     dropped = 0
@@ -789,22 +801,6 @@ def _client_properties_blob(properties: Any) -> tuple[str, int]:
     return "{}", dropped
 
 
-def _valid_property_container(properties: Any) -> bool:
-    if properties is None:
-        return True
-    if not isinstance(properties, dict):
-        return False
-    for key, value in properties.items():
-        if not isinstance(key, str):
-            return False
-        if isinstance(value, list):
-            if not all(_valid_property_value(item) for item in value):
-                return False
-        elif not _valid_property_value(value):
-            return False
-    return True
-
-
 def _rejection(reason: str) -> dict[str, Any]:
     if reason not in _CLIENT_EVENTS_REJECTED_REASONS:
         reason = CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE
@@ -831,8 +827,13 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
     if not _valid_client_string(envelope.get("buildNumber"), allow_empty=True):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     tool_call_id = envelope.get("toolCallId")
+    # Omit rather than reject. The HOST mints this id, so ADK asserting a format
+    # it has no authority over means an id containing ``:`` or ``/`` would kill
+    # every batch. Unlike ``correlationId``/``mountId`` it is supplementary
+    # rather than what stitches a mount together, so losing the field costs far
+    # less than losing the events.
     if tool_call_id is not None and not _valid_client_identifier(tool_call_id):
-        return CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID, []
+        tool_call_id = None
 
     events = envelope.get("events")
     if not isinstance(events, list) or not events:
@@ -859,13 +860,9 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         # already 33 of that 64.
         if not _valid_client_string(event.get("eventName")):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-        if not _is_finite_number(event.get("timeSinceAppStart")):
-            return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
         locale = event.get("locale")
         if locale is not None and not _valid_client_string(locale):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-        if not _valid_property_container(event.get("properties")):
-            return CLIENT_EVENTS_REJECTED_INVALID_PROPERTY_TYPE, []
 
     # ``get_session`` mutates ~/.adk/session.json (it mints a fresh id once the
     # inactivity window lapses and stamps ``last`` on every call), so it runs
@@ -883,13 +880,16 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
                 "client_app_name": _scrub_client_scalar(envelope["appName"]),
                 "client_build_environment": _scrub_client_scalar(envelope["buildEnvironment"]),
                 "client_build_number": _scrub_client_scalar(envelope["buildNumber"]),
-                "client_time_since_app_start_ms": event["timeSinceAppStart"],
+                "client_time_since_app_start_ms": _client_time_since_app_start(event),
             }
         )
         if tool_call_id is not None:
             row["client_tool_call_id"] = tool_call_id
         if locale is not None:
             row["client_locale"] = _scrub_client_scalar(locale)
+        level = event.get("level")
+        if level is not None:
+            row["client_level"] = _scrub_client_scalar(level)
         blob, dropped = _client_properties_blob(event.get("properties"))
         row["client_properties"] = blob
         row["client_prop_dropped_count"] = dropped
