@@ -133,10 +133,13 @@ _CLIENT_EVENTS_PROPERTY_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _CLIENT_EVENTS_EVENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 # The ephemeral correlation identifiers are emitted as dimensions, so a bounded
 # length alone would leave ~195 characters of arbitrary UTF-8 per field free to
-# smuggle UPNs, paths, URLs or object ids into Aria. Requiring an
-# identifier-shaped suffix rejects that outright rather than silently redacting
-# it, which is the posture the bridge claims: no free-text tunnel.
-_CLIENT_EVENTS_IDENTIFIER_SUFFIX_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# smuggle UPNs, paths, URLs or object ids into Aria. The charset is what does
+# that work, and it applies to the whole value: requiring a ``corr-``/``mount-``
+# /``tool-`` prefix on top would hard-code Vorpal's ``getRandomId`` call into
+# this repo for no privacy benefit, and the fields are already distinguished by
+# name. This single bound also replaces the old pairing of a <=200 check with a
+# {1,64} suffix rule, where the <=200 never bound.
+_CLIENT_EVENTS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _CLIENT_EVENTS_EVENT_KEYS = frozenset(
     {
         "eventName",
@@ -660,19 +663,21 @@ def _valid_bounded_string(value: Any, *, allow_empty: bool = False) -> bool:
     return isinstance(value, str) and (allow_empty or bool(value)) and len(value) <= CLIENT_EVENTS_MAX_STRING_LENGTH
 
 
-def _valid_client_identifier(value: Any, prefix: str) -> bool:
-    """True when ``value`` is ``<prefix><identifier-shaped suffix>``.
+def _valid_client_identifier(value: Any) -> bool:
+    """True when ``value`` is an identifier-shaped ephemeral correlation id.
 
-    The prefix keeps the three ephemeral correlation ids distinguishable (Vorpal
-    mints them as ``corr-`` / ``mount-`` / ``tool-``); the suffix charset is what
-    stops the field being a free-text channel. These ids are emitted verbatim as
-    dimensions, so anything that is not identifier-shaped is rejected rather
-    than scrubbed — a redacted correlation id would silently stop stitching
-    events together, which is worse than refusing the batch.
+    The charset is the privacy control: these ids are emitted verbatim as
+    dimensions, so anything else would be a free-text channel. It is applied to
+    the whole value — no prefix is required, because the prefix never carried
+    privacy weight and the three ids are already distinguished by field name.
+
+    Failures are rejected rather than scrubbed. ``_scrub`` would rewrite
+    ``corr-<uuid>`` to ``corr-<guid>``, which is accepted and useless: every
+    mount collapses to the same literal and event stitching dies silently.
+    Refusing is louder and honest, and it is cheap to be strict here because
+    Vorpal mints these at a single call site it controls.
     """
-    if not _valid_bounded_string(value) or not value.startswith(prefix):
-        return False
-    return bool(_CLIENT_EVENTS_IDENTIFIER_SUFFIX_RE.match(value[len(prefix):]))
+    return isinstance(value, str) and bool(_CLIENT_EVENTS_IDENTIFIER_RE.match(value))
 
 
 def _valid_property_value(value: Any) -> bool:
@@ -734,9 +739,9 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     if envelope.get("schemaVersion") != CLIENT_EVENTS_SCHEMA_VERSION:
         return CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION, []
-    if not _valid_client_identifier(envelope.get("correlationId"), "corr-"):
+    if not _valid_client_identifier(envelope.get("correlationId")):
         return CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID, []
-    if not _valid_client_identifier(envelope.get("mountId"), "mount-"):
+    if not _valid_client_identifier(envelope.get("mountId")):
         return CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID, []
     if not _valid_bounded_string(envelope.get("appName")):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
@@ -745,7 +750,7 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
     if not _valid_bounded_string(envelope.get("buildNumber"), allow_empty=True):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     tool_call_id = envelope.get("toolCallId")
-    if tool_call_id is not None and not _valid_client_identifier(tool_call_id, "tool-"):
+    if tool_call_id is not None and not _valid_client_identifier(tool_call_id):
         return CLIENT_EVENTS_REJECTED_INVALID_TOOL_CALL_ID, []
 
     events = envelope.get("events")

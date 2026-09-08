@@ -552,9 +552,9 @@ def test_report_client_events_rejects_empty_and_oversized_batches(captured_post)
 
 
 _IDENTIFIER_FIELDS = {
-    "correlationId": ("corr-", "invalid_correlation_id"),
-    "mountId": ("mount-", "invalid_mount_id"),
-    "toolCallId": ("tool-", "invalid_tool_call_id"),
+    "correlationId": "invalid_correlation_id",
+    "mountId": "invalid_mount_id",
+    "toolCallId": "invalid_tool_call_id",
 }
 
 
@@ -567,10 +567,12 @@ def test_each_identifier_field_reports_its_own_rejection_reason(field, captured_
     ``rejectedReason`` — a broken ``mountId`` would be triaged as a correlation
     problem.
     """
-    _prefix, expected_reason = _IDENTIFIER_FIELDS[field]
+    expected_reason = _IDENTIFIER_FIELDS[field]
 
+    # A charset violation, not a prefix violation: the prefix is no longer part
+    # of the contract, so "not-the-right-prefix" is now a perfectly valid id.
     result = adk.report_client_events(
-        _client_events_envelope(**{field: "not-the-right-prefix"}),
+        _client_events_envelope(**{field: "has spaces and @"}),
         block=True,
     )
 
@@ -580,7 +582,7 @@ def test_each_identifier_field_reports_its_own_rejection_reason(field, captured_
 
 def test_identifier_rejection_reasons_are_distinct():
     # The whole point of the split: three fields, three reasons.
-    reasons = {reason for _prefix, reason in _IDENTIFIER_FIELDS.values()}
+    reasons = set(_IDENTIFIER_FIELDS.values())
     assert len(reasons) == 3
     assert reasons <= adk._CLIENT_EVENTS_REJECTED_REASONS
 
@@ -605,25 +607,25 @@ def test_rejection_reasons_survive_the_bounded_value_list_guard():
         "https://contoso.sharepoint.com/x",
         "6f7c8f9c-1234-4abc-9def-0123456789ab is the object id",
         "a b c",  # a space is enough to turn the field into free text
-        "x" * 65,  # bounded well below the 200-char string cap
+        "x" * 65,  # one over the single length bound
     ],
 )
 def test_correlation_identifiers_are_not_a_free_text_tunnel(field, payload, captured_post):
     """The ephemeral ids are emitted verbatim, so they must be identifier-shaped.
 
-    A prefix + length check alone would leave ~195 characters of arbitrary UTF-8
-    per field free to smuggle UPNs, paths, URLs and object ids into Aria. The
-    pre-existing negative test used ``"request-123"``, which failed on the
-    PREFIX rather than the content, so it never exercised this.
+    A length bound alone would leave ~195 characters of arbitrary UTF-8 per
+    field free to smuggle UPNs, paths, URLs and object ids into Aria. The
+    charset is what closes that, and it is applied to the whole value rather
+    than to a suffix behind a required prefix.
 
     These are rejected rather than scrubbed on purpose: a redacted correlation
     id would silently stop stitching a mount's events together, which is worse
     than refusing the batch outright.
     """
-    prefix, expected_reason = _IDENTIFIER_FIELDS[field]
+    expected_reason = _IDENTIFIER_FIELDS[field]
 
     result = adk.report_client_events(
-        _client_events_envelope(**{field: f"{prefix}{payload}"}),
+        _client_events_envelope(**{field: payload}),
         block=True,
     )
 
@@ -633,7 +635,8 @@ def test_correlation_identifiers_are_not_a_free_text_tunnel(field, payload, capt
 
 def test_well_formed_correlation_identifiers_are_accepted(captured_post, monkeypatch):
     # The charset gate must not reject the shapes Vorpal actually mints, incl.
-    # UUID-style suffixes and the dot/underscore/dash characters it allows.
+    # UUID-style ids and the dot/underscore/dash characters it allows. The
+    # familiar prefixes still pass — they are simply no longer required.
     monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
 
     result = adk.report_client_events(
@@ -650,6 +653,41 @@ def test_well_formed_correlation_identifiers_are_accepted(captured_post, monkeyp
     assert data["client_correlation_id"] == "corr-6f7c8f9c-1234-4abc-9def-0123456789ab"
     assert data["client_mount_id"] == "mount-1a2b_3c.4d"
     assert data["client_tool_call_id"] == "tool-Call.42"
+
+
+def test_identifiers_without_the_legacy_prefixes_are_accepted(captured_post, monkeypatch):
+    """The prefix is no longer part of the contract.
+
+    ADK required ``corr-``/``mount-``/``tool-``, which baked Vorpal's
+    ``getRandomId`` call into this repo for no privacy benefit — the charset
+    does that work, and the three ids are already distinguished by field name.
+    A bare UUID must now be accepted so Vorpal can change its id scheme without
+    an ADK release.
+    """
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            correlationId="6f7c8f9c-1234-4abc-9def-0123456789ab",
+            mountId="01JQZ8XKMNP7RSTVWXYZ",  # bare ULID-style, no prefix
+            toolCallId="call_abc.42",
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    data = captured_post[0][1][0]["data"]
+    assert data["client_correlation_id"] == "6f7c8f9c-1234-4abc-9def-0123456789ab"
+    assert data["client_tool_call_id"] == "call_abc.42"
+
+
+def test_identifier_length_bound_is_single_and_applies_to_the_whole_value():
+    # Previously two bounds disagreed: _valid_bounded_string allowed 200 while
+    # the suffix regex capped at 64, so the 200 never bound. One rule now.
+    assert adk._valid_client_identifier("a" * 64) is True
+    assert adk._valid_client_identifier("a" * 65) is False
+    assert adk._valid_client_identifier("") is False
+    assert adk._valid_client_identifier(123) is False
 
 
 def test_report_client_events_rejects_non_ascii_event_names(captured_post):
