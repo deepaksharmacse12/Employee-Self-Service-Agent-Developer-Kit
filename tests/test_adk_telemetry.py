@@ -697,22 +697,43 @@ def test_identifier_length_bound_is_single_and_applies_to_the_whole_value():
     assert adk._valid_client_identifier(123) is False
 
 
-def test_report_client_events_rejects_non_ascii_event_names(captured_post):
-    # Correctly rejected by the event-name regex today, but previously unasserted.
+def test_free_text_event_names_are_scrubbed_not_rejected(captured_post, monkeypatch):
+    """The event name is a value, not a column name.
+
+    A non-identifier name carries no schema risk — the only real concern is
+    customer content riding into Aria, and that is what ``_scrub`` is for
+    everywhere else in this module. Rejecting instead cost the other events in
+    the batch, and the two rules disagreed anyway: the regex capped at 64 while
+    the length helper allowed 200.
+    """
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
     result = adk.report_client_events(
         _client_events_envelope(
-            events=[{"eventName": "Widget\U0001f600Ready", "timeSinceAppStart": 1}]
+            events=[
+                {"eventName": "Widget\U0001f600Ready", "timeSinceAppStart": 1},
+                {
+                    "eventName": "opened C:\\Users\\jdoe\\secret.docx for jdoe@contoso.com",
+                    "timeSinceAppStart": 2,
+                },
+            ]
         ),
         block=True,
     )
 
-    assert result["rejectedReason"] == "invalid_event_shape"
-    assert captured_post == []
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    names = [envelope["data"]["client_event_name"] for envelope in captured_post[0][1]]
+    assert names[0] == "Widget\U0001f600Ready"
+    # Free text survives as an event name, but not the content inside it.
+    assert names[1] == "opened <path> for <email>"
 
 
-def test_report_client_events_rejects_oversized_property_strings(captured_post):
-    # Per-string length is enforced by _valid_property_value; pin it so the
-    # 64KB envelope cap is not the only thing bounding a single value.
+def test_oversized_property_strings_are_truncated_not_rejected(captured_post, monkeypatch):
+    # The old rejection refused a string that _scrub truncates to exactly
+    # CLIENT_EVENTS_MAX_STRING_LENGTH one line later — pure batch loss for a
+    # value that was going to be trimmed regardless.
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
     result = adk.report_client_events(
         _client_events_envelope(
             events=[
@@ -726,8 +747,75 @@ def test_report_client_events_rejects_oversized_property_strings(captured_post):
         block=True,
     )
 
-    assert result["rejectedReason"] == "invalid_property_type"
-    assert captured_post == []
+    assert result == {"status": "accepted", "acceptedEventCount": 1}
+    props = json.loads(captured_post[0][1][0]["data"]["client_properties"])
+    assert props["blob"] == "x" * adk.CLIENT_EVENTS_MAX_STRING_LENGTH
+
+
+def test_long_appname_and_locale_are_truncated_not_rejected(captured_post, monkeypatch):
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            appName="A" * 500,
+            events=[
+                {
+                    "eventName": "E",
+                    "timeSinceAppStart": 1,
+                    "locale": "L" * 500,
+                }
+            ],
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 1}
+    data = captured_post[0][1][0]["data"]
+    assert data["client_app_name"] == "A" * adk.CLIENT_EVENTS_MAX_STRING_LENGTH
+    assert data["client_locale"] == "L" * adk.CLIENT_EVENTS_MAX_STRING_LENGTH
+
+
+def test_many_properties_and_long_arrays_are_accepted(captured_post, monkeypatch):
+    # The <=25 properties and <=10 array-item caps had no precedent in this
+    # module and no stated rationale; the blob's byte cap is the real backstop.
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {
+                    "eventName": "Wide",
+                    "timeSinceAppStart": 1,
+                    "properties": {
+                        **{f"k{i}": i for i in range(40)},
+                        "tags": list(range(50)),
+                    },
+                }
+            ]
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 1}
+    props = json.loads(captured_post[0][1][0]["data"]["client_properties"])
+    assert len(props) == 41
+    assert props["tags"] == list(range(50))
+
+
+def test_non_identifier_property_keys_are_kept_but_length_bounded():
+    # Keys live inside a JSON string now, so charset carries no schema risk.
+    # Only length is bounded, so one key cannot eat the blob budget.
+    blob, dropped = adk._client_properties_blob(
+        {
+            "bad-key": True,
+            "with space": 1,
+            "durationMs": 2,
+            "x" * (adk.CLIENT_EVENTS_MAX_PROPERTY_KEY_LENGTH + 1): "evicted",
+        }
+    )
+
+    assert json.loads(blob) == {"bad-key": True, "with space": 1, "durationMs": 2}
+    assert dropped == 1
 
 
 @pytest.mark.parametrize(
@@ -736,7 +824,6 @@ def test_report_client_events_rejects_oversized_property_strings(captured_post):
         ({"eventName": "", "timeSinceAppStart": 1}, "invalid_event_shape"),
         ({"eventName": "BadTime", "timeSinceAppStart": float("nan")}, "invalid_event_shape"),
         ({"eventName": "BadProperty", "timeSinceAppStart": 1, "properties": {"x": {"nested": True}}}, "invalid_property_type"),
-        ({"eventName": "BadKey", "timeSinceAppStart": 1, "properties": {"bad-key": True}}, "invalid_property_type"),
     ],
 )
 def test_report_client_events_rejects_out_of_contract_events(event, reason, captured_post):
@@ -925,25 +1012,6 @@ def test_missing_properties_still_emit_a_parseable_blob(captured_post, monkeypat
     assert data["client_prop_dropped_count"] == 0
 
 
-def test_report_client_events_rejects_free_text_event_names(captured_post):    # ADK deliberately keeps no Vorpal event-name allowlist, but the name is
-    # emitted verbatim as a dimension, so it must stay identifier-shaped rather
-    # than become a free-text channel for customer content.
-    result = adk.report_client_events(
-        _client_events_envelope(
-            events=[
-                {
-                    "eventName": "SurveyAnswer: my boss is john.doe@contoso.com",
-                    "timeSinceAppStart": 1,
-                }
-            ]
-        ),
-        block=True,
-    )
-
-    assert result["rejectedReason"] == "invalid_event_shape"
-    assert captured_post == []
-
-
 def test_report_client_events_rejection_leaves_no_session_side_effect(captured_post):
     # get_session() WRITES ~/.adk/session.json: it mints a fresh id once the
     # inactivity window lapses and stamps `last` on every call. A batch that is
@@ -980,11 +1048,16 @@ def test_report_client_events_fails_open_on_internal_fault(monkeypatch, captured
     assert captured_post == []
 
 
-def test_client_events_batch_cap_matches_vorpal_batcher():
-    # A batch above the cap is REJECTED, and Vorpal never retries a rejection —
-    # so this cap must stay >= the Vorpal-side batch maximum or a full batch is
-    # silently and permanently dropped.
-    assert adk.CLIENT_EVENTS_MAX_BATCH_EVENTS == 25
+def test_batch_cap_is_an_oom_guard_not_a_vorpal_contract():
+    """The cap must NOT track Vorpal's ``TELEMETRY_MAX_BATCH_SIZE``.
+
+    A batch above the cap is rejected, and Vorpal never retries a rejection, so
+    pinning the two to the same number meant raising the batch size on the
+    JavaScript side would silently and permanently drop every batch until an ADK
+    release shipped. A high guard keeps ``batch_too_large`` meaningful — it
+    still stops an OOM — without the lockstep.
+    """
+    assert adk.CLIENT_EVENTS_MAX_BATCH_EVENTS >= 1000
 
 
 def test_fail_open_echoes_the_full_sent_count(monkeypatch, captured_post):
@@ -1014,17 +1087,29 @@ def test_fail_open_echoes_the_full_sent_count(monkeypatch, captured_post):
 
 
 def test_oversized_batch_is_rejected_on_the_normal_path(captured_post):
-    # Companion to the test above: with the validator healthy, the same batch
-    # is refused outright rather than fail-open acknowledged.
-    result = adk.report_client_events(
+    # Companion to the test above: with the validator healthy, a batch past the
+    # OOM guard is refused outright rather than fail-open acknowledged. 100
+    # events — a realistic 4x overshoot of Vorpal's batcher — must now sail
+    # through; only an absurd batch is refused.
+    ok = adk.report_client_events(
         _client_events_envelope(
             events=[{"eventName": "E", "timeSinceAppStart": 1} for _ in range(100)]
         ),
         block=True,
     )
+    assert ok == {"status": "accepted", "acceptedEventCount": 100}
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {"eventName": "E", "timeSinceAppStart": 1}
+                for _ in range(adk.CLIENT_EVENTS_MAX_BATCH_EVENTS + 1)
+            ]
+        ),
+        block=True,
+    )
 
     assert result["rejectedReason"] == "batch_too_large"
-    assert captured_post == []
 
 
 # --- capability taxonomy + normalization ----------------------------------

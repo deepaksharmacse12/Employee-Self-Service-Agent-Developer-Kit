@@ -93,10 +93,17 @@ EVENT_FLIGHTCHECK_ERROR = "adk.flightcheck.error"
 EVENT_CLIENT = "adk.client.event"
 
 CLIENT_EVENTS_SCHEMA_VERSION = 1
-CLIENT_EVENTS_MAX_BATCH_EVENTS = 25
+# An out-of-memory guard, not a contract. This used to be exactly Vorpal's
+# ``TELEMETRY_MAX_BATCH_SIZE``, which meant raising the cap on the JavaScript
+# side would have killed every batch here until an ADK release shipped. A high
+# guard keeps ``batch_too_large`` meaningful without coupling the two.
+CLIENT_EVENTS_MAX_BATCH_EVENTS = 1000
 CLIENT_EVENTS_MAX_STRING_LENGTH = 200
-CLIENT_EVENTS_MAX_PROPERTIES = 25
-CLIENT_EVENTS_MAX_ARRAY_LENGTH = 10
+# Property keys become field names inside the JSON blob, so a single key must
+# not be able to eat the blob budget. Length is the only thing bounded: the
+# charset rule that used to reject the batch was protecting an Aria column-name
+# axis that no longer exists now that properties are one serialized value.
+CLIENT_EVENTS_MAX_PROPERTY_KEY_LENGTH = 64
 # Cap on the serialized ``client_properties`` blob. This is the one size limit
 # with a real backstop behind it — Aria's per-field string limit — rather than
 # a self-imposed contract. Properties are SHED until the blob fits, never
@@ -138,12 +145,7 @@ _CLIENT_EVENTS_REJECTED_REASONS = frozenset(
         CLIENT_EVENTS_REJECTED_INVALID_PROPERTY_TYPE,
     }
 )
-_CLIENT_EVENTS_PROPERTY_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
-# Vorpal owns the event catalog (ADK deliberately keeps no name allowlist), but
-# an event name must still be identifier-shaped. Without this the name field is
-# a free-text channel: it is emitted verbatim as a dimension, so a sentence
-# carrying customer content would ride straight into Aria.
-_CLIENT_EVENTS_EVENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+_CLIENT_EVENTS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # The ephemeral correlation identifiers are emitted as dimensions, so a bounded
 # length alone would leave ~195 characters of arbitrary UTF-8 per field free to
 # smuggle UPNs, paths, URLs or object ids into Aria. The charset is what does
@@ -664,8 +666,15 @@ def _is_finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and value not in (float("inf"), float("-inf"))
 
 
-def _valid_bounded_string(value: Any, *, allow_empty: bool = False) -> bool:
-    return isinstance(value, str) and (allow_empty or bool(value)) and len(value) <= CLIENT_EVENTS_MAX_STRING_LENGTH
+def _valid_client_string(value: Any, *, allow_empty: bool = False) -> bool:
+    """True when ``value`` is a string the bridge can emit.
+
+    Deliberately unbounded: every one of these fields is passed through
+    ``_scrub``, which truncates to ``CLIENT_EVENTS_MAX_STRING_LENGTH`` one line
+    later. Rejecting a long string here only threw away the other 24 events in
+    the batch to avoid emitting a value that would have been trimmed anyway.
+    """
+    return isinstance(value, str) and (allow_empty or bool(value))
 
 
 def _valid_client_identifier(value: Any) -> bool:
@@ -686,10 +695,8 @@ def _valid_client_identifier(value: Any) -> bool:
 
 
 def _valid_property_value(value: Any) -> bool:
-    if isinstance(value, bool) or value is None:
+    if isinstance(value, bool) or value is None or isinstance(value, str):
         return True
-    if isinstance(value, str):
-        return len(value) <= CLIENT_EVENTS_MAX_STRING_LENGTH
     return _is_finite_number(value)
 
 
@@ -756,7 +763,7 @@ def _client_properties_blob(properties: Any) -> tuple[str, int]:
     dropped = 0
     payload: dict[str, Any] = {}
     for key, value in properties.items():
-        if not isinstance(key, str):
+        if not isinstance(key, str) or len(key) > CLIENT_EVENTS_MAX_PROPERTY_KEY_LENGTH:
             dropped += 1
             continue
         keep, scrubbed = _emittable_property(value)
@@ -785,14 +792,12 @@ def _client_properties_blob(properties: Any) -> tuple[str, int]:
 def _valid_property_container(properties: Any) -> bool:
     if properties is None:
         return True
-    if not isinstance(properties, dict) or len(properties) > CLIENT_EVENTS_MAX_PROPERTIES:
+    if not isinstance(properties, dict):
         return False
     for key, value in properties.items():
-        if not isinstance(key, str) or not _CLIENT_EVENTS_PROPERTY_KEY_RE.match(key):
+        if not isinstance(key, str):
             return False
         if isinstance(value, list):
-            if len(value) > CLIENT_EVENTS_MAX_ARRAY_LENGTH:
-                return False
             if not all(_valid_property_value(item) for item in value):
                 return False
         elif not _valid_property_value(value):
@@ -819,11 +824,11 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         return CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID, []
     if not _valid_client_identifier(envelope.get("mountId")):
         return CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID, []
-    if not _valid_bounded_string(envelope.get("appName")):
+    if not _valid_client_string(envelope.get("appName")):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-    if not _valid_bounded_string(envelope.get("buildEnvironment")):
+    if not _valid_client_string(envelope.get("buildEnvironment")):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-    if not _valid_bounded_string(envelope.get("buildNumber"), allow_empty=True):
+    if not _valid_client_string(envelope.get("buildNumber"), allow_empty=True):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     tool_call_id = envelope.get("toolCallId")
     if tool_call_id is not None and not _valid_client_identifier(tool_call_id):
@@ -846,14 +851,18 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         # rejected — and dropped without retry — until an ADK release shipped.
         # The emit loop below reads only the fields it knows, so an unrecognized
         # key is dropped from the row instead of costing 25 unrelated events.
-        if not _valid_bounded_string(event.get("eventName")):
-            return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-        if not _CLIENT_EVENTS_EVENT_NAME_RE.match(event["eventName"]):
+        # The event name is scrubbed rather than charset-gated. It is a VALUE
+        # in ``client_event_name``, not a column name, so a free-text name is a
+        # privacy question — which ``_scrub`` answers — not a schema one. The
+        # old regex also disagreed with itself: it capped at 64 while the length
+        # helper allowed 200, and ``StarterPrompts.Category.Reordered`` is
+        # already 33 of that 64.
+        if not _valid_client_string(event.get("eventName")):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
         if not _is_finite_number(event.get("timeSinceAppStart")):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
         locale = event.get("locale")
-        if locale is not None and not _valid_bounded_string(locale):
+        if locale is not None and not _valid_client_string(locale):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
         if not _valid_property_container(event.get("properties")):
             return CLIENT_EVENTS_REJECTED_INVALID_PROPERTY_TYPE, []
@@ -868,7 +877,7 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         row = common_dimensions(SURFACE_CLI, session_id=sid)
         row.update(
             {
-                "client_event_name": event["eventName"],
+                "client_event_name": _scrub_client_scalar(event["eventName"]),
                 "client_correlation_id": envelope["correlationId"],
                 "client_mount_id": envelope["mountId"],
                 "client_app_name": _scrub_client_scalar(envelope["appName"]),
