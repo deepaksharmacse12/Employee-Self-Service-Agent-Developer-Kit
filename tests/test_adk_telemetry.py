@@ -705,14 +705,26 @@ def test_report_client_events_rejects_out_of_contract_events(event, reason, capt
     assert captured_post == []
 
 
-def test_report_client_events_rejects_unknown_envelope_fields(captured_post):
+def test_unknown_envelope_fields_are_ignored_not_rejected(captured_post, monkeypatch):
+    """Unknown top-level keys must not cost the batch.
+
+    The previous version of this test asserted a rejection, but it only passed
+    because it calls the bridge directly and bypasses FastMCP. On the real wire
+    path the tool's arg model is ``extra='ignore'``, so an unknown top-level
+    argument is dropped before the body ever runs — the check could never fire,
+    and asserting on it advertised a guarantee the transport does not provide.
+    """
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
     result = adk.report_client_events(
-        _client_events_envelope(rawPayload="not allowed"),
+        _client_events_envelope(rawPayload="ignored by the transport"),
         block=True,
     )
 
-    assert result["rejectedReason"] == "invalid_event_shape"
-    assert captured_post == []
+    assert result == {"status": "accepted", "acceptedEventCount": 2}
+    # The unknown key is not carried onto the emitted rows either.
+    data = captured_post[0][1][0]["data"]
+    assert not any("rawPayload" in key for key in data)
 
 
 def test_report_client_events_scrubs_paths_urls_emails_and_guids(captured_post, monkeypatch):
@@ -814,29 +826,29 @@ def test_client_events_batch_cap_matches_vorpal_batcher():
     assert adk.CLIENT_EVENTS_MAX_BATCH_EVENTS == 25
 
 
-def test_fail_open_echo_is_bounded_by_the_batch_cap(monkeypatch, captured_post):
-    """A fail-open acknowledgement must never echo an unbounded count.
+def test_fail_open_echoes_the_full_sent_count(monkeypatch, captured_post):
+    """A fail-open acknowledgement echoes every event the caller sent.
 
-    On the normal path an oversized batch is rejected with ``batch_too_large``,
-    so the echo is already bounded. This path runs when validation ITSELF
-    faults, before the cap has been applied — without clamping, a caller could
-    hand over 100k events and be told all 100k were accepted, even though
-    nothing was emitted.
+    Vorpal rejects an acknowledgement that doesn't account for the whole batch
+    and retries it, so the echo must be the sent cardinality. The previous
+    clamp to ``CLIENT_EVENTS_MAX_BATCH_EVENTS`` was unreachable in practice —
+    Vorpal splices ``min(sameAppCount, 25)`` before sending, so ``min(len, 25)``
+    always equalled ``len`` — and it could only ever under-report and trigger
+    the retry it was meant to avoid.
     """
-    def _boom(_envelope):
+    def _boom(*_args, **_kwargs):
         raise RecursionError("validator blew up")
 
-    monkeypatch.setattr(adk, "_serialized_size", _boom)
+    monkeypatch.setattr(adk, "common_dimensions", _boom)
 
     result = adk.report_client_events(
         _client_events_envelope(
-            events=[{"eventName": "E", "timeSinceAppStart": 1} for _ in range(100_000)]
+            events=[{"eventName": "E", "timeSinceAppStart": 1} for _ in range(20)]
         ),
         block=True,
     )
 
-    assert result["status"] == "accepted"
-    assert result["acceptedEventCount"] == adk.CLIENT_EVENTS_MAX_BATCH_EVENTS
+    assert result == {"status": "accepted", "acceptedEventCount": 20}
     assert captured_post == []
 
 

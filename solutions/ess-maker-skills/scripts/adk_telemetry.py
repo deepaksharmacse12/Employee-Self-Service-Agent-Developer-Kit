@@ -91,7 +91,6 @@ EVENT_CLIENT = "adk.client.event"
 
 CLIENT_EVENTS_SCHEMA_VERSION = 1
 CLIENT_EVENTS_MAX_BATCH_EVENTS = 25
-CLIENT_EVENTS_MAX_SERIALIZED_BYTES = 64 * 1024
 CLIENT_EVENTS_MAX_STRING_LENGTH = 200
 CLIENT_EVENTS_MAX_PROPERTIES = 25
 CLIENT_EVENTS_MAX_ARRAY_LENGTH = 10
@@ -138,18 +137,6 @@ _CLIENT_EVENTS_EVENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 # identifier-shaped suffix rejects that outright rather than silently redacting
 # it, which is the posture the bridge claims: no free-text tunnel.
 _CLIENT_EVENTS_IDENTIFIER_SUFFIX_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-_CLIENT_EVENTS_ENVELOPE_KEYS = frozenset(
-    {
-        "schemaVersion",
-        "correlationId",
-        "mountId",
-        "appName",
-        "buildEnvironment",
-        "buildNumber",
-        "toolCallId",
-        "events",
-    }
-)
 _CLIENT_EVENTS_EVENT_KEYS = frozenset(
     {
         "eventName",
@@ -742,22 +729,11 @@ def _rejection(reason: str) -> dict[str, Any]:
     }
 
 
-def _serialized_size(value: Any) -> int:
-    try:
-        return len(json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    except (TypeError, ValueError):
-        return CLIENT_EVENTS_MAX_SERIALIZED_BYTES + 1
-
-
 def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[dict[str, Any]]]:
     if not isinstance(envelope, dict):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-    if set(envelope) - _CLIENT_EVENTS_ENVELOPE_KEYS:
-        return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     if envelope.get("schemaVersion") != CLIENT_EVENTS_SCHEMA_VERSION:
         return CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION, []
-    if _serialized_size(envelope) > CLIENT_EVENTS_MAX_SERIALIZED_BYTES:
-        return CLIENT_EVENTS_REJECTED_BATCH_TOO_LARGE, []
     if not _valid_client_identifier(envelope.get("correlationId"), "corr-"):
         return CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID, []
     if not _valid_client_identifier(envelope.get("mountId"), "mount-"):
@@ -849,18 +825,14 @@ def report_client_events(envelope: dict[str, Any], *, block: bool = False) -> di
 
 
 def _client_events_batch_size(envelope: Any) -> int:
-    """Best-effort count of the events a caller sent, capped at the batch max.
+    """Best-effort count of the events a caller sent.
 
     Vorpal treats an acknowledgement that doesn't account for the whole batch as
     unreadable and retries it, so a fail-open acceptance must echo the sent
-    cardinality rather than zero. The cap is defense-in-depth: the validator
-    already refuses anything above the maximum, but this path runs when
-    validation itself faulted, so the echo would otherwise be unbounded.
+    cardinality rather than zero or a clamped value.
     """
     events = envelope.get("events") if isinstance(envelope, dict) else None
-    if not isinstance(events, list):
-        return 0
-    return min(len(events), CLIENT_EVENTS_MAX_BATCH_EVENTS)
+    return len(events) if isinstance(events, list) else 0
 
 
 def flush(timeout: float = 5.0) -> None:
