@@ -42,7 +42,9 @@ def test_token_cache_uses_shared_local_state() -> None:
     )
 
 
-def test_interactive_auth_always_prompts_for_account_selection(monkeypatch) -> None:
+def test_interactive_auth_always_prompts_for_account_selection(
+    monkeypatch, capsys
+) -> None:
     captured: dict[str, object] = {}
 
     class FakeServer:
@@ -75,3 +77,9 @@ def test_interactive_auth_always_prompts_for_account_selection(monkeypatch) -> N
 
     assert result == {"access_token": "token"}
     assert captured["prompt"] == "select_account"
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == (
+        "Opening browser for AgentConfiguration sign-in "
+        "(http://localhost:12345) ...\n"
+    )
