@@ -69,7 +69,10 @@ from flightcheck import telemetry as _fc  # noqa: E402
 
 # --- Spec constants -------------------------------------------------------
 # 1.1.0: added derived ``tenant_class`` (internal vs customer) — ADO 7558661.
-SCHEMA_VERSION = "1.1.0"
+# 1.2.0: client bridge properties moved from per-key ``client_prop_<key>``
+#        columns to a single ``client_properties`` JSON string, plus
+#        ``client_prop_dropped_count`` — ADO 7558661 / PR #248 review.
+SCHEMA_VERSION = "1.2.0"
 
 # Surfaces the ADK emits from (spec enum: sdk | cli | studio | docs). The
 # Python skill scripts are the CLI surface.
@@ -94,6 +97,16 @@ CLIENT_EVENTS_MAX_BATCH_EVENTS = 25
 CLIENT_EVENTS_MAX_STRING_LENGTH = 200
 CLIENT_EVENTS_MAX_PROPERTIES = 25
 CLIENT_EVENTS_MAX_ARRAY_LENGTH = 10
+# Cap on the serialized ``client_properties`` blob. This is the one size limit
+# with a real backstop behind it — Aria's per-field string limit — rather than
+# a self-imposed contract. Properties are SHED until the blob fits, never
+# truncated: a truncated JSON string is unparseable by ``parse_json`` on the
+# KQL side, which would lose every property instead of the overflow.
+#
+# PROVISIONAL: 8 KB is a conservative placeholder. The exact Aria limit is the
+# open question at the end of the PR #248 review; only this number changes when
+# it is confirmed.
+CLIENT_EVENTS_MAX_PROPERTIES_BYTES = 8 * 1024
 
 CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION = "unsupported_schema_version"
 CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID = "invalid_correlation_id"
@@ -692,10 +705,81 @@ def _scrub_client_scalar(value: Any) -> Any:
     return value
 
 
-def _scrub_client_property(value: Any) -> Any:
+def _emittable_property(value: Any) -> tuple[bool, Any]:
+    """Scrub one property value, or report that it cannot be emitted.
+
+    Returns ``(True, scrubbed)`` or ``(False, None)``. Values are scrubbed
+    INDIVIDUALLY, before serialization — never over the serialized blob.
+    ``_scrub``'s ``(?<!\\w)/[^\\s]+`` -> ``<path>`` rule runs to the next
+    whitespace, and compact JSON has none, so running it over
+    ``{"a":"/x","b":"y"}`` would eat through to the closing brace and destroy
+    the document.
+
+    Non-finite numbers are filtered here rather than left to ``json.dumps``,
+    which emits bare ``NaN``/``Infinity`` — invalid JSON that would make the
+    whole blob unparseable by ``parse_json``.
+    """
+    if value is None or isinstance(value, (bool, str)):
+        return True, _scrub_client_scalar(value)
+    if isinstance(value, (int, float)):
+        return (True, value) if _is_finite_number(value) else (False, None)
     if isinstance(value, list):
-        return [_scrub_client_scalar(item) for item in value]
-    return _scrub_client_scalar(value)
+        items = []
+        for item in value:
+            keep, scrubbed = _emittable_property(item)
+            if not keep:
+                return False, None
+            if isinstance(scrubbed, list):
+                return False, None
+            items.append(scrubbed)
+        return True, items
+    return False, None
+
+
+def _client_properties_blob(properties: Any) -> tuple[str, int]:
+    """Render a bridge property bag as one JSON string plus a dropped count.
+
+    A single ``client_properties`` column replaces the old per-key
+    ``client_prop_<key>`` fan-out, which minted a new Aria column the first
+    time any widget logged a key — unbounded schema growth, a fixed column type
+    taken from whatever value arrived first (``stage: "loaded"`` then
+    ``stage: 3``), and camelCase names landing beside the tenant's snake_case.
+    It also keeps the emitted field set fixed, which is what makes
+    ``SCHEMA_VERSION`` meaningful.
+
+    Keys are NOT scrubbed: they are call-site literals, and rewriting them
+    would corrupt the field names analysts query.
+    """
+    if not isinstance(properties, dict) or not properties:
+        return "{}", 0
+
+    dropped = 0
+    payload: dict[str, Any] = {}
+    for key, value in properties.items():
+        if not isinstance(key, str):
+            dropped += 1
+            continue
+        keep, scrubbed = _emittable_property(value)
+        if not keep:
+            dropped += 1
+            continue
+        payload[key] = scrubbed
+
+    # Shed the largest properties until the blob fits, so the survivors stay
+    # parseable. Ordering by serialized size means one oversized value cannot
+    # evict a dozen small ones.
+    while payload:
+        try:
+            blob = json.dumps(payload, allow_nan=False, separators=(",", ":"))
+        except (TypeError, ValueError):
+            return "{}", len(properties)
+        if len(blob.encode("utf-8")) <= CLIENT_EVENTS_MAX_PROPERTIES_BYTES:
+            return blob, dropped
+        widest = max(payload, key=lambda k: len(json.dumps(payload[k], default=str)))
+        del payload[widest]
+        dropped += 1
+
+    return "{}", dropped
 
 
 def _valid_property_container(properties: Any) -> bool:
@@ -797,8 +881,9 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
             row["client_tool_call_id"] = tool_call_id
         if locale is not None:
             row["client_locale"] = _scrub_client_scalar(locale)
-        for key, value in (event.get("properties") or {}).items():
-            row[f"client_prop_{key}"] = _scrub_client_property(value)
+        blob, dropped = _client_properties_blob(event.get("properties"))
+        row["client_properties"] = blob
+        row["client_prop_dropped_count"] = dropped
         rows.append(row)
 
     return None, rows

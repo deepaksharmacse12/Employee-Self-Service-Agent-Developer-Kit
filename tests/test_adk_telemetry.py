@@ -506,8 +506,15 @@ def test_report_client_events_accepts_and_posts_valid_batch(captured_post, monke
     assert first["client_build_number"] == "0"
     assert first["client_time_since_app_start_ms"] == 12
     assert first["client_locale"] == "en-US"
-    assert first["client_prop_count"] == 1
-    assert first["client_prop_tags"] == ["a", 2, False, None]
+    assert json.loads(first["client_properties"]) == {
+        "count": 1,
+        "flag": True,
+        "label": "loaded",
+        "tags": ["a", 2, False, None],
+    }
+    assert first["client_prop_dropped_count"] == 0
+    # The per-key fan-out is gone: no property may mint its own Aria column.
+    assert not any(key.startswith("client_prop_") and key != "client_prop_dropped_count" for key in first)
     assert "developer_id" not in first
 
 
@@ -797,8 +804,7 @@ def test_unknown_event_fields_are_ignored_not_rejected(captured_post, monkeypatc
     data = captured_post[0][1][0]["data"]
     assert not any("level" in key for key in data)
     assert data["client_event_name"] == "WidgetReady"
-    assert data["client_prop_stage"] == "loaded"
-
+    assert json.loads(data["client_properties"]) == {"stage": "loaded"}
 
 def test_report_client_events_scrubs_paths_urls_emails_and_guids(captured_post, monkeypatch):
     # Bounded primitives still reach Aria verbatim unless they go through
@@ -828,16 +834,98 @@ def test_report_client_events_scrubs_paths_urls_emails_and_guids(captured_post, 
 
     assert result == {"status": "accepted", "acceptedEventCount": 1}
     data = captured_post[0][1][0]["data"]
-    assert data["client_prop_note"] == "<path> see <url>"
-    assert data["client_prop_owner"] == "<email>"
-    assert data["client_prop_objectId"] == "<guid>"
+    props = json.loads(data["client_properties"])
+    assert props["note"] == "<path> see <url>"
+    assert props["owner"] == "<email>"
+    assert props["objectId"] == "<guid>"
     # Array elements are redacted too; non-strings pass through untouched.
-    assert data["client_prop_tags"] == ["<email>", "ok"]
-    assert data["client_prop_count"] == 3
+    assert props["tags"] == ["<email>", "ok"]
+    assert props["count"] == 3
+    # Keys are call-site literals and are never scrubbed — rewriting them would
+    # corrupt the field names analysts query inside the blob.
+    assert set(props) == {"note", "owner", "objectId", "tags", "count"}
 
 
-def test_report_client_events_rejects_free_text_event_names(captured_post):
-    # ADK deliberately keeps no Vorpal event-name allowlist, but the name is
+def test_properties_are_scrubbed_per_value_never_over_the_blob():
+    """Scrubbing the serialized blob would destroy it.
+
+    ``_scrub``'s ``(?<!\\w)/[^\\s]+`` -> ``<path>`` rule runs to the next
+    whitespace, and compact JSON has none. Applied to ``{"a":"/x","b":"y"}`` it
+    eats through the closing brace and leaves an unparseable document, taking
+    every property with it. Scrubbing each value first keeps the damage scoped
+    to the one field that actually carried a path.
+    """
+    blob, dropped = adk._client_properties_blob({"a": "/etc/passwd", "b": "y"})
+
+    assert json.loads(blob) == {"a": "<path>", "b": "y"}
+    assert dropped == 0
+    # The failure mode this guards against, made explicit.
+    assert adk._scrub('{"a":"/x","b":"y"}') != '{"a":"<path>","b":"y"}'
+
+
+def test_non_finite_numbers_are_filtered_before_serialization():
+    """``json.dumps`` emits bare ``NaN``/``Infinity``, which is not valid JSON.
+
+    Left in, they would make the entire blob unparseable by ``parse_json`` on
+    the KQL side, so a single bad number would cost every property on the event
+    rather than itself.
+    """
+    blob, dropped = adk._client_properties_blob(
+        {"good": 1.5, "nan": float("nan"), "inf": float("inf")}
+    )
+
+    assert json.loads(blob) == {"good": 1.5}
+    assert dropped == 2
+    assert "NaN" not in blob and "Infinity" not in blob
+
+
+def test_unserializable_property_values_are_dropped_individually():
+    blob, dropped = adk._client_properties_blob(
+        {"ok": "keep", "nested": {"a": 1}, "matrix": [[1, 2]], "obj": object()}
+    )
+
+    assert json.loads(blob) == {"ok": "keep"}
+    assert dropped == 3
+
+
+def test_oversized_properties_are_shed_until_the_blob_fits():
+    """Shed, never truncate — a truncated JSON string parses as nothing.
+
+    No single value can overflow the blob on its own, since each is scrubbed to
+    ``CLIENT_EVENTS_MAX_STRING_LENGTH`` first. The cap binds on property COUNT,
+    which is exactly why it matters once the arbitrary <=25 properties limit is
+    gone: the backstop becomes Aria's field limit rather than a self-imposed
+    contract that killed the batch.
+    """
+    properties = {f"k{i}": "x" * 200 for i in range(60)}
+
+    blob, dropped = adk._client_properties_blob(properties)
+
+    assert len(blob.encode("utf-8")) <= adk.CLIENT_EVENTS_MAX_PROPERTIES_BYTES
+    survivors = json.loads(blob)  # still parseable, which truncation would not be
+    assert dropped > 0
+    assert len(survivors) == 60 - dropped
+    assert all(value == "x" * 200 for value in survivors.values())
+
+
+def test_missing_properties_still_emit_a_parseable_blob(captured_post, monkeypatch):
+    """The emitted field set must be fixed, or ``SCHEMA_VERSION`` means nothing."""
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[{"eventName": "NoProps", "timeSinceAppStart": 1}]
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 1}
+    data = captured_post[0][1][0]["data"]
+    assert json.loads(data["client_properties"]) == {}
+    assert data["client_prop_dropped_count"] == 0
+
+
+def test_report_client_events_rejects_free_text_event_names(captured_post):    # ADK deliberately keeps no Vorpal event-name allowlist, but the name is
     # emitted verbatim as a dimension, so it must stay identifier-shaped rather
     # than become a free-text channel for customer content.
     result = adk.report_client_events(
