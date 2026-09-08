@@ -730,7 +730,6 @@ def test_report_client_events_rejects_oversized_property_strings(captured_post):
         ({"eventName": "BadTime", "timeSinceAppStart": float("nan")}, "invalid_event_shape"),
         ({"eventName": "BadProperty", "timeSinceAppStart": 1, "properties": {"x": {"nested": True}}}, "invalid_property_type"),
         ({"eventName": "BadKey", "timeSinceAppStart": 1, "properties": {"bad-key": True}}, "invalid_property_type"),
-        ({"eventName": "ExtraField", "timeSinceAppStart": 1, "rawRequestId": "abc"}, "invalid_event_shape"),
     ],
 )
 def test_report_client_events_rejects_out_of_contract_events(event, reason, captured_post):
@@ -763,6 +762,42 @@ def test_unknown_envelope_fields_are_ignored_not_rejected(captured_post, monkeyp
     # The unknown key is not carried onto the emitted rows either.
     data = captured_post[0][1][0]["data"]
     assert not any("rawPayload" in key for key in data)
+
+
+def test_unknown_event_fields_are_ignored_not_rejected(captured_post, monkeypatch):
+    """A new optional ``BridgeEvent`` field must not cost the batch.
+
+    This is the twin of the envelope case above, and the one that was genuinely
+    reachable: ``events`` is typed ``Any``, so Pydantic hands nested keys to the
+    body untouched and the old closed key set really did fire. Rejecting here
+    meant that the day Vorpal started sending a field it already computes — the
+    info/error ``level`` at ``Logger.ts:75``, discarded at ``:88`` — every batch
+    would be rejected and dropped without retry until an ADK release shipped,
+    including the ``schemaVersion`` bump meant to signal the addition.
+    """
+    monkeypatch.setenv("ESS_ADK_ARIA_ENV", "dev")
+
+    result = adk.report_client_events(
+        _client_events_envelope(
+            events=[
+                {
+                    "eventName": "WidgetReady",
+                    "timeSinceAppStart": 12,
+                    "level": "info",
+                    "properties": {"stage": "loaded"},
+                }
+            ]
+        ),
+        block=True,
+    )
+
+    assert result == {"status": "accepted", "acceptedEventCount": 1}
+    # Ignored, not passed through: the emit loop reads only known fields, so an
+    # unrecognized key cannot mint an unreviewed Aria column on its own.
+    data = captured_post[0][1][0]["data"]
+    assert not any("level" in key for key in data)
+    assert data["client_event_name"] == "WidgetReady"
+    assert data["client_prop_stage"] == "loaded"
 
 
 def test_report_client_events_scrubs_paths_urls_emails_and_guids(captured_post, monkeypatch):

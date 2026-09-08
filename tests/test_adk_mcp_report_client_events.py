@@ -171,6 +171,29 @@ def test_valid_envelope_is_accepted_through_the_real_call_tool_path():
     assert result.isError is False
 
 
+def test_unknown_event_field_survives_the_real_call_tool_path():
+    """The asymmetry that made the closed event key set reachable.
+
+    Unknown *envelope* keys never reach the body — FastMCP's arg model is
+    ``extra='ignore'``. Unknown *event* keys do: ``events`` is typed ``Any``, so
+    Pydantic passes the nested dict through untouched. That made the old
+    ``set(event) - _CLIENT_EVENTS_EVENT_KEYS`` check live, and it rejected the
+    whole batch. Asserting this through ``call_tool`` rather than against the
+    bridge directly is the point — the direct call cannot tell the two cases
+    apart, which is how the envelope twin was mistaken for a real guarantee.
+    """
+    server = _load_adk_server()
+    args = {
+        **_valid_tool_args(),
+        "events": [{"eventName": "WidgetReady", "timeSinceAppStart": 1, "level": "info"}],
+    }
+
+    result = asyncio.run(server.mcp.call_tool("report_client_events", args))
+
+    assert result.structuredContent == {"status": "accepted", "acceptedEventCount": 1}
+    assert result.isError is False
+
+
 def test_bridge_is_total_so_the_wrapper_needs_no_guard(monkeypatch):
     """The wrapper carries no try/except because the bridge never raises.
 

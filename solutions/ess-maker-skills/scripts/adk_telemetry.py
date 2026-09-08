@@ -140,14 +140,6 @@ _CLIENT_EVENTS_EVENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 # name. This single bound also replaces the old pairing of a <=200 check with a
 # {1,64} suffix rule, where the <=200 never bound.
 _CLIENT_EVENTS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-_CLIENT_EVENTS_EVENT_KEYS = frozenset(
-    {
-        "eventName",
-        "timeSinceAppStart",
-        "locale",
-        "properties",
-    }
-)
 
 # --- Canonical ADK capability value-list (single source of truth) ---------
 # Every ``adk_capability`` value emitted anywhere in the kit MUST be one of
@@ -763,8 +755,13 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
     for event in events:
         if not isinstance(event, dict):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-        if set(event) - _CLIENT_EVENTS_EVENT_KEYS:
-            return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
+        # Unknown event keys are ignored rather than rejected. Unlike the
+        # envelope, ``events`` is typed ``Any``, so Pydantic passes nested keys
+        # through untouched and a closed key set here really would fire: the day
+        # Vorpal adds an optional ``BridgeEvent`` field, every batch would be
+        # rejected — and dropped without retry — until an ADK release shipped.
+        # The emit loop below reads only the fields it knows, so an unrecognized
+        # key is dropped from the row instead of costing 25 unrelated events.
         if not _valid_bounded_string(event.get("eventName")):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
         if not _CLIENT_EVENTS_EVENT_NAME_RE.match(event["eventName"]):
