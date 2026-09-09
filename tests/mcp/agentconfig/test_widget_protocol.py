@@ -74,7 +74,11 @@ class _FakeClient:
         return {"titleId": title_id, "quickLinksConfig": {"quickLinks": []}}
 
     async def open_starter_prompts(self, title_id: str) -> dict[str, Any]:
-        return {"titleId": title_id, "pivots": []}
+        return {
+            "titleId": title_id,
+            "schemaName": "msdyn_copilotforemployeeselfservicehr",
+            "pivots": [],
+        }
 
     async def update_agent_config(
         self,
@@ -218,6 +222,24 @@ def test_openers_and_app_tools_return_structured_content(monkeypatch) -> None:
         assert deleted.structuredContent == {
             "success": True,
             "titleId": "title-1",
+        }
+
+    asyncio.run(run())
+
+
+def test_open_starter_prompts_carries_schema_name(monkeypatch) -> None:
+    monkeypatch.setattr(agentconfig_server, "_client", _FakeClient())
+
+    async def run() -> None:
+        opened = await agentconfig_server.mcp.call_tool(
+            "open_starter_prompts",
+            {"titleId": "title-1"},
+        )
+        assert opened.isError is False
+        assert opened.structuredContent == {
+            "titleId": "title-1",
+            "schemaName": "msdyn_copilotforemployeeselfservicehr",
+            "pivots": [],
         }
 
     asyncio.run(run())

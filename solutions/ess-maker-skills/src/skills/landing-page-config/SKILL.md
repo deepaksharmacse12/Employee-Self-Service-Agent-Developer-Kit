@@ -93,10 +93,13 @@ unavailable, tell the maker to reload the VS Code window, rerun
    `list_agent_configs` already has a configuration. A match found only through
    `search_agents` must be initialized through `create_agent_config`.
 5. When `titleId` is available from `.local/config.json`, do not call
-   `list_agent_configs` or `search_agents`. Call `get_agent_config` once to
-   establish whether its configuration exists. After a successful read or
-   creation, assume it continues to exist and do not repeat a preflight read
-   before each widget.
+   `list_agent_configs` or `search_agents`. Call `get_agent_config` once only
+   when configuration existence has not already been established. Any
+   successful `get_agent_config`, `create_agent_config`, `open_*`, or
+   `update_agent_config` call establishes existence for the rest of the
+   conversation. A new maker turn does not reset that state. Once existence is
+   established, never call `get_agent_config` solely as a preflight; invoke the
+   requested `open_*` tool directly.
 6. When the maker supplies exact values or an exact deterministic change, use
    the direct-update flow. Read and merge the current section only when the
    requested change does not provide its complete replacement. Call
@@ -511,7 +514,10 @@ and guide them into the right scenarios. These tenant-level prompts override
 starter prompts configured in Copilot Studio.
 
 When `open_starter_prompts` returns an empty or absent `pivots` array, the widget
-opens with a default set of starter prompts. Accompany the widget with:
+opens with a default set of starter prompts. The tool also returns the agent's
+`schemaName`, which selects those defaults: an HR or IT agent opens with the
+single category matching its vertical, and any other agent opens with both the
+human-resources and IT-support categories. Accompany the widget with:
 
 > No starter prompts are configured yet, so the editor is showing a default
 > set. You can update and publish them, or publish them as-is.

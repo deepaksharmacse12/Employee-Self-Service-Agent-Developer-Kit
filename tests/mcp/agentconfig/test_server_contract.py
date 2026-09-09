@@ -58,11 +58,8 @@ def test_server_exposes_the_skill_tool_contract() -> None:
         "open_accent_color": ["titleId"],
         "open_quick_links": ["titleId"],
         "open_starter_prompts": ["titleId"],
-        # The Vorpal telemetry bridge. It belongs on THIS server, not the `adk`
-        # automation server, because MCP Apps only lets a widget call tools on
-        # the same server connection it was loaded from — and the widget
-        # resources are served from here. It is app-only, so it does not appear
-        # in the model-visible tool list despite being part of this surface.
+        # App-only telemetry shares the connection serving the widget resources
+        # and stays hidden from the model-visible tool list.
         "report_client_events": [
             "schemaVersion",
             "correlationId",

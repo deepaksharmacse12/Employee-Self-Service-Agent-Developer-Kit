@@ -21,10 +21,9 @@ from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 
 from client import AgentConfigApiError, AgentConfigClient
 
-# Allow importing the telemetry SDK from scripts/ when the server is launched
-# directly. The client-event bridge has to live on THIS server: MCP Apps only
-# lets a widget call tools on the same server connection it was loaded from,
-# and the widget resources below are served from here.
+# Import the telemetry SDK from scripts/ when launched directly. MCP Apps
+# binds widget tool calls to the connection serving the widget resources, so
+# the telemetry bridge is registered on this server.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
 
 import adk_telemetry  # type: ignore  # noqa: E402  # pylint: disable=import-error
@@ -105,11 +104,7 @@ def _app_tool_meta() -> dict[str, Any]:
 
 
 def _app_only_tool_meta() -> dict[str, Any]:
-    """Callable by a widget on this connection, hidden from the model.
-
-    Distinct from ``_app_tool_meta``: the telemetry bridge must NOT appear in
-    the model-visible tool list, so it omits ``"model"``.
-    """
+    """Callable by a widget on this connection, hidden from the model."""
     return {"ui": {"visibility": ["app"]}}
 
 
@@ -420,21 +415,13 @@ async def report_client_events(
 ) -> CallToolResult:
     """Accept Vorpal client telemetry batches through the app-only bridge.
 
-    This lives on the landing-page server rather than the ADK automation server
-    because MCP Apps only lets a widget call tools on the SAME server
-    connection it was loaded from, and the widget resources are served here.
-    Hosting it elsewhere makes every call fail with "Tool not found on server",
-    which the Vorpal queue swallows by design — so the telemetry simply never
-    arrives, with no error surfaced anywhere.
+    MCP Apps binds tool calls to the connection serving the widget resources,
+    so this bridge shares the landing-page server with those resources.
 
-    Every parameter is deliberately untyped: FastMCP validates the tool
-    signature with Pydantic *before* the body runs, so a narrowly-typed
-    signature would turn an out-of-contract envelope into a ToolError carrying
-    no ``structuredContent``. Vorpal reads a result without a ``status`` as a
-    transient failure and retries it, so a permanently malformed batch would
-    retry forever. Widening the signature routes every envelope through the
-    bridge validator, which always answers with an explicit accepted/rejected
-    verdict.
+    ``Any`` parameters route malformed values through the bridge validator,
+    which returns an explicit accepted/rejected verdict in ``structuredContent``.
+    Vorpal treats a missing ``status`` as transient and retries, so validation
+    failures must retain that result shape.
     """
     envelope: dict[str, Any] = {
         "schemaVersion": schemaVersion,
@@ -448,9 +435,7 @@ async def report_client_events(
     if toolCallId is not None:
         envelope["toolCallId"] = toolCallId
 
-    # ``adk_telemetry.report_client_events`` is already total: it catches every
-    # exception internally and answers with a contract-shaped verdict, so a
-    # second guard here would only ever shadow a bug in that contract.
+    # The SDK owns validation, exception handling, and the contract-shaped verdict.
     result = adk_telemetry.report_client_events(envelope)
 
     message = (

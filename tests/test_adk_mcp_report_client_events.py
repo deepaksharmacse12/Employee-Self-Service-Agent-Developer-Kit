@@ -41,28 +41,15 @@ def _load_server(folder: str, alias: str):
 
 
 def _load_adk_server():
-    """The server that hosts the bridge — i.e. the one serving widget resources.
-
-    The bridge moved off the `adk` automation server: MCP Apps only lets a
-    widget call tools on the SAME server connection it was loaded from, and the
-    widget resources live on the landing-page server.
-    """
+    """Load the landing-page server that hosts widgets and their telemetry bridge."""
     return _load_server("agentconfig_landing_page", "landing_page_mcp_server_under_test")
 
 
 def test_bridge_is_colocated_with_the_widget_resources():
     """The bridge must live on whichever server serves the widgets.
 
-    This is the invariant whose absence shipped a silently-broken bridge: the
-    tool was registered on the `adk` server while the widgets were served from
-    `agentconfig`, so every widget call failed with
-
-        Tool not found on server: report_client_events
-
-    and the Vorpal queue swallowed it by design, so no telemetry arrived and
-    nothing surfaced an error. Every test passed, because they all called the
-    `adk` server directly and never crossed the connection boundary the widget
-    actually uses.
+    MCP Apps routes a widget's tool calls through its originating connection.
+    Resource and tool registration must therefore agree on the server.
     """
     agentconfig = _load_server("agentconfig_landing_page", "landing_page_colocation_check")
     adk = _load_server("adk", "adk_colocation_check")
@@ -86,8 +73,7 @@ def test_report_client_events_tool_is_app_only():
 
     tool = server.mcp._tool_manager._tools["report_client_events"]
 
-    # ["app"] only — NOT ["model", "app"] like update_agent_config, so the host
-    # keeps the bridge out of the model-visible tool list.
+    # App-only visibility keeps the bridge out of model-visible tool discovery.
     assert tool.meta == {"ui": {"visibility": ["app"]}}
     assert tool.annotations.readOnlyHint is False
     assert tool.annotations.destructiveHint is False
@@ -189,15 +175,11 @@ def _valid_tool_args():
     ],
 )
 def test_malformed_envelopes_return_a_structured_rejection(mutation, expected_reason):
-    """A malformed envelope must never surface as a bare tool error.
+    """Malformed envelopes receive an explicit structured rejection.
 
-    FastMCP validates the tool signature with Pydantic BEFORE the body runs, so
-    a narrowly-typed signature turns an out-of-contract envelope into a
-    ToolError with no ``structuredContent``. Vorpal reads a result without a
-    ``status`` as a transient ``invalid_result`` and MAY RETRY it — and since
-    the envelope is permanently malformed, it would retry forever. Going
-    through the real ``call_tool`` path is the point of this test: calling the
-    function directly would bypass the Pydantic layer that caused the bug.
+    Exercise FastMCP argument validation through ``call_tool``. Vorpal requires
+    a ``status`` in the result to classify permanent validation failures and
+    avoid retrying them.
     """
     server = _load_adk_server()
     args = {**_valid_tool_args(), **mutation}
@@ -224,15 +206,11 @@ def test_valid_envelope_is_accepted_through_the_real_call_tool_path():
 
 
 def test_unknown_event_field_survives_the_real_call_tool_path():
-    """The asymmetry that made the closed event key set reachable.
+    """Optional event fields survive FastMCP argument validation.
 
-    Unknown *envelope* keys never reach the body — FastMCP's arg model is
-    ``extra='ignore'``. Unknown *event* keys do: ``events`` is typed ``Any``, so
-    Pydantic passes the nested dict through untouched. That made the old
-    ``set(event) - _CLIENT_EVENTS_EVENT_KEYS`` check live, and it rejected the
-    whole batch. Asserting this through ``call_tool`` rather than against the
-    bridge directly is the point — the direct call cannot tell the two cases
-    apart, which is how the envelope twin was mistaken for a real guarantee.
+    ``events`` is typed ``Any``, so nested keys reach the bridge unchanged.
+    The real ``call_tool`` path must accept additive event fields to keep
+    producer releases independent of ADK.
     """
     server = _load_adk_server()
     args = {
@@ -247,14 +225,10 @@ def test_unknown_event_field_survives_the_real_call_tool_path():
 
 
 def test_bridge_is_total_so_the_wrapper_needs_no_guard(monkeypatch):
-    """The wrapper carries no try/except because the bridge never raises.
+    """An internal SDK fault still produces a complete tool verdict.
 
-    These two tests previously monkeypatched `report_client_events` to raise,
-    which proved only that a redundant guard caught a simulated fault. The
-    guarantee that actually matters is that `adk_telemetry.report_client_events`
-    is total: it traps internal faults itself and always answers with a
-    contract-shaped verdict. So this induces a REAL internal fault instead, and
-    asserts the tool still returns a verdict with the full sent count.
+    Fault the dimension builder to exercise the SDK's exception handling
+    through the wrapper. The accepted verdict must account for the full batch.
     """
     server = _load_adk_server()
 

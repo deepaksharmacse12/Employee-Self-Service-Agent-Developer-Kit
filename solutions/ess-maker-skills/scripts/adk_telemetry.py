@@ -2,14 +2,14 @@
 # Licensed under the MIT License.
 
 """
-ESS Agent Development Kit — general telemetry SDK (Aria / 1DS).
+ESS Agent Development Kit — general telemetry SDK (Aria/1DS).
 
 Implements the ``adk.*`` event family from the *ADK Telemetry* PM spec
 (ADO Feature #7403772) for the ADK's CLI skills — everything *except*
 the FlightCheck outcome events, which keep their own dedicated emitter in
 ``flightcheck/telemetry.py`` (those feed the existing leadership
 dashboards and must not change shape). This module is **additive**: it
-adds the spec's session / agent / build / api / capability event family
+adds the spec's session/agent/build/api/capability event family
 plus spec-named ``adk.flightcheck.*`` events, all reusing the proven 1DS
 OneCollector transport from ``flightcheck.telemetry``.
 
@@ -24,26 +24,28 @@ Design rules (deliberate — read before changing):
 
 * **Consent + opt-out.** Telemetry is enabled by default. The maker can
   opt out via ``python adk_telemetry.py off`` (persisted to
-  ``~/.adk/config``) or the ``ESS_ADK_TELEMETRY=off`` env var. A one-time
-  notice is printed on first use (``maybe_print_notice``).
+  ``~/.adk/config``) or the ``ESS_ADK_TELEMETRY=off`` env var. Disclosure
+  lives in the top-level README and CONTRIBUTING.md; no runtime banner is
+  printed.
 
-* **Privacy: no developer identity collected; tenant_id raw OII; enums only,
-  no free text.** We do NOT collect or emit any developer/user identifier
-  (not even hashed). Active-user / DAU-WAU-MAU counts dedupe on
+* **Privacy: no developer identity collected; tenant_id raw OII; scrubbed
+  free text.** We do NOT collect or emit any developer/user identifier
+  (not even hashed). Active-user/DAU-WAU-MAU counts dedupe on
   ``instance_id`` — a random GUID generated per ADK install (persisted to
   ``.local/.instance_id``) that is not linkable to any AAD user. ``tenant_id``
   is emitted as the RAW Microsoft Entra tenant GUID: the approved Data Profile
   (Data Scout, privacy review COMPLETED) classifies it Organizational
   Identifiable Information (OII) with "No Data Transformation" (it identifies
-  the enterprise tenant, not an individual user), retained <= 30 days. Error
-  fields are scrubbed of paths / URLs and truncated. We never emit user
-  content.
+  the enterprise tenant, not an individual user), retained <= 30 days. Client
+  event names and string property values may contain free text. Those values
+  and error fields are scrubbed of paths/URLs/emails/GUIDs and truncated.
+  Callers must keep customer content out of telemetry.
 
 * **Reliability.** On send failure events are buffered to
-  ``~/.adk/telemetry-buffer.ndjson`` (capped at 1000 events / 5 MB) and
+  ``~/.adk/telemetry-buffer.ndjson`` (capped at 1000 events/5 MB) and
   flushed on the next successful emit (spec Failure Scenarios).
 
-iKeys / OneCollector contract are inherited from ``flightcheck.telemetry``
+iKeys/OneCollector contract are inherited from ``flightcheck.telemetry``
 (same dev/prod Aria projects, so these events land alongside FlightCheck
 in the same tenant the dashboards read from).
 """
@@ -69,9 +71,9 @@ from flightcheck import telemetry as _fc  # noqa: E402
 
 # --- Spec constants -------------------------------------------------------
 # 1.1.0: added derived ``tenant_class`` (internal vs customer) — ADO 7558661.
-# 1.2.0: client bridge properties moved from per-key ``client_prop_<key>``
-#        columns to a single ``client_properties`` JSON string, plus
-#        ``client_prop_dropped_count`` — ADO 7558661 / PR #248 review.
+# 1.2.0: adds ``adk.client.event`` and its fixed ``client_*`` field set,
+#        including ``client_level``, the ``client_properties`` JSON string,
+#        and ``client_prop_dropped_count``.
 SCHEMA_VERSION = "1.2.0"
 
 # Surfaces the ADK emits from (spec enum: sdk | cli | studio | docs). The
@@ -93,47 +95,31 @@ EVENT_FLIGHTCHECK_ERROR = "adk.flightcheck.error"
 EVENT_CLIENT = "adk.client.event"
 
 CLIENT_EVENTS_SCHEMA_VERSION = 1
-# An out-of-memory guard, not a contract. This used to be exactly Vorpal's
-# ``TELEMETRY_MAX_BATCH_SIZE`` (confirmed at 25), which meant raising the cap on
-# the JavaScript side would have killed every batch here until an ADK release
-# shipped. A high guard keeps ``batch_too_large`` meaningful without coupling
-# the two: 1000 is ~40x the client's actual batcher max, so it cannot reject a
-# well-behaved batch in either direction.
+# An out-of-memory guard set well above client batcher sizes, so client-side
+# batch-size changes can ship independently of ADK.
 CLIENT_EVENTS_MAX_BATCH_EVENTS = 1000
 CLIENT_EVENTS_MAX_STRING_LENGTH = 200
-# Property keys become field names inside the JSON blob, so a single key must
-# not be able to eat the blob budget. Length is the only thing bounded: the
-# charset rule that used to reject the batch was protecting an Aria column-name
-# axis that no longer exists now that properties are one serialized value.
+# Property keys live inside the JSON blob. Bound their length so a single key
+# cannot consume the blob budget.
 CLIENT_EVENTS_MAX_PROPERTY_KEY_LENGTH = 64
-# Cap on the serialized ``client_properties`` blob. Properties are SHED until
-# the blob fits, never truncated: a truncated JSON string is unparseable by
-# ``parse_json`` on the KQL side, which would lose every property instead of
-# the overflow.
+# Cap on the serialized ``client_properties`` blob. Shed whole properties
+# until the blob fits so it remains parseable by KQL's ``parse_json``.
 #
 # This is a self-imposed budget. Aria documents no per-field string limit
 # (https://www.aria.ms/developers/deep-dives/service-limits); the only
 # ingestion ceiling is 2.5 MB uncompressed for a whole event, which one blob
-# cannot realistically approach. 8 KB is therefore a deliberate conservative
-# budget rather than a number derived from the backstop.
+# cannot realistically approach. The 8 KB budget is deliberately conservative.
 #
-# Batch-level size is bounded in practice, not by this constant: Vorpal's
-# ``TELEMETRY_MAX_BATCH_SIZE`` is 25, so a real request carries at most ~200 KB
-# of blobs — far under the ~3.15 MB request ceiling the 1DS client enforces,
-# even though ``_emit_many_sync`` POSTs the whole batch unsplit.
+# A 25-event client batch carries at most ~200 KB of property blobs, within the
+# ~3.15 MB request ceiling the 1DS client enforces. ``_emit_many_sync`` posts
+# each batch in one request.
 CLIENT_EVENTS_MAX_PROPERTIES_BYTES = 8 * 1024
 
 CLIENT_EVENTS_REJECTED_UNSUPPORTED_SCHEMA_VERSION = "unsupported_schema_version"
 CLIENT_EVENTS_REJECTED_INVALID_CORRELATION_ID = "invalid_correlation_id"
-# Per-field reason for the mount id. Reusing ``invalid_correlation_id`` for it
-# misattributes the failure on any Vorpal-side dashboard or alert that buckets
-# by ``rejectedReason``.
-#
-# This extends Vorpal's bounded ``BridgeRejectedReason`` union, so until the
-# matching Vorpal change ships its client maps it to ``unrecognized_reason``.
-# That degrades safely: ``getTelemetryBridgeOutcome`` still classifies an
-# unrecognized reason as a REJECTION, so the batch is dropped rather than
-# retried, exactly as before.
+# A distinct reason lets dashboards attribute a failure to the mount id.
+# Clients that do not recognize this reason map it to ``unrecognized_reason``;
+# ``getTelemetryBridgeOutcome`` classifies that as a rejection and drops it.
 CLIENT_EVENTS_REJECTED_INVALID_MOUNT_ID = "invalid_mount_id"
 CLIENT_EVENTS_REJECTED_EMPTY_BATCH = "empty_batch"
 CLIENT_EVENTS_REJECTED_BATCH_TOO_LARGE = "batch_too_large"
@@ -149,15 +135,9 @@ _CLIENT_EVENTS_REJECTED_REASONS = frozenset(
         CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE,
     }
 )
-_CLIENT_EVENTS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-# The ephemeral correlation identifiers are emitted as dimensions, so a bounded
-# length alone would leave ~195 characters of arbitrary UTF-8 per field free to
-# smuggle UPNs, paths, URLs or object ids into Aria. The charset is what does
-# that work, and it applies to the whole value: requiring a ``corr-``/``mount-``
-# /``tool-`` prefix on top would hard-code Vorpal's ``getRandomId`` call into
-# this repo for no privacy benefit, and the fields are already distinguished by
-# name. This single bound also replaces the old pairing of a <=200 check with a
-# {1,64} suffix rule, where the <=200 never bound.
+# Correlation identifiers are emitted verbatim for event stitching. Apply the
+# bounded ASCII format to the whole value; field names distinguish each id's
+# purpose independently of the producer's prefix convention.
 _CLIENT_EVENTS_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 # --- Canonical ADK capability value-list (single source of truth) ---------
@@ -229,7 +209,10 @@ _ERROR_OUTCOMES = frozenset(
     {"client_error", "server_error", "timeout", "abandoned", "failure", "fail"}
 )
 
-# Local config / state lives under ~/.adk (spec Consent & Notice).
+# Local config / state lives under ~/.adk. Opt-out preference is written here
+# by ``python scripts/adk_telemetry.py off`` (see set_telemetry); no runtime
+# banner is printed — disclosure lives in the top-level README and
+# CONTRIBUTING.md.
 CONFIG_DIR = os.path.expanduser(os.path.join("~", ".adk"))
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config")
 SESSION_PATH = os.path.join(CONFIG_DIR, "session.json")
@@ -240,14 +223,6 @@ BUFFER_MAX_EVENTS = 1000
 BUFFER_MAX_BYTES = 5 * 1024 * 1024
 RUNS_PATH = os.path.join(CONFIG_DIR, "flightcheck-runs.json")
 
-NOTICE_TEXT = (
-    "ADK collects pseudonymous usage data to improve the product.\n"
-    "To disable telemetry, run: python scripts/adk_telemetry.py off\n"
-    "(or set the environment variable ESS_ADK_TELEMETRY=off)\n"
-    "Learn more: https://aka.ms/adk-telemetry\n"
-)
-
-# When true (env or block=True), emit on the calling thread for determinism.
 _SYNC = os.environ.get("ESS_ADK_TELEMETRY_SYNC", "").strip().lower() in (
     "1", "on", "true", "yes",
 )
@@ -270,8 +245,38 @@ _SESSION_LOCK = threading.Lock()
 
 
 # --- Identity model (spec) ------------------------------------------------
+# Canonical Entra tenant GUID: 8-4-4-4-12 lowercase-hex, dashes at fixed
+# offsets. Enforced *only* on tenant_id (the raw OII we ship to Aria) so
+# obvious test-fixture placeholders like ``"tenant-id"`` don't slip into
+# the prod stream and inflate the customer bucket. Also applied when
+# reading back from the on-disk ``.tenant_id`` cache, so a torn / legacy /
+# hand-edited file can never bypass the check.
+_GUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def _sanitize_tenant_id(tenant_id: str) -> str:
+    """Return ``tenant_id`` iff it looks like a canonical GUID, else ``""``.
+
+    Never raises. Empty input stays empty. Whitespace/case are tolerated so
+    a caller that passes ``"  ABCDEF01-2345-6789-ABCD-EF0123456789  "`` still
+    gets a valid identity (normalized to lowercase). Anything else
+    (``"tenant-id"``, ``"unknown"``, truncated GUIDs, org display names
+    accidentally routed here) normalizes to ``""`` so downstream
+    ``classify_tenant`` labels the event as ``"unknown"`` rather than as
+    a fake customer.
+    """
+    if not tenant_id:
+        return ""
+    v = tenant_id.strip().lower()
+    return v if _GUID_RE.match(v) else ""
+
+
 def set_identity(
-    tenant_id: str = "", instance_id: str | None = None, tenant_name: str = ""
+    tenant_id: str | None = None,
+    instance_id: str | None = None,
+    tenant_name: str | None = None,
 ) -> dict[str, str]:
     """Record the install + tenant identity for all subsequent events.
 
@@ -284,22 +289,61 @@ def set_identity(
     organization display name (OII identifying the enterprise tenant, not a
     person; privacy-approved without a Data Profile update) — best-effort,
     stored as ``""`` when unavailable. No developer/user id is collected.
+
+    All three parameters use a ``None`` sentinel to mean "don't touch". This
+    lets a later call like ``set_identity(tenant_id=<guid>)`` add / refresh
+    the tenant id without clobbering a tenant_name a previous call already
+    resolved (the reason ``start_session`` used to blank out ``tenant_name``
+    when it re-bootstrapped identity right after auth). Passing ``""`` for
+    any field explicitly clears it.
+
+    When ``tenant_id`` changes to a genuinely different GUID and the caller
+    does not simultaneously supply a matching ``tenant_name``, the stored
+    ``tenant_name`` is dropped — a name resolved for tenant A must never be
+    stamped on tenant B's events.
+
+    Any ``tenant_id`` that is not a well-formed Entra tenant GUID is
+    silently normalized to ``""`` (see ``_sanitize_tenant_id``).
     """
-    _IDENTITY["instance_id"] = (
-        _fc.get_instance_id() if instance_id is None else (instance_id or "")
-    )
-    _IDENTITY["tenant_id"] = tenant_id or ""
-    _IDENTITY["tenant_name"] = tenant_name or ""
-    # When a Graph-capable flow (FlightCheck) resolves the org display name,
-    # persist it so ADK events emitted later in a *different* process (which
-    # only has a Dataverse/BAP token and can't resolve it) can reuse it. The
-    # cache is keyed by tenant_id in flightcheck.telemetry.cache_tenant_name.
-    if tenant_name:
-        _fc.cache_tenant_name(_IDENTITY["tenant_id"], tenant_name)
+    if instance_id is not None:
+        _IDENTITY["instance_id"] = instance_id or _fc.get_instance_id()
+    elif not _IDENTITY["instance_id"]:
+        _IDENTITY["instance_id"] = _fc.get_instance_id()
+
+    if tenant_id is not None:
+        new_tid = _sanitize_tenant_id(tenant_id)
+        if (
+            new_tid
+            and _IDENTITY["tenant_id"]
+            and new_tid != _IDENTITY["tenant_id"]
+            and tenant_name is None
+        ):
+            # Tenant switch with no fresh name supplied: drop the stale one
+            # rather than stamp tenant A's name onto tenant B's events.
+            _IDENTITY["tenant_name"] = ""
+        _IDENTITY["tenant_id"] = new_tid
+
+    if tenant_name is not None:
+        _IDENTITY["tenant_name"] = tenant_name or ""
+
+    # Persist tenant_id so a *later* Python subprocess (e.g. the
+    # emit_capability.py shim launched from a SKILL.md step) — which never
+    # calls set_identity itself — can still stamp the tenant on its events.
+    if _IDENTITY["tenant_id"]:
+        _fc.cache_tenant_id(_IDENTITY["tenant_id"])
+    # Persist the tenant name so ADK events emitted later in a *different*
+    # process (which only has a Dataverse/BAP token and can't resolve it)
+    # can reuse it. Only cache when both fields are present.
+    if _IDENTITY["tenant_name"] and _IDENTITY["tenant_id"]:
+        _fc.cache_tenant_name(_IDENTITY["tenant_id"], _IDENTITY["tenant_name"])
     return dict(_IDENTITY)
 
 
-# --- Consent / opt-out (spec Consent & Notice) ----------------------------
+# --- Consent / opt-out ----------------------------------------------------
+# Opt-out is honored via the ``ESS_ADK_TELEMETRY`` env var or the on-disk
+# ``~/.adk/config`` preference (written by ``python adk_telemetry.py off``).
+# Disclosure lives in the top-level README and CONTRIBUTING.md; no runtime
+# banner is printed by the SDK.
 def _read_config() -> dict[str, Any]:
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -339,22 +383,6 @@ def set_telemetry(enabled: bool) -> bool:
 
 def telemetry_status() -> str:
     return "enabled" if telemetry_enabled() else "disabled"
-
-
-def maybe_print_notice(stream: Any = None) -> bool:
-    """Print the one-time consent notice on first use. Returns True if shown.
-
-    Idempotent across invocations via the ``noticeShown`` config flag. Never
-    blocks execution — it prints and returns.
-    """
-    cfg = _read_config()
-    if cfg.get("noticeShown"):
-        return False
-    (stream or sys.stderr).write("\n" + NOTICE_TEXT + "\n")
-    cfg["noticeShown"] = True
-    cfg.setdefault("telemetry", "enabled")
-    _write_config(cfg)
-    return True
 
 
 # --- Session identity (spec: UUID v4, 30-min inactivity window) -----------
@@ -444,7 +472,19 @@ def common_dimensions(
     tenant_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the dimensions present on every event (spec Common Dimensions)."""
-    tid = _IDENTITY["tenant_id"] if tenant_id is None else tenant_id
+    # Single sanitization choke point: EVERY tenant_id source (explicit kwarg,
+    # in-memory identity, disk cache) flows through ``_sanitize_tenant_id``
+    # here, so a non-GUID value from *any* source normalizes to "" and the
+    # event lands in the "unknown" bucket instead of leaking into "customer".
+    # This matches the guarantee ``set_identity`` gives on ingress and closes
+    # the last back-door where an explicit ``common_dimensions(tenant_id=...)``
+    # kwarg (used by the ``emit_*`` helpers) could bypass the check.
+    if tenant_id is None:
+        tid = _IDENTITY["tenant_id"] or _sanitize_tenant_id(
+            _fc.get_cached_tenant_id()
+        )
+    else:
+        tid = _sanitize_tenant_id(tenant_id)
     tname = _IDENTITY["tenant_name"] if tenant_name is None else tenant_name
     # Fall back to the org display name a prior Graph-capable run (FlightCheck)
     # cached for THIS tenant, so pure-ADK events (session/build/deploy/
@@ -673,10 +713,9 @@ def _is_finite_number(value: Any) -> bool:
 def _valid_client_string(value: Any, *, allow_empty: bool = False) -> bool:
     """True when ``value`` is a string the bridge can emit.
 
-    Deliberately unbounded: every one of these fields is passed through
-    ``_scrub``, which truncates to ``CLIENT_EVENTS_MAX_STRING_LENGTH`` one line
-    later. Rejecting a long string here only threw away the other 24 events in
-    the batch to avoid emitting a value that would have been trimmed anyway.
+    Validate presence here. ``_scrub_client_scalar`` scrubs and truncates the
+    emitted value to ``CLIENT_EVENTS_MAX_STRING_LENGTH``, so long input strings
+    remain acceptable.
     """
     return isinstance(value, str) and (allow_empty or bool(value))
 
@@ -684,16 +723,11 @@ def _valid_client_string(value: Any, *, allow_empty: bool = False) -> bool:
 def _valid_client_identifier(value: Any) -> bool:
     """True when ``value`` is an identifier-shaped ephemeral correlation id.
 
-    The charset is the privacy control: these ids are emitted verbatim as
-    dimensions, so anything else would be a free-text channel. It is applied to
-    the whole value — no prefix is required, because the prefix never carried
-    privacy weight and the three ids are already distinguished by field name.
-
-    Failures are rejected rather than scrubbed. ``_scrub`` would rewrite
-    ``corr-<uuid>`` to ``corr-<guid>``, which is accepted and useless: every
-    mount collapses to the same literal and event stitching dies silently.
-    Refusing is louder and honest, and it is cheap to be strict here because
-    Vorpal mints these at a single call site it controls.
+    Required correlation and mount ids must match the bounded ASCII format.
+    They retain their exact values for event stitching: applying ``_scrub``
+    to ``corr-<uuid>`` would collapse distinct ids to ``corr-<guid>``.
+    The envelope validator rejects invalid required ids and omits invalid
+    optional tool-call ids.
     """
     return isinstance(value, str) and bool(_CLIENT_EVENTS_IDENTIFIER_RE.match(value))
 
@@ -702,22 +736,21 @@ CLIENT_EVENTS_INVALID_TIME_SENTINEL = -1
 
 
 def _client_time_since_app_start(event: dict[str, Any]) -> Any:
-    """Degrade a non-finite timing to a sentinel instead of killing the batch.
+    """Return a finite timing or the invalid-timing sentinel.
 
     ``-1`` is unambiguous: ``performance.now()`` is non-negative, and ``0`` is a
-    real value for a bootloader event, so neither can be confused with a
-    failure. A missing or NaN timing makes one column unusable on one row —
-    dropping the other 24 events to avoid it was never the right trade.
+    valid bootloader timing. Missing or non-finite timings affect only this
+    metric; the event remains eligible for emission.
     """
     value = event.get("timeSinceAppStart")
     return value if _is_finite_number(value) else CLIENT_EVENTS_INVALID_TIME_SENTINEL
 
 
 def _scrub_client_scalar(value: Any) -> Any:
-    """Redact paths / URLs / emails / GUIDs from a bridge string value.
+    """Redact paths/URLs/emails/GUIDs from a bridge string value.
 
     Bounded primitives still reach Aria verbatim otherwise, so a widget that
-    puts a UPN, a local path or an object id into a property value would
+    puts a UPN, a local path, or an object id into a property value would
     contradict the approved Data Profile. Non-strings pass through unchanged.
     """
     if isinstance(value, str):
@@ -735,9 +768,8 @@ def _emittable_property(value: Any) -> tuple[bool, Any]:
     ``{"a":"/x","b":"y"}`` would eat through to the closing brace and destroy
     the document.
 
-    Non-finite numbers are filtered here rather than left to ``json.dumps``,
-    which emits bare ``NaN``/``Infinity`` — invalid JSON that would make the
-    whole blob unparseable by ``parse_json``.
+    Filter non-finite numbers before ``json.dumps`` to keep the emitted blob
+    valid JSON for ``parse_json``.
     """
     if value is None or isinstance(value, (bool, str)):
         return True, _scrub_client_scalar(value)
@@ -759,13 +791,10 @@ def _emittable_property(value: Any) -> tuple[bool, Any]:
 def _client_properties_blob(properties: Any) -> tuple[str, int]:
     """Render a bridge property bag as one JSON string plus a dropped count.
 
-    A single ``client_properties`` column replaces the old per-key
-    ``client_prop_<key>`` fan-out, which minted a new Aria column the first
-    time any widget logged a key — unbounded schema growth, a fixed column type
-    taken from whatever value arrived first (``stage: "loaded"`` then
-    ``stage: 3``), and camelCase names landing beside the tenant's snake_case.
-    It also keeps the emitted field set fixed, which is what makes
-    ``SCHEMA_VERSION`` meaningful.
+    The ``client_properties`` column has a fixed string type. Property names
+    and value types live inside its JSON payload, keeping the Aria field set
+    stable as clients add properties. ``SCHEMA_VERSION`` describes that
+    emitted field set.
 
     Keys are NOT scrubbed: they are call-site literals, and rewriting them
     would corrupt the field names analysts query.
@@ -773,9 +802,8 @@ def _client_properties_blob(properties: Any) -> tuple[str, int]:
     if properties is None:
         return "{}", 0
     if not isinstance(properties, dict):
-        # A malformed bag costs the bag, not the event. Counting it as one drop
-        # keeps the loss visible in ``client_prop_dropped_count`` rather than
-        # making it indistinguishable from an event that carried no properties.
+        # Emit the event with an empty bag and one dropped-property count so
+        # diagnostics distinguish malformed bags from absent properties.
         return "{}", 1
     if not properties:
         return "{}", 0
@@ -835,11 +863,8 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
     if not _valid_client_string(envelope.get("buildNumber"), allow_empty=True):
         return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
     tool_call_id = envelope.get("toolCallId")
-    # Omit rather than reject. The HOST mints this id, so ADK asserting a format
-    # it has no authority over means an id containing ``:`` or ``/`` would kill
-    # every batch. Unlike ``correlationId``/``mountId`` it is supplementary
-    # rather than what stitches a mount together, so losing the field costs far
-    # less than losing the events.
+    # The host supplies this optional diagnostic id. Omit incompatible values;
+    # correlationId and mountId provide the identifiers required for stitching.
     if tool_call_id is not None and not _valid_client_identifier(tool_call_id):
         tool_call_id = None
 
@@ -853,19 +878,9 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
     for event in events:
         if not isinstance(event, dict):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
-        # Unknown event keys are ignored rather than rejected. Unlike the
-        # envelope, ``events`` is typed ``Any``, so Pydantic passes nested keys
-        # through untouched and a closed key set here really would fire: the day
-        # Vorpal adds an optional ``BridgeEvent`` field, every batch would be
-        # rejected — and dropped without retry — until an ADK release shipped.
-        # The emit loop below reads only the fields it knows, so an unrecognized
-        # key is dropped from the row instead of costing 25 unrelated events.
-        # The event name is scrubbed rather than charset-gated. It is a VALUE
-        # in ``client_event_name``, not a column name, so a free-text name is a
-        # privacy question — which ``_scrub`` answers — not a schema one. The
-        # old regex also disagreed with itself: it capped at 64 while the length
-        # helper allowed 200, and ``StarterPrompts.Category.Reordered`` is
-        # already 33 of that 64.
+        # Read recognized fields only so clients can add optional event fields
+        # independently of ADK releases. Event names occupy a fixed column and
+        # are scrubbed and bounded during emission.
         if not _valid_client_string(event.get("eventName")):
             return CLIENT_EVENTS_REJECTED_INVALID_EVENT_SHAPE, []
         locale = event.get("locale")
@@ -931,9 +946,8 @@ def report_client_events(envelope: dict[str, Any], *, block: bool = False) -> di
 def _client_events_batch_size(envelope: Any) -> int:
     """Best-effort count of the events a caller sent.
 
-    Vorpal treats an acknowledgement that doesn't account for the whole batch as
-    unreadable and retries it, so a fail-open acceptance must echo the sent
-    cardinality rather than zero or a clamped value.
+    A fail-open acceptance must echo the full sent cardinality so Vorpal can
+    account for every event and avoid retrying an already-handled batch.
     """
     events = envelope.get("events") if isinstance(envelope, dict) else None
     return len(events) if isinstance(events, list) else 0
@@ -970,9 +984,23 @@ def start_session(
 
     Safe to call at the top of every skill: if the current session is still
     active (within the 30-min window) no duplicate start is emitted.
+
+    Only bootstraps identity when this process has none yet, or when the
+    caller supplies a genuinely different ``tenant_id`` / ``instance_id``.
+    That preserves any ``tenant_name`` that was resolved by an earlier
+    ``set_identity`` call (e.g. auth.py's silent Graph lookup) instead of
+    blanking it back to ``""``.
     """
-    if tenant_id or instance_id is not None or not _IDENTITY["instance_id"]:
-        set_identity(tenant_id=tenant_id, instance_id=instance_id)
+    _need_set = (
+        instance_id is not None
+        or not _IDENTITY["instance_id"]
+        or (tenant_id and tenant_id != _IDENTITY["tenant_id"])
+    )
+    if _need_set:
+        set_identity(
+            tenant_id=tenant_id if tenant_id else None,
+            instance_id=instance_id,
+        )
     sid, is_new = get_session(surface)
     if not is_new:
         return {"sent": False, "reason": "existing-session", "session_id": sid}

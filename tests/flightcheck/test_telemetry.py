@@ -100,7 +100,7 @@ def test_build_events_shape_and_required_fields():
         FakeRun(),
         env="dev",
         instance_id="inst-123",
-        tenant_id="tenant-abc",
+        tenant_id="00000000-0000-0000-0000-0000000000ab",
         tenant_name="Contoso",
         agent_id="bot-xyz",
         agent_count=1,
@@ -125,7 +125,7 @@ def test_build_events_shape_and_required_fields():
     run_data = events[0]["data"]
     assert run_data["overall"] == "READY"
     assert run_data["total"] == 2 and run_data["passed"] == 1 and run_data["failed"] == 1
-    assert run_data["tenantId"] == "tenant-abc"
+    assert run_data["tenantId"] == "00000000-0000-0000-0000-0000000000ab"
     # tenant_class is derived from tenant_id at emit time (ADO 7558661).
     assert run_data["tenantClass"] == "customer"
     assert events[1]["data"]["tenantClass"] == "customer"
@@ -220,7 +220,8 @@ def test_resolve_ikey_disabled(monkeypatch):
 
 def test_resolve_ikey_disabled_via_unified_adk_optout(monkeypatch):
     # `adk telemetry off` (ESS_ADK_TELEMETRY=off / ~/.adk/config) must silence
-    # the legacy FlightCheck emitter too, matching the printed consent notice.
+    # the legacy FlightCheck emitter too, matching the documented opt-out
+    # (README / CONTRIBUTING.md).
     monkeypatch.setenv("ESS_ADK_TELEMETRY", "off")
     ikey, env = telemetry.resolve_ikey()
     assert ikey is None
