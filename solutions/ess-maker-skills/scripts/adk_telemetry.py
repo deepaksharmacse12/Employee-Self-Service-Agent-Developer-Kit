@@ -911,7 +911,7 @@ def _validate_client_events_envelope(envelope: Any) -> tuple[str | None, list[di
         if locale is not None:
             row["client_locale"] = _scrub_client_scalar(locale)
         level = event.get("level")
-        if level is not None:
+        if isinstance(level, str):
             row["client_level"] = _scrub_client_scalar(level)
         blob, dropped = _client_properties_blob(event.get("properties"))
         row["client_properties"] = blob

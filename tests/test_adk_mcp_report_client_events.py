@@ -205,6 +205,56 @@ def test_valid_envelope_is_accepted_through_the_real_call_tool_path():
     assert result.isError is False
 
 
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        ("error", "error"),
+        ("", ""),
+        ("error synthetic@example.test", "error <email>"),
+        ("x" * 201, "x" * 200),
+        (None, None),
+        ({"owner": "synthetic@example.test"}, None),
+        (["synthetic@example.test"], None),
+        ({}, None),
+        ([], None),
+        (0, None),
+        (1.5, None),
+        (True, None),
+        (False, None),
+    ],
+)
+def test_client_level_is_string_only_without_losing_events(monkeypatch, level, expected):
+    server = _load_adk_server()
+    emitted = []
+    monkeypatch.setattr(server.adk_telemetry, "get_session", lambda surface: ("test", False))
+    monkeypatch.setattr(
+        server.adk_telemetry, "common_dimensions", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        server.adk_telemetry,
+        "_emit_many",
+        lambda event_name, rows, **kwargs: emitted.extend(rows),
+    )
+    args = {
+        **_valid_tool_args(),
+        "events": [
+            {"eventName": "WithLevel", "timeSinceAppStart": 1, "level": level},
+            {"eventName": "WithoutLevel", "timeSinceAppStart": 2},
+        ],
+    }
+
+    result = asyncio.run(server.mcp.call_tool("report_client_events", args))
+
+    assert result.structuredContent == {"status": "accepted", "acceptedEventCount": 2}
+    assert result.isError is False
+    assert [row["client_event_name"] for row in emitted] == ["WithLevel", "WithoutLevel"]
+    if expected is None:
+        assert "client_level" not in emitted[0]
+    else:
+        assert emitted[0]["client_level"] == expected
+    assert "client_level" not in emitted[1]
+
+
 def test_unknown_event_field_survives_the_real_call_tool_path():
     """Optional event fields survive FastMCP argument validation.
 
